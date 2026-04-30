@@ -18,7 +18,7 @@ from .reporting import write_validation_report
 app = typer.Typer(add_completion=False, help="Precipice POC pipeline")
 
 
-@app.command()
+@app.command("validate")
 def validate_cmd(config: Path = typer.Option("config.yaml", "--config", "-c")):
     """Load + validate inputs; write reports/validation.md."""
     cfg = load_config(config)
