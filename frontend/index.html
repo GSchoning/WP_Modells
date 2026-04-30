@@ -14,7 +14,7 @@
     <span id="status">loading…</span>
   </header>
 
-  <main>
+  <div id="upper">
     <section id="map-pane">
       <div id="map"></div>
       <div id="map-legend">
@@ -44,15 +44,29 @@
         <button type="submit" id="run-btn">Run scenario</button>
         <p class="muted">A scenario takes ~5 minutes. Existing-bores baseline is cached.</p>
       </form>
-
-      <section id="results">
-        <h2>Results</h2>
-        <p id="results-empty" class="muted">No scenario run yet.</p>
-        <div id="results-meta" hidden></div>
-        <div id="results-tables" hidden></div>
-      </section>
     </aside>
-  </main>
+  </div>
+
+  <section id="lower">
+    <div id="decision-panel">
+      <h2>Recommendation</h2>
+      <div id="decision-badge" class="pending">PENDING</div>
+      <div id="decision-detail">Run a scenario to see the recommendation.</div>
+      <div id="decision-meta"></div>
+    </div>
+
+    <div id="chart-pane">
+      <div id="chart-header">
+        <h2>Impact by spring complex</h2>
+        <span class="muted">stacked: existing (Scenario A) + proposed (Scenario C). Threshold dashed.</span>
+      </div>
+      <svg id="bars" width="100%" height="280" preserveAspectRatio="none"></svg>
+      <details id="table-details">
+        <summary>Show full table</summary>
+        <div id="results-tables"></div>
+      </details>
+    </div>
+  </section>
 </div>
 
 <script src="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.js"></script>
