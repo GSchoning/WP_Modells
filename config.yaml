@@ -43,10 +43,9 @@ inputs:
       column: "OGIA_P3"
       exclude_values: ["Stock_Domestic"]
 
-  # Springs shapefile. User to add — leave path here so io_layer.py picks it
-  # up once the file lands. If missing, the pipeline will warn and skip
-  # spring reporting.
-  springs: "Data/Springs/springs.shp"
+  # Springs shapefile. CRS is WGS84 Web Mercator (EPSG:3857); io_layer
+  # reprojects to the project CRS on ingest.
+  springs: "Data/Springs/Active springs_POINT_rJliS3wVll.shp"
 
   # Proposed new bore (Scenario C). Either inline or a single-row CSV.
   proposed_bore:
