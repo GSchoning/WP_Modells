@@ -104,8 +104,17 @@ def run(
         ic_head = run_steady_state(cfg, grid, workspace_root / "ss")
     except RuntimeError as exc:
         typer.echo(f"  steady-state failed: {exc}")
-        typer.echo("  Falling back to uniform initial head = grid.top.")
-        ic_head = grid.top.copy()
+        # Uniform IC over active cells. Using the spatially-varying grid.top
+        # here is wrong: it's a non-equilibrium field, so the transient run
+        # diffuses it toward steady state and that relaxation contaminates
+        # drawdown = h_initial − h(t) with a domain-wide speckle pattern
+        # that has nothing to do with the well. A uniform IC means h(t)
+        # = h_initial everywhere in the absence of forcing, so drawdown
+        # isolates the well response.
+        active = grid.idomain[0] == 1
+        mean_top = float(np.nanmean(np.where(active, grid.top, np.nan)))
+        typer.echo(f"  Falling back to uniform initial head = {mean_top:.1f} m (mean of active top).")
+        ic_head = np.full_like(grid.top, mean_top)
 
     results = {}
     for scen in cfg.run.scenarios:
