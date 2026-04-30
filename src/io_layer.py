@@ -119,26 +119,65 @@ def load_inputs(cfg: Config) -> Inputs:
     )
 
 
-def validate(inputs: Inputs, cfg: Config) -> list[str]:
-    """Return a list of human-readable validation findings. Empty list = clean."""
+def _in_active_domain(gdf: gpd.GeoDataFrame, grid) -> pd.Series:
+    """Vectorised per-point check that (x, y) lands in an active (IBOUND=1) cell."""
+    import numpy as np
+
+    xs = gdf.geometry.x.to_numpy()
+    ys = gdf.geometry.y.to_numpy()
+    cols = ((xs - grid.xorigin) // grid.delr[0]).astype(int)
+    # Row 0 is the top of the grid in MF6 convention; Y decreases as row index grows.
+    y_top = grid.yorigin + grid.delc.sum()
+    rows = ((y_top - ys) // grid.delc[0]).astype(int)
+
+    in_bounds = (rows >= 0) & (rows < grid.nrow) & (cols >= 0) & (cols < grid.ncol)
+    inside = np.zeros(len(gdf), dtype=bool)
+    valid = np.where(in_bounds)[0]
+    if valid.size:
+        inside[valid] = grid.idomain[0, rows[valid], cols[valid]] == 1
+    return pd.Series(inside, index=gdf.index)
+
+
+def validate(inputs: Inputs, cfg: Config, grid=None) -> list[str]:
+    """Return a list of human-readable validation findings. Empty list = clean.
+
+    If `grid` is provided, points are checked against the IBOUND active-cell
+    mask (the model's actual domain). Otherwise the formation_extent polygon
+    is used.
+    """
     findings: list[str] = []
 
-    extent = inputs.formation_extent.unary_union
-    inside = inputs.pumping_bores.within(extent)
-    if (~inside).any():
-        findings.append(
-            f"{(~inside).sum()} of {len(inputs.pumping_bores)} pumping bores fall "
-            "outside the formation extent."
-        )
-
-    if inputs.springs is not None:
-        s_inside = inputs.springs.within(extent)
-        if (~s_inside).any():
+    if grid is not None:
+        pb_inside = _in_active_domain(inputs.pumping_bores, grid)
+        if (~pb_inside).any():
             findings.append(
-                f"{(~s_inside).sum()} of {len(inputs.springs)} springs fall outside "
-                "the formation extent."
+                f"{(~pb_inside).sum()} of {len(inputs.pumping_bores)} pumping bores fall "
+                "outside the active model domain (IBOUND=1)."
             )
+        if inputs.springs is not None:
+            sp_inside = _in_active_domain(inputs.springs, grid)
+            if (~sp_inside).any():
+                findings.append(
+                    f"{(~sp_inside).sum()} of {len(inputs.springs)} springs fall outside "
+                    "the active model domain (IBOUND=1)."
+                )
     else:
+        extent = inputs.formation_extent.unary_union
+        inside = inputs.pumping_bores.within(extent)
+        if (~inside).any():
+            findings.append(
+                f"{(~inside).sum()} of {len(inputs.pumping_bores)} pumping bores fall "
+                "outside the formation extent polygon."
+            )
+        if inputs.springs is not None:
+            s_inside = inputs.springs.within(extent)
+            if (~s_inside).any():
+                findings.append(
+                    f"{(~s_inside).sum()} of {len(inputs.springs)} springs fall outside "
+                    "the formation extent polygon."
+                )
+
+    if inputs.springs is None:
         findings.append("Springs shapefile not present — spring reporting will be skipped.")
 
     pb = cfg.inputs.proposed_bore

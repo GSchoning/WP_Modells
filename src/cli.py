@@ -23,7 +23,8 @@ def validate_cmd(config: Path = typer.Option("config.yaml", "--config", "-c")):
     """Load + validate inputs; write reports/validation.md."""
     cfg = load_config(config)
     inputs = load_inputs(cfg)
-    findings = validate(inputs, cfg)
+    grid = build_grid_from_properties(inputs.properties, cfg.project.crs)
+    findings = validate(inputs, cfg, grid)
     out = Path("reports/validation.md")
     write_validation_report(findings, out)
     typer.echo(f"Validation report → {out}")
@@ -38,17 +39,23 @@ def run(config: Path = typer.Option("config.yaml", "--config", "-c")):
     typer.echo(f"Loading inputs (project CRS: {cfg.project.crs})…")
     inputs = load_inputs(cfg)
 
-    findings = validate(inputs, cfg)
+    typer.echo("Building grid from properties.csv…")
+    grid = build_grid_from_properties(inputs.properties, cfg.project.crs)
+    typer.echo(f"  grid: {grid.nlay} × {grid.nrow} × {grid.ncol}, "
+               f"dx={grid.delr[0]:.0f} m, dy={grid.delc[0]:.0f} m")
+    n_active = int((grid.idomain == 1).sum())
+    typer.echo(f"  active cells (IBOUND=1): {n_active}")
+    typer.echo(f"  domain bounds (project CRS): "
+               f"X {grid.xorigin:.0f}–{grid.xorigin + grid.delr.sum():.0f}, "
+               f"Y {grid.yorigin:.0f}–{grid.yorigin + grid.delc.sum():.0f}")
+
+    findings = validate(inputs, cfg, grid)
     write_validation_report(findings, Path("reports/validation.md"))
     if findings:
         typer.echo("Validation findings (see reports/validation.md):")
         for f in findings:
             typer.echo(f"  - {f}")
 
-    typer.echo("Building grid from properties.csv…")
-    grid = build_grid_from_properties(inputs.properties, cfg.project.crs)
-    typer.echo(f"  grid: {grid.nlay} × {grid.nrow} × {grid.ncol}, "
-               f"dx={grid.delr[0]:.0f} m, dy={grid.delc[0]:.0f} m")
     typer.echo(f"  pumping bores: {len(inputs.pumping_bores)}")
     typer.echo(f"  receptor bores: {len(inputs.receptor_bores)}")
     typer.echo(f"  springs: {0 if inputs.springs is None else len(inputs.springs)}")
