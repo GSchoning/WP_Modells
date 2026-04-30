@@ -530,26 +530,21 @@ function renderTable(result) {
   const lastYear = Math.max(...result.output_years);
   const yearBlock = result.by_year.find(y => y.time_years === lastYear);
   const all = [...yearBlock.complexes].sort((a, b) => b.s_total_m - a.s_total_m);
-  const hasTheis = all.some(c => c.s_additional_theis_m != null);
 
   let html = "<table><thead><tr>";
-  html += "<th>complex</th><th>#</th>";
-  if (hasTheis) html += "<th>r (km)</th>";
-  html += "<th>s_approved</th><th>s_additional</th>";
-  if (hasTheis) html += "<th>Theis s_add.</th>";
-  html += "<th>s_total</th></tr></thead><tbody>";
+  html += "<th>complex</th><th class=\"num\">existing (m)</th><th class=\"num\">proposed (m)</th><th class=\"num\">total (m)</th>";
+  html += "</tr></thead><tbody>";
 
   for (const c of all) {
-    const r_km = c.r_to_proposed_m != null ? (c.r_to_proposed_m / 1000).toFixed(1) : "—";
     const rowClass = c.triggered_by_proposed ? "triggered-row"
                     : c.already_exceeded ? "already-row" : "";
     const cls = rowClass ? ` class="${rowClass}"` : "";
-    html += `<tr${cls} data-id="${c.complex_id}"><td>${c.complex_id}</td><td class="num">${c.n_springs}</td>`;
-    if (hasTheis) html += `<td class="num">${r_km}</td>`;
+    html += `<tr${cls} data-id="${c.complex_id}">`;
+    html += `<td>${c.complex_id}</td>`;
     html += `<td class="num">${fmt(c.s_approved_m)}</td>`;
     html += `<td class="num">${fmt(c.s_additional_m)}</td>`;
-    if (hasTheis) html += `<td class="num">${fmt(c.s_additional_theis_m)}</td>`;
-    html += `<td class="num"><strong>${fmt(c.s_total_m)}</strong></td></tr>`;
+    html += `<td class="num"><strong>${fmt(c.s_total_m)}</strong></td>`;
+    html += `</tr>`;
   }
   html += "</tbody></table>";
   $("results-tables").innerHTML = html;
