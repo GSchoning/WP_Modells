@@ -10,13 +10,15 @@ from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
+from shapely.geometry import MultiPolygon, Polygon
+from shapely.ops import polygonize, unary_union
 
 from .config import Config
 
 
 @dataclass
 class Inputs:
-    formation_extent: gpd.GeoDataFrame
+    formation_extent: gpd.GeoDataFrame    # always polygon(s) in project CRS
     outcrop: gpd.GeoDataFrame
     properties: pd.DataFrame              # per-cell grid + properties
     pumping_bores: gpd.GeoDataFrame       # all bores with extraction (Scenario A)
@@ -74,10 +76,36 @@ def _read_springs(cfg: Config) -> gpd.GeoDataFrame | None:
     return gdf.to_crs(cfg.project.crs)
 
 
+def _polygonize_extent(gdf: gpd.GeoDataFrame, properties: pd.DataFrame, crs: str) -> gpd.GeoDataFrame:
+    """Ensure the formation-extent layer is polygonal.
+
+    The supplied "Edge around Precipice Sandstone" shapefile is a polyline,
+    so we close it into polygons. If polygonization yields nothing usable
+    (line not closed), fall back to the convex hull of active cells from
+    the properties CSV — that's what the model actually uses as its domain.
+    """
+    geom_types = set(gdf.geom_type.unique())
+    if geom_types <= {"Polygon", "MultiPolygon"}:
+        return gdf
+
+    merged = unary_union(gdf.geometry.tolist())
+    polys = list(polygonize([merged]))
+    if polys:
+        union = unary_union(polys)
+        if isinstance(union, Polygon):
+            union = MultiPolygon([union])
+        return gpd.GeoDataFrame(geometry=[union], crs=crs)
+
+    active = properties[properties["IBOUND"].astype(int) == 1]
+    hull = gpd.GeoSeries(gpd.points_from_xy(active["X"], active["Y"]), crs=crs).unary_union.convex_hull
+    return gpd.GeoDataFrame(geometry=[hull], crs=crs)
+
+
 def load_inputs(cfg: Config) -> Inputs:
-    formation = gpd.read_file(cfg.inputs.formation_extent).to_crs(cfg.project.crs)
+    formation_raw = gpd.read_file(cfg.inputs.formation_extent).to_crs(cfg.project.crs)
     outcrop = gpd.read_file(cfg.inputs.outcrop).to_crs(cfg.project.crs)
     properties = pd.read_csv(cfg.inputs.properties_csv)
+    formation = _polygonize_extent(formation_raw, properties, cfg.project.crs)
     pumping, receptors = _read_water_use(cfg)
     springs = _read_springs(cfg)
 
