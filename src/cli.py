@@ -15,9 +15,9 @@ import typer
 from .config import load_config
 from .figures import make_all as make_figures
 from .grid import build_grid_from_properties
-from .io_layer import load_inputs, validate
+from .io_layer import load_inputs, validate, ML_PER_YEAR_TO_M3_PER_DAY
 from .model_builder import active_boundary_chd_cells
-from .reporting import write_validation_report
+from .reporting import write_impact_report, write_validation_report
 from .scenarios import run_scenario, run_steady_state
 from .superposition import combine_rasters, combine_receptor_tables
 
@@ -60,7 +60,7 @@ def run(
     proposed_x: float = typer.Option(None, "--proposed-x"),
     proposed_y: float = typer.Option(None, "--proposed-y"),
     proposed_rate: float = typer.Option(None, "--proposed-rate",
-                                        help="Proposed bore extraction rate (m³/d)."),
+                                        help="Proposed bore extraction rate (ML/year)."),
 ):
     """Run the full pipeline: ingest → grid → scenarios A & C → superposition → report."""
     cfg = load_config(config)
@@ -69,7 +69,7 @@ def run(
     if proposed_y is not None:
         cfg.inputs.proposed_bore.y = proposed_y
     if proposed_rate is not None:
-        cfg.inputs.proposed_bore.rate_m3_per_day = proposed_rate
+        cfg.inputs.proposed_bore.rate_ML_per_year = proposed_rate
 
     typer.echo(f"Loading inputs (project CRS: {cfg.project.crs})…")
     inputs = load_inputs(cfg)
@@ -90,6 +90,24 @@ def run(
     typer.echo(f"  pumping bores: {len(inputs.pumping_bores)}")
     typer.echo(f"  receptor bores: {len(inputs.receptor_bores)}")
     typer.echo(f"  springs: {0 if inputs.springs is None else len(inputs.springs)}")
+
+    total_m3d = float(inputs.pumping_bores["rate_m3_per_day"].sum())
+    total_ml_yr = total_m3d / ML_PER_YEAR_TO_M3_PER_DAY
+    typer.echo(f"  total existing pumping (Scenario A): "
+               f"{total_m3d:,.0f} m³/d ({total_ml_yr:,.0f} ML/yr)")
+    pb = cfg.inputs.proposed_bore
+    if pb.rate_ML_per_year is not None and pb.x is not None and pb.y is not None:
+        pb_m3d = pb.rate_ML_per_year * ML_PER_YEAR_TO_M3_PER_DAY
+        typer.echo(f"  proposed bore (Scenario C): {pb.bore_id} @ "
+                   f"({pb.x:.0f}, {pb.y:.0f}), {pb.rate_ML_per_year:,.1f} ML/yr "
+                   f"({pb_m3d:,.0f} m³/d)")
+
+    active = grid.idomain[0] == 1
+    k_active = grid.k[0][active]
+    pcts = [1, 5, 50, 95, 99]
+    k_pcts = np.percentile(k_active, pcts)
+    typer.echo("  K (m/d) over active cells: "
+               + ", ".join(f"p{p}={v:.3g}" for p, v in zip(pcts, k_pcts)))
 
     if skip_scenarios:
         typer.echo("\nSkipping scenario execution (--skip-scenarios).")
@@ -140,6 +158,7 @@ def run(
         except (RuntimeError, ValueError) as exc:
             typer.echo(f"  Scenario {scen} skipped: {exc}")
 
+    combined = None
     if "A" in results and "C" in results:
         typer.echo("\nCombining via superposition (B = A + C)…")
         combined = combine_receptor_tables(
@@ -156,6 +175,18 @@ def run(
         written = make_figures(grid, inputs, cfg, results, fig_dir)
         for p in written:
             typer.echo(f"  → {p}")
+
+    if combined is not None:
+        typer.echo("\nWriting impact assessment report…")
+        report_md = Path("reports/impact_assessment.md")
+        report_json = out_dir / "impact_assessment.json"
+        write_impact_report(
+            cfg=cfg, grid=grid, inputs=inputs, results=results,
+            combined=combined, config_path=config,
+            md_path=report_md, json_path=report_json,
+        )
+        typer.echo(f"  → {report_md}")
+        typer.echo(f"  → {report_json}")
 
 
 @app.command()

@@ -11,7 +11,7 @@ import pandas as pd
 
 from .config import Config
 from .grid import Grid, cell_of
-from .io_layer import Inputs
+from .io_layer import Inputs, ML_PER_YEAR_TO_M3_PER_DAY
 from .model_builder import (
     YEAR_DAYS,
     WellRecord,
@@ -138,12 +138,13 @@ def run_scenario(
         wells, _accepted, _rejected = _bores_to_wells(inputs.pumping_bores, grid)
     elif scenario == "C":
         pb = cfg.inputs.proposed_bore
-        if pb.x is None or pb.y is None or pb.rate_m3_per_day is None:
-            raise ValueError("Scenario C requires inputs.proposed_bore.{x,y,rate_m3_per_day}")
+        if pb.x is None or pb.y is None or pb.rate_ML_per_year is None:
+            raise ValueError("Scenario C requires inputs.proposed_bore.{x,y,rate_ML_per_year}")
         rc = cell_of(grid, float(pb.x), float(pb.y))
         if rc is None or grid.idomain[0, rc[0], rc[1]] != 1:
             raise ValueError(f"Proposed bore {pb.bore_id} falls outside the active domain.")
-        wells = [(0, rc[0], rc[1], -float(pb.rate_m3_per_day))]
+        rate_m3d = float(pb.rate_ML_per_year) * ML_PER_YEAR_TO_M3_PER_DAY
+        wells = [(0, rc[0], rc[1], -rate_m3d)]
     else:
         raise ValueError(f"unknown scenario: {scenario}")
 

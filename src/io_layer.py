@@ -200,9 +200,9 @@ def validate(inputs: Inputs, cfg: Config, grid=None) -> list[str]:
         findings.append("Springs shapefile not present — spring reporting will be skipped.")
 
     pb = cfg.inputs.proposed_bore
-    if pb.x is None or pb.y is None or pb.rate_m3_per_day is None:
+    if pb.x is None or pb.y is None or pb.rate_ML_per_year is None:
         findings.append(
-            "Proposed bore (Scenario C) is unset — set inputs.proposed_bore.{x,y,rate_m3_per_day} "
+            "Proposed bore (Scenario C) is unset — set inputs.proposed_bore.{x,y,rate_ML_per_year} "
             "before running Scenario C."
         )
 

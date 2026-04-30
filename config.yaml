@@ -50,9 +50,9 @@ inputs:
   # Proposed new bore (Scenario C). Either inline or a single-row CSV.
   proposed_bore:
     bore_id: "PROPOSED_001"
-    x: null            # easting in project CRS (m) — TBD
-    y: null            # northing in project CRS (m) — TBD
-    rate_m3_per_day: null
+    x: null               # easting in project CRS (m) — TBD
+    y: null               # northing in project CRS (m) — TBD
+    rate_ML_per_year: null   # ML/year — converted to m³/d at runtime
 
 aquifer:
   # NTOP/NBOT and THICKNESS are read per-cell from properties.csv, so these

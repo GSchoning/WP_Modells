@@ -24,7 +24,7 @@ class ProposedBoreCfg(BaseModel):
     bore_id: str
     x: float | None = None
     y: float | None = None
-    rate_m3_per_day: float | None = None
+    rate_ML_per_year: float | None = None
 
 
 class InputsCfg(BaseModel):
