@@ -1,0 +1,37 @@
+# docker-compose.yml — local development for the Precipice POC.
+#
+# Usage:
+#   docker compose run --rm app                       # run the pipeline
+#   docker compose run --rm app bash                  # shell inside the container
+#   docker compose run --rm --service-ports notebook  # JupyterLab on :8888
+
+services:
+  app:
+    build: .
+    image: precipice-poc:latest
+    volumes:
+      # User-supplied inputs (read-only inside the container).
+      - ./data:/app/data
+      # Outputs and reports — writable from inside the container.
+      - ./outputs:/app/outputs
+      - ./reports:/app/reports
+      # Live source mount so edits on the host take effect without rebuilds.
+      - ./src:/app/src
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  notebook:
+    extends:
+      service: app
+    command: >
+      jupyter lab
+        --ip=0.0.0.0
+        --port=8888
+        --no-browser
+        --ServerApp.token=''
+        --ServerApp.password=''
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./notebooks:/app/notebooks
