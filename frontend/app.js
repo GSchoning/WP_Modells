@@ -393,10 +393,12 @@ function renderDecision(result) {
 function renderBarChart(result) {
   const lastYear = Math.max(...result.output_years);
   const yearBlock = result.by_year.find(y => y.time_years === lastYear);
-  // Hide complexes with zero total impact — they'd just be empty bars and
-  // crowd the labels axis. 1 mm threshold absorbs floating-point noise.
+  // Hide complexes whose total drawdown rounds to "0.00" in the table.
+  // The cutoff matches fmt(v, 2): anything below 0.005 m displays as
+  // 0.00 and adds noise to the chart's label axis without signal.
+  const ZERO_CUTOFF_M = 0.005;
   const allComplexes = [...yearBlock.complexes]
-    .filter(c => c.s_total_m > 0.001)
+    .filter(c => c.s_total_m >= ZERO_CUTOFF_M)
     .sort((a, b) => b.s_total_m - a.s_total_m);
   const complexes = allComplexes.slice(0, 30);
 
