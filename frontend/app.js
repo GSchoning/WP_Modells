@@ -355,8 +355,14 @@ function selectComplex(id) {
 }
 
 function renderDecision(result) {
-  const triggered = result.n_triggered_any_year ?? 0;
-  const already = result.n_already_exceeded_any_year ?? 0;
+  // Decision is anchored to the last output year (the regulatory horizon).
+  // Using "any year" for triggered would flag complexes that briefly tip
+  // over en route to already_exceeded — by year 100 those would have
+  // exceeded without the proposal anyway, so it's not the bore's fault.
+  const lastYear = Math.max(...result.output_years);
+  const yearBlock = result.by_year.find(y => y.time_years === lastYear);
+  const triggered = yearBlock.complexes.filter(c => c.triggered_by_proposed).length;
+  const already = yearBlock.complexes.filter(c => c.already_exceeded).length;
   const thresh = result.regulatory_threshold_m;
   const badge = $("decision-badge");
   const detail = $("decision-detail");
@@ -365,11 +371,11 @@ function renderDecision(result) {
   if (triggered > 0) {
     badge.className = "reject";
     badge.textContent = "REJECT";
-    detail.textContent = `Proposed bore tips ${triggered} spring complex${triggered === 1 ? "" : "es"} over the ${thresh} m drawdown trigger threshold.`;
+    detail.textContent = `Proposed bore tips ${triggered} spring complex${triggered === 1 ? "" : "es"} over the ${thresh} m drawdown trigger threshold at ${lastYear} yr.`;
   } else {
     badge.className = "approve";
     badge.textContent = "APPROVE";
-    detail.textContent = `No spring complex is tipped over the ${thresh} m threshold by the proposed bore.`;
+    detail.textContent = `No spring complex is tipped over the ${thresh} m threshold by the proposed bore at ${lastYear} yr.`;
   }
 
   let mh = "";
