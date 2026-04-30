@@ -12,6 +12,13 @@ import numpy as np
 import pandas as pd
 
 
+# Defaults applied when a value is non-physical (negative / zero / NaN) in an
+# active cell. These won't kill MF6 and are obvious to spot in outputs.
+DEFAULT_K_M_PER_DAY = 1e-3
+DEFAULT_SS_1_PER_M = 1e-5
+MIN_THICKNESS_M = 1.0
+
+
 @dataclass
 class Grid:
     nrow: int
@@ -63,8 +70,8 @@ def build_grid_from_properties(properties: pd.DataFrame, crs: str) -> Grid:
 
     top = _to_array("NTOP")
     bot = _to_array("NBOT")
-    k = _to_array("kx", fill=1e-6)
-    ss = _to_array("SS", fill=1e-6)
+    k = _to_array("kx", fill=DEFAULT_K_M_PER_DAY)
+    ss = _to_array("SS", fill=DEFAULT_SS_1_PER_M)
     rch = _to_array("rch", fill=0.0)
 
     ibound = np.zeros((nrow, ncol), dtype=int)
@@ -76,6 +83,38 @@ def build_grid_from_properties(properties: pd.DataFrame, crs: str) -> Grid:
     outcrop_mask[r, c] = (df["OUTCROP"].astype(str).str.upper() == "Y").to_numpy()
 
     rch = np.where(outcrop_mask, rch, 0.0)
+
+    # Sanitise non-physical entries in active cells.
+    # - K and Ss: take abs(); replace zeros with a default so MF6 doesn't choke.
+    # - Thickness: enforce a small minimum so DIS top > bot.
+    active = ibound == 1
+    neg_k = active & (k < 0)
+    neg_ss = active & (ss < 0)
+    k_abs = np.abs(k)
+    ss_abs = np.abs(ss)
+    zero_k = active & (k_abs == 0)
+    zero_ss = active & (ss_abs == 0)
+    k_abs[zero_k] = DEFAULT_K_M_PER_DAY
+    ss_abs[zero_ss] = DEFAULT_SS_1_PER_M
+    k = k_abs
+    ss = ss_abs
+    bad_thickness = active & ~((top - bot) >= MIN_THICKNESS_M)
+    if bad_thickness.any():
+        bot[bad_thickness] = top[bad_thickness] - MIN_THICKNESS_M
+
+    sanitised = {
+        "k_negative_abs_taken": int(neg_k.sum()),
+        "ss_negative_abs_taken": int(neg_ss.sum()),
+        "k_zero_set_to_default": int(zero_k.sum()),
+        "ss_zero_set_to_default": int(zero_ss.sum()),
+        "thickness_too_small": int(bad_thickness.sum()),
+    }
+    if any(sanitised.values()):
+        import sys
+        print(
+            f"[grid] sanitised non-physical properties in active cells: {sanitised}",
+            file=sys.stderr,
+        )
 
     return Grid(
         nrow=nrow,
