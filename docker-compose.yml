@@ -10,8 +10,8 @@ services:
     build: .
     image: precipice-poc:latest
     volumes:
-      # User-supplied inputs (read-only inside the container).
-      - ./data:/app/data
+      # User-supplied inputs (the repo uses ./Data with a capital D).
+      - ./Data:/app/Data
       # Outputs and reports — writable from inside the container.
       - ./outputs:/app/outputs
       - ./reports:/app/reports
