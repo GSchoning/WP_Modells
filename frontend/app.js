@@ -244,21 +244,41 @@ function renderResults(result) {
   $("results-empty").hidden = true;
   $("results-meta").hidden = false;
   $("results-tables").hidden = false;
-  $("results-meta").innerHTML = `
+
+  let metaHtml = `
     <div><strong>${result.proposed_bore.bore_id}</strong>
       @ (${result.proposed_bore.x.toFixed(0)}, ${result.proposed_bore.y.toFixed(0)}),
       ${result.proposed_bore.rate_ML_per_year} ML/yr</div>
     <div class="muted">runtime: ${result.runtime_seconds.toFixed(1)}s · output years: ${result.output_years.join(", ")}</div>
   `;
+  if (result.theis) {
+    metaHtml += `<div class="muted">Theis local T = ${result.theis.T_m2_per_day.toFixed(2)} m²/d, S = ${result.theis.S_dimensionless.toExponential(2)} (well cell ${result.theis.well_cell.join(",")})</div>`;
+  }
+  $("results-meta").innerHTML = metaHtml;
+
   const lastYear = Math.max(...result.output_years);
   const top = result.top_n_total;
+  const hasTheis = top.some(s => s.s_additional_theis_m != null);
   let html = `<h3 style="font-size:0.95rem;margin:0.4rem 0 0.3rem">Top 10 most-impacted at t = ${lastYear} yr</h3>`;
-  html += "<table><thead><tr><th>spring</th><th>s_appr.</th><th>s_add.</th><th>s_total</th></tr></thead><tbody>";
-  for (const s of top) {
-    html += `<tr><td>${s.spring_id}</td>
-      <td class="num">${fmt(s.s_approved_m)}</td>
-      <td class="num">${fmt(s.s_additional_m)}</td>
-      <td class="num"><strong>${fmt(s.s_total_m)}</strong></td></tr>`;
+  if (hasTheis) {
+    html += "<table><thead><tr><th>spring</th><th>r (km)</th><th>s_appr.</th><th>s_add.</th><th>s_add. (Theis)</th><th>s_total</th></tr></thead><tbody>";
+    for (const s of top) {
+      const r_km = s.r_to_proposed_m != null ? (s.r_to_proposed_m / 1000).toFixed(1) : "—";
+      html += `<tr><td>${s.spring_id}</td>
+        <td class="num">${r_km}</td>
+        <td class="num">${fmt(s.s_approved_m)}</td>
+        <td class="num">${fmt(s.s_additional_m)}</td>
+        <td class="num">${fmt(s.s_additional_theis_m)}</td>
+        <td class="num"><strong>${fmt(s.s_total_m)}</strong></td></tr>`;
+    }
+  } else {
+    html += "<table><thead><tr><th>spring</th><th>s_appr.</th><th>s_add.</th><th>s_total</th></tr></thead><tbody>";
+    for (const s of top) {
+      html += `<tr><td>${s.spring_id}</td>
+        <td class="num">${fmt(s.s_approved_m)}</td>
+        <td class="num">${fmt(s.s_additional_m)}</td>
+        <td class="num"><strong>${fmt(s.s_total_m)}</strong></td></tr>`;
+    }
   }
   html += "</tbody></table>";
   $("results-tables").innerHTML = html;

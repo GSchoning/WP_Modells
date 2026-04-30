@@ -24,11 +24,12 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..config import Config, load_config
-from ..grid import Grid, build_grid_from_properties
-from ..io_layer import Inputs, load_inputs
+from ..grid import Grid, build_grid_from_properties, cell_of
+from ..io_layer import Inputs, ML_PER_YEAR_TO_M3_PER_DAY, load_inputs
 from ..model_builder import active_boundary_chd_cells
 from ..scenarios import ScenarioResult, run_scenario, run_steady_state
 from ..superposition import combine_receptor_tables
+from ..theis import theis_at_springs, _local_T_S
 from . import cache as cache_mod
 from .schemas import (
     BaselineResponse,
@@ -36,6 +37,7 @@ from .schemas import (
     ScenarioRequest,
     ScenarioResponse,
     SpringDrawdown,
+    TheisDiagnostics,
     YearResults,
 )
 
@@ -121,6 +123,8 @@ app = FastAPI(
 
 def _df_to_year_results(combined: pd.DataFrame) -> list[YearResults]:
     out: list[YearResults] = []
+    has_theis = "drawdown_m_theis" in combined.columns
+    has_r = "r_m" in combined.columns
     for y in sorted(combined["time_years"].unique()):
         sub = combined[combined["time_years"] == y].sort_values("s_total", ascending=False)
         out.append(YearResults(
@@ -131,6 +135,8 @@ def _df_to_year_results(combined: pd.DataFrame) -> list[YearResults]:
                     s_approved_m=float(r["s_approved"]),
                     s_additional_m=float(r["s_additional"]),
                     s_total_m=float(r["s_total"]),
+                    s_additional_theis_m=float(r["drawdown_m_theis"]) if has_theis else None,
+                    r_to_proposed_m=float(r["r_m"]) if has_r else None,
                 )
                 for _, r in sub.iterrows()
             ],
@@ -192,6 +198,33 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
         state.baseline.receptors_df,
         c_result.receptors_df,
     )
+
+    # Theis comparison for the proposed bore: analytical drawdown at each
+    # spring using local T and S at the well cell. Useful as a sanity
+    # check — heterogeneity, boundaries, and recharge cause the modelled
+    # value to depart from Theis, but in homogeneous-ish areas they should
+    # agree to within a factor of ~2.
+    theis_diag: TheisDiagnostics | None = None
+    if state.inputs.springs is not None and len(state.inputs.springs):
+        spring_id_col = next(
+            (c for c in ("spring_id", "SpringID", "Spring_ID", "ID", "OBJECTID", "FID")
+             if c in state.inputs.springs.columns),
+            state.inputs.springs.columns[0],
+        )
+        rate_m3d = req.proposed_bore.rate_ML_per_year * ML_PER_YEAR_TO_M3_PER_DAY
+        theis_df = theis_at_springs(
+            state.grid, state.inputs.springs, spring_id_col,
+            req.proposed_bore.x, req.proposed_bore.y, rate_m3d,
+            output_years=sorted(combined["time_years"].unique()),
+        )
+        combined = combined.merge(
+            theis_df[["receptor_id", "time_years", "drawdown_m_theis", "r_m"]],
+            on=["receptor_id", "time_years"], how="left",
+        )
+        rc = cell_of(state.grid, req.proposed_bore.x, req.proposed_bore.y)
+        T, S = _local_T_S(state.grid, rc[0], rc[1])
+        theis_diag = TheisDiagnostics(T_m2_per_day=T, S_dimensionless=S, well_cell=[rc[0], rc[1]])
+
     year_results = _df_to_year_results(combined)
     last_year = max(combined["time_years"].unique())
     last_springs = [yr for yr in year_results if yr.time_years == last_year][0].springs
@@ -202,6 +235,7 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
         by_year=year_results,
         top_n_total=top_n,
         runtime_seconds=runtime,
+        theis=theis_diag,
     )
 
 

@@ -20,11 +20,19 @@ class SpringDrawdown(BaseModel):
     s_approved_m: float
     s_additional_m: float
     s_total_m: float
+    s_additional_theis_m: float | None = None       # Theis estimate for Scenario C
+    r_to_proposed_m: float | None = None             # distance from spring to proposed bore
 
 
 class YearResults(BaseModel):
     time_years: float
     springs: list[SpringDrawdown]
+
+
+class TheisDiagnostics(BaseModel):
+    T_m2_per_day: float
+    S_dimensionless: float
+    well_cell: list[int]                 # [row, col]
 
 
 class ScenarioResponse(BaseModel):
@@ -33,6 +41,7 @@ class ScenarioResponse(BaseModel):
     by_year: list[YearResults]
     top_n_total: list[SpringDrawdown]
     runtime_seconds: float
+    theis: TheisDiagnostics | None = None
 
 
 class BaselineResponse(BaseModel):
