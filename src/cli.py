@@ -37,7 +37,9 @@ def validate_cmd(config: Path = typer.Option("config.yaml", "--config", "-c")):
     """Load + validate inputs; write reports/validation.md."""
     cfg = load_config(config)
     inputs = load_inputs(cfg)
-    grid = build_grid_from_properties(inputs.properties, cfg.project.crs)
+    grid = build_grid_from_properties(
+        inputs.properties, cfg.project.crs, layer=cfg.grid.properties_layer
+    )
     findings = validate(inputs, cfg, grid)
     out = Path("reports/validation.md")
     write_validation_report(findings, out)
@@ -68,8 +70,10 @@ def run(
     typer.echo(f"Loading inputs (project CRS: {cfg.project.crs})…")
     inputs = load_inputs(cfg)
 
-    typer.echo("Building grid from properties.csv…")
-    grid = build_grid_from_properties(inputs.properties, cfg.project.crs)
+    typer.echo(f"Building grid from properties.csv (ILAY={cfg.grid.properties_layer})…")
+    grid = build_grid_from_properties(
+        inputs.properties, cfg.project.crs, layer=cfg.grid.properties_layer
+    )
     _print_grid_summary(grid)
 
     findings = validate(inputs, cfg, grid)

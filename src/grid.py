@@ -38,12 +38,29 @@ class Grid:
     crs: str
 
 
-def build_grid_from_properties(properties: pd.DataFrame, crs: str) -> Grid:
+def build_grid_from_properties(
+    properties: pd.DataFrame, crs: str, *, layer: int = 24
+) -> Grid:
     """Reconstruct a single-layer Grid from the per-cell properties table.
+
+    The source CSV is exported from a multi-layer regional model; rows for
+    layers other than the Precipice (ILAY=24 by default) are filtered out so
+    we don't overlay properties from other formations onto the same (row, col).
 
     Assumes ICOL / IROW are 1-based and X/Y are cell centres in project CRS.
     """
     df = properties.copy()
+    if "ILAY" in df.columns:
+        n_before = len(df)
+        df = df[pd.to_numeric(df["ILAY"], errors="coerce").astype("Int64") == layer]
+        n_dropped = n_before - len(df)
+        if n_dropped:
+            import sys
+            print(
+                f"[grid] filtered {n_dropped} rows with ILAY != {layer}; "
+                f"kept {len(df)} rows",
+                file=sys.stderr,
+            )
     df["ICOL"] = df["ICOL"].astype(int)
     df["IROW"] = df["IROW"].astype(int)
 
