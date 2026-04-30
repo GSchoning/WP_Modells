@@ -168,3 +168,31 @@ def boundary_chd_cells(grid: Grid, head: float | np.ndarray) -> list[ChdRecord]:
         cells.append((0, r, 0, _h(r, 0)))
         cells.append((0, r, ncol - 1, _h(r, ncol - 1)))
     return cells
+
+
+def active_boundary_chd_cells(
+    grid: Grid, head: float | np.ndarray | None = None
+) -> list[ChdRecord]:
+    """CHD on the boundary of the active domain (active cells with ≥1 inactive neighbour).
+
+    Provides a far-field head sink so recharge can equilibrate. Head defaults
+    to grid.top per cell — i.e. the water table is bound to the top of the
+    formation at the model boundary.
+    """
+    active = grid.idomain[0] == 1
+    padded = np.pad(active, 1, constant_values=False)
+    has_inactive_neighbour = (
+        ~padded[:-2, 1:-1] | ~padded[2:, 1:-1]
+        | ~padded[1:-1, :-2] | ~padded[1:-1, 2:]
+    )
+    on_boundary = active & has_inactive_neighbour
+    rs, cs = np.where(on_boundary)
+
+    if head is None:
+        head_arr = grid.top
+    elif np.isscalar(head):
+        head_arr = np.full_like(grid.top, float(head))
+    else:
+        head_arr = head
+
+    return [(0, int(r), int(c), float(head_arr[r, c])) for r, c in zip(rs, cs)]

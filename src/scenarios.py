@@ -151,12 +151,11 @@ def run_scenario(
     perioddata = [(perlen_days, cfg.time.nstp, cfg.time.tsmult)]
 
     name = f"scen_{scenario}"
-    # Recharge is off in transient runs because the IC is NOT the
-    # recharge-balanced steady-state. With recharge on, h(t) accumulates a
-    # recharge response that h_initial doesn't carry, so drawdown =
-    # h_initial − h(t) contaminates the well signal with a heterogeneous
-    # recharge term and double-counts it in superposition. Re-enable once
-    # the steady-state pre-run converges (needs DEM-bound CHD on outcrop).
+    # Recharge stays on in transient runs. The IC is the recharge-balanced
+    # steady-state head field (with the same boundary CHD), so the recharge
+    # response is already in h_initial and cancels in drawdown = h_initial −
+    # h(t). Both Scenario A and C use the same recharge + CHD, so the
+    # cancellation is identical and superposition holds.
     sim = build_transient(
         grid,
         workspace,
@@ -165,7 +164,7 @@ def run_scenario(
         initial_head=initial_head,
         perioddata=perioddata,
         chd_cells=chd_cells,
-        recharge=False,
+        recharge=True,
         complexity=cfg.solver.complexity,
     )
     sim.write_simulation(silent=True)

@@ -16,6 +16,7 @@ from .config import load_config
 from .figures import make_all as make_figures
 from .grid import build_grid_from_properties
 from .io_layer import load_inputs, validate
+from .model_builder import active_boundary_chd_cells
 from .reporting import write_validation_report
 from .scenarios import run_scenario, run_steady_state
 from .superposition import combine_rasters, combine_receptor_tables
@@ -99,18 +100,25 @@ def run(
     out_dir = Path("outputs")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    typer.echo("\nRunning steady-state pre-run (no pumping, recharge on)…")
+    # Far-field CHD on the active-domain boundary, head = NTOP. Provides a
+    # sink for outcrop recharge so the steady-state pre-run converges, and
+    # is reused unchanged in the transient runs so its contribution cancels
+    # in drawdown = h_initial − h(t). Same CHD across A and C → superposition
+    # holds.
+    chd_cells = active_boundary_chd_cells(grid)
+    typer.echo(f"\nBoundary CHD on {len(chd_cells)} active-edge cells (head = NTOP).")
+
+    typer.echo("Running steady-state pre-run (no pumping, recharge on)…")
     try:
-        ic_head = run_steady_state(cfg, grid, workspace_root / "ss")
+        ic_head = run_steady_state(cfg, grid, workspace_root / "ss", chd_cells=chd_cells)
     except RuntimeError as exc:
         typer.echo(f"  steady-state failed: {exc}")
-        # Uniform IC over active cells. Using the spatially-varying grid.top
-        # here is wrong: it's a non-equilibrium field, so the transient run
-        # diffuses it toward steady state and that relaxation contaminates
-        # drawdown = h_initial − h(t) with a domain-wide speckle pattern
-        # that has nothing to do with the well. A uniform IC means h(t)
-        # = h_initial everywhere in the absence of forcing, so drawdown
-        # isolates the well response.
+        # Uniform IC fallback. A spatially-varying grid.top is a non-
+        # equilibrium field — the transient solver would diffuse it toward
+        # steady state and the relaxation would contaminate drawdown
+        # = h_initial − h(t) with a domain-wide pattern unrelated to the
+        # well. Uniform IC means h(t) = h_initial in the absence of
+        # forcing, so drawdown isolates the well response.
         active = grid.idomain[0] == 1
         mean_top = float(np.nanmean(np.where(active, grid.top, np.nan)))
         typer.echo(f"  Falling back to uniform initial head = {mean_top:.1f} m (mean of active top).")
@@ -122,6 +130,7 @@ def run(
         try:
             results[scen] = run_scenario(
                 cfg, grid, inputs, scen, ic_head, workspace_root / f"scen_{scen}",
+                chd_cells=chd_cells,
             )
             typer.echo(f"  done; {len(results[scen].times_days)} time steps saved.")
             recv_csv = out_dir / f"scenario_{scen}_springs.csv"
