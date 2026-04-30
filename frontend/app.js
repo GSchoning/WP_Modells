@@ -16,6 +16,8 @@ const STATE = {
   complexCount: 0,
   map: null,
   lastResult: null,
+  complexLngLat: {},      // complex_id -> [lng, lat] for fly-to
+  selectedComplexId: null,
 };
 
 function setStatus(msg, level = "") {
@@ -127,6 +129,10 @@ function buildLayers(map, mapData) {
       } });
   }
   if (mapData.spring_complexes) {
+    // Build complex_id -> [lng, lat] lookup for fly-to from bars/table.
+    for (const f of mapData.spring_complexes.features) {
+      STATE.complexLngLat[f.properties.complex_id] = f.geometry.coordinates;
+    }
     map.addSource("complexes", { type: "geojson", data: mapData.spring_complexes });
     map.addLayer({ id: "complex-circles", type: "circle", source: "complexes",
       paint: {
@@ -237,9 +243,65 @@ async function runScenario(map) {
   $("run-btn").textContent = "Run scenario";
 
   renderDecision(result);
+  renderSummaryStats(result);
   renderBarChart(result);
   renderTable(result);
   recolorComplexes(map, result);
+}
+
+function renderSummaryStats(result) {
+  const lastYear = Math.max(...result.output_years);
+  const yearBlock = result.by_year.find(y => y.time_years === lastYear);
+  const all = yearBlock.complexes;
+  const triggered = all.filter(c => c.triggered_by_proposed).length;
+  const already = all.filter(c => c.already_exceeded).length;
+  const ok = all.length - triggered - already;
+  $("stat-ok").textContent = ok;
+  $("stat-triggered").textContent = triggered;
+  $("stat-already").textContent = already;
+  $("stat-total").textContent = all.length;
+  $("summary-stats").classList.remove("empty");
+}
+
+function selectComplex(id) {
+  STATE.selectedComplexId = id;
+  // Map: fly to centroid + popup
+  const lngLat = STATE.complexLngLat[id];
+  if (lngLat && STATE.map) {
+    STATE.map.flyTo({ center: lngLat, zoom: Math.max(STATE.map.getZoom(), 9), speed: 1.4 });
+    // Find the latest data for this complex (if a scenario was run)
+    let popupHtml = `<strong>${id}</strong>`;
+    if (STATE.lastResult) {
+      const lastYear = Math.max(...STATE.lastResult.output_years);
+      const yr = STATE.lastResult.by_year.find(y => y.time_years === lastYear);
+      const c = yr?.complexes.find(x => x.complex_id === id);
+      if (c) {
+        const flag = c.triggered_by_proposed
+          ? '<div style="color:#b91c1c;font-weight:600">⚠ triggered by proposal</div>'
+          : c.already_exceeded
+            ? '<div style="color:#6d28d9;font-weight:600">already exceeded</div>'
+            : "";
+        popupHtml += `<br/>${c.n_springs} spring${c.n_springs == 1 ? "" : "s"}` +
+          `<br/>existing: ${fmt(c.s_approved_m)} m` +
+          `<br/>proposed: +${fmt(c.s_additional_m)} m` +
+          `<br/><strong>total: ${fmt(c.s_total_m)} m</strong>${flag}`;
+      }
+    }
+    new maplibregl.Popup({ closeOnClick: true })
+      .setLngLat(lngLat).setHTML(popupHtml).addTo(STATE.map);
+  }
+  // Bars: highlight matching rect
+  const bars = document.querySelectorAll("#bars rect, #bars text");
+  bars.forEach(el => {
+    if (el.getAttribute("data-id") === id) el.classList.add("selected");
+    else el.classList.remove("selected");
+  });
+  // Table: highlight matching row
+  const rows = document.querySelectorAll("#results-tables tbody tr");
+  rows.forEach(tr => {
+    if (tr.getAttribute("data-id") === id) tr.classList.add("row-selected");
+    else tr.classList.remove("row-selected");
+  });
 }
 
 function renderDecision(result) {
@@ -360,23 +422,25 @@ function renderBarChart(result) {
       const fill = already ? "#7c3aed" : "#475569";
       const r = make("rect", {
         x, y: yApp, width: barW, height: Math.max(0, baseY - yApp), fill,
+        "data-id": c.complex_id,
       });
       r.appendChild(make_title(
         `${c.complex_id} · existing: ${fmt(c.s_approved_m)} m${already ? " (already exceeds)" : ""}`
       ));
+      r.addEventListener("click", () => selectComplex(c.complex_id));
       svg.appendChild(r);
     }
-    // Additional (Scenario C): bright red iff this segment is what tips
-    // the bar over; amber otherwise (including when bar was already over).
     if (c.s_additional_m > 0) {
       const fill = triggered ? "#dc2626" : "#f59e0b";
       const r = make("rect", {
         x, y: yTotal, width: barW, height: Math.max(0, yApp - yTotal), fill,
+        "data-id": c.complex_id,
       });
       const tag = triggered ? " (TRIGGERS)" : (already ? " (on top of existing exceedance)" : "");
       r.appendChild(make_title(
         `${c.complex_id} · proposed: +${fmt(c.s_additional_m)} m, total: ${fmt(c.s_total_m)} m${tag}`
       ));
+      r.addEventListener("click", () => selectComplex(c.complex_id));
       svg.appendChild(r);
     }
     // Label
@@ -387,8 +451,11 @@ function renderBarChart(result) {
       x: labelX, y: labelY,
       "text-anchor": "end", "font-size": 9.5, fill: labelColor,
       transform: `rotate(-50 ${labelX} ${labelY})`,
+      "data-id": c.complex_id,
     });
     t.textContent = c.complex_id.length > 22 ? c.complex_id.slice(0, 21) + "…" : c.complex_id;
+    t.addEventListener("click", () => selectComplex(c.complex_id));
+    t.style.cursor = "pointer";
     svg.appendChild(t);
   });
 
@@ -436,6 +503,9 @@ function renderTable(result) {
   }
   html += "</tbody></table>";
   $("results-tables").innerHTML = html;
+  $("results-tables").querySelectorAll("tbody tr").forEach(tr => {
+    tr.addEventListener("click", () => selectComplex(tr.getAttribute("data-id")));
+  });
 }
 
 function recolorComplexes(map, result) {

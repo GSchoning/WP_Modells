@@ -3,14 +3,20 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Precipice — Water Licence Impact</title>
+<title>GAB Regulatory Advisor Tool</title>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.css" />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 <div id="app">
   <header>
-    <h1>Precipice Sandstone — Water Licence Impact</h1>
+    <div class="brand">
+      <div class="logo">GAB</div>
+      <div>
+        <h1>GAB Regulatory Advisor Tool</h1>
+        <div class="subtitle">Precipice Sandstone — water licence impact assessment</div>
+      </div>
+    </div>
     <span id="status">loading…</span>
   </header>
 
@@ -56,11 +62,17 @@
     </div>
 
     <div id="chart-pane">
+      <div id="summary-stats" class="empty">
+        <div class="stat ok"><div class="stat-num" id="stat-ok">—</div><div class="stat-label">under threshold</div></div>
+        <div class="stat triggered"><div class="stat-num" id="stat-triggered">—</div><div class="stat-label">triggered by proposal</div></div>
+        <div class="stat already"><div class="stat-num" id="stat-already">—</div><div class="stat-label">already exceeded</div></div>
+        <div class="stat total"><div class="stat-num" id="stat-total">—</div><div class="stat-label">total complexes</div></div>
+      </div>
       <div id="chart-header">
         <h2>Impact by spring complex</h2>
-        <span class="muted">stacked: existing (Scenario A) + proposed (Scenario C). Threshold dashed.</span>
+        <span class="muted">stacked: existing (Scenario A) + proposed (Scenario C). Threshold dashed. Click a bar to focus on the map.</span>
       </div>
-      <svg id="bars" width="100%" height="280" preserveAspectRatio="none"></svg>
+      <svg id="bars" width="100%" height="260" preserveAspectRatio="none"></svg>
       <details id="table-details">
         <summary>Show full table</summary>
         <div id="results-tables"></div>
