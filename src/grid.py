@@ -103,3 +103,40 @@ def cell_of(grid: Grid, x: float, y: float) -> tuple[int, int] | None:
     if 0 <= row < grid.nrow and 0 <= col < grid.ncol:
         return row, col
     return None
+
+
+def synthetic_uniform_grid(
+    nrow: int = 51,
+    ncol: int = 51,
+    dx: float = 500.0,
+    dy: float = 500.0,
+    K: float = 1.0,
+    Ss: float = 1e-5,
+    thickness: float = 100.0,
+    crs: str = "EPSG:28355",
+) -> Grid:
+    """Build a uniform single-layer Grid for analytical-solution testing."""
+    top = np.full((nrow, ncol), thickness)
+    botm = np.zeros((1, nrow, ncol))
+    idomain = np.ones((1, nrow, ncol), dtype=int)
+    k = np.full((1, nrow, ncol), K)
+    ss = np.full((1, nrow, ncol), Ss)
+    rch = np.zeros((nrow, ncol))
+    outcrop = np.zeros((nrow, ncol), dtype=bool)
+    return Grid(
+        nrow=nrow,
+        ncol=ncol,
+        nlay=1,
+        xorigin=0.0,
+        yorigin=0.0,
+        delr=np.full(ncol, dx),
+        delc=np.full(nrow, dy),
+        top=top,
+        botm=botm,
+        idomain=idomain,
+        k=k,
+        ss=ss,
+        rch=rch,
+        outcrop_mask=outcrop,
+        crs=crs,
+    )
