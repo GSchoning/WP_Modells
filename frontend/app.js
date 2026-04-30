@@ -387,6 +387,7 @@ function renderDecision(result) {
   if (result.theis) {
     mh += `<div>Theis local T = ${result.theis.T_m2_per_day.toFixed(2)} m²/d, S = ${result.theis.S_dimensionless.toExponential(1)}</div>`;
   }
+  mh += `<div><a href="scenario.html" target="_blank" rel="noopener" class="detail-link">View drawdown maps →</a></div>`;
   meta.innerHTML = mh;
 }
 

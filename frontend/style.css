@@ -173,6 +173,11 @@ body.resizing, body.resizing * { cursor: row-resize !important; user-select: non
 .advisory { background: var(--already-soft); color: #5b21b6;
   padding: 0.55rem 0.7rem; border-radius: 6px; font-size: 0.77rem;
   border-left: 3px solid var(--already); line-height: 1.5; }
+.detail-link { display: inline-block; margin-top: 0.25rem;
+  color: var(--accent); text-decoration: none; font-weight: 500;
+  font-size: 0.82rem; padding: 0.35rem 0.6rem; border-radius: 6px;
+  background: var(--accent-soft); transition: background 0.15s; }
+.detail-link:hover { background: #bfdbfe; }
 
 #chart-pane { padding: 1rem 1.2rem 0.6rem; display: flex; flex-direction: column;
   min-height: 0; overflow: hidden; }

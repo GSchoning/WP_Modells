@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Drawdown maps — GAB Regulatory Advisor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.css" />
+<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="scenario.css" />
+</head>
+<body>
+<div id="scenario-app">
+  <header>
+    <div class="brand">
+      <a href="/" class="back-link" title="Back to main">←</a>
+      <div class="logo">GAB</div>
+      <div>
+        <h1>Scenario drawdown maps</h1>
+        <div class="subtitle">Cumulative (existing + proposed) and proposed-only impact rasters</div>
+      </div>
+    </div>
+    <div id="scenario-meta" class="muted-strong">loading…</div>
+  </header>
+
+  <div id="scenario-controls">
+    <label>Output year
+      <select id="year-select"></select>
+    </label>
+    <label>Overlay opacity
+      <input type="range" id="opacity-slider" min="0" max="100" value="70" />
+      <span id="opacity-value">70%</span>
+    </label>
+    <div id="legend">
+      <span class="legend-label">Drawdown (m)</span>
+      <div class="ramp"></div>
+      <span class="ramp-min">0.01</span><span class="ramp-mid">mid</span><span class="ramp-max">99th pct</span>
+    </div>
+  </div>
+
+  <div id="maps">
+    <section class="map-card">
+      <div class="map-title">Cumulative impact <span class="muted">existing licences + proposed bore</span></div>
+      <div id="map-cumulative" class="dd-map"></div>
+    </section>
+    <section class="map-card">
+      <div class="map-title">Proposed bore only <span class="muted">Scenario C, isolated effect</span></div>
+      <div id="map-additional" class="dd-map"></div>
+    </section>
+  </div>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.js"></script>
+<script src="scenario.js"></script>
+</body>
+</html>

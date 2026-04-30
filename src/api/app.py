@@ -17,6 +17,7 @@ reporting.
 """
 from __future__ import annotations
 
+import io
 import json
 import os
 import time
@@ -24,10 +25,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import geopandas as gpd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import pyproj
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from ..config import Config, load_config
@@ -59,6 +65,9 @@ class _State:
     workspace_root: Path | None = None
     baseline: cache_mod.BaselineCache | None = None
     complex_centroids_4326: dict | None = None      # GeoJSON FeatureCollection
+    # Last Scenario C run, retained for the drawdown-maps page.
+    last_proposed_bore: dict | None = None
+    last_c_drawdown_by_year: dict | None = None      # year -> (nrow, ncol)
 
 
 state = _State()
@@ -258,6 +267,10 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
         raise HTTPException(500, str(exc))
     runtime = time.time() - t0
 
+    # Retain Scenario C grids for the drawdown-maps page.
+    state.last_proposed_bore = req.proposed_bore.model_dump()
+    state.last_c_drawdown_by_year = c_result.drawdown_at_output_years
+
     combined = combine_receptor_tables(
         state.baseline.receptors_df,
         c_result.receptors_df,
@@ -350,6 +363,105 @@ def map_data():
 
 def _gdf_to_geojson(gdf):
     return json.loads(gdf.to_json())
+
+
+def _drawdown_to_png(arr: np.ndarray, idomain: np.ndarray, vmax: float | None = None) -> bytes:
+    """Render a (nrow, ncol) drawdown grid to a transparent PNG.
+
+    Cells outside the active domain or with drawdown < 1 cm are fully
+    transparent. Values are clipped to vmax (defaults to the 99th
+    percentile of |arr| over active cells) and mapped through YlOrRd.
+    """
+    masked = np.where(idomain == 1, arr, np.nan)
+    masked = np.where(masked >= 0.01, masked, np.nan)        # below 1 cm: hide
+    valid = masked[~np.isnan(masked)]
+    if vmax is None:
+        vmax = float(np.nanpercentile(np.abs(valid), 99)) if valid.size else 0.1
+        vmax = max(vmax, 0.05)
+    nrow, ncol = arr.shape
+    fig = plt.figure(figsize=(ncol / 100, nrow / 100), dpi=100)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_axis_off()
+    cmap = plt.get_cmap("YlOrRd").copy()
+    cmap.set_bad(alpha=0.0)
+    norm = mcolors.Normalize(vmin=0, vmax=vmax)
+    ax.imshow(masked, cmap=cmap, norm=norm, origin="upper", interpolation="nearest")
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", transparent=True)
+    plt.close(fig)
+    return buf.getvalue()
+
+
+def _bbox_4326() -> dict:
+    """Project-CRS grid extent reprojected to EPSG:4326 (corners + bbox)."""
+    g = state.grid
+    transformer = pyproj.Transformer.from_crs(state.cfg.project.crs, "EPSG:4326", always_xy=True)
+    x0, y0 = g.xorigin, g.yorigin
+    x1 = g.xorigin + float(g.delr.sum())
+    y1 = g.yorigin + float(g.delc.sum())
+    tl = list(transformer.transform(x0, y1))
+    tr = list(transformer.transform(x1, y1))
+    br = list(transformer.transform(x1, y0))
+    bl = list(transformer.transform(x0, y0))
+    return {
+        "tl_tr_br_bl": [tl, tr, br, bl],
+        "bbox": [
+            min(tl[0], bl[0]), min(br[1], bl[1]),
+            max(tr[0], br[0]), max(tl[1], tr[1]),
+        ],
+    }
+
+
+@app.get("/api/last-scenario/info")
+def last_scenario_info():
+    """Metadata for the drawdown-maps page: bore, available years, bounds."""
+    if state.last_c_drawdown_by_year is None or state.last_proposed_bore is None:
+        return JSONResponse({"available": False})
+    transformer = pyproj.Transformer.from_crs(state.cfg.project.crs, "EPSG:4326", always_xy=True)
+    bore = dict(state.last_proposed_bore)
+    bore_lng, bore_lat = transformer.transform(float(bore["x"]), float(bore["y"]))
+    bbox = _bbox_4326()
+    return JSONResponse({
+        "available": True,
+        "bore": {**bore, "lng": bore_lng, "lat": bore_lat},
+        "years": sorted(state.last_c_drawdown_by_year.keys()),
+        "image_corners_4326": bbox["tl_tr_br_bl"],
+        "bbox_4326": bbox["bbox"],
+        "threshold_m": state.cfg.assessment.regulatory_threshold_m,
+    })
+
+
+@app.get("/api/last-scenario/drawdown.png")
+def last_scenario_drawdown_png(layer: str = "cumulative", year: float = 100.0):
+    """Drawdown raster as a transparent PNG, ready for a MapLibre image source."""
+    if state.last_c_drawdown_by_year is None:
+        raise HTTPException(404, "No scenario has been run yet")
+    available_years = list(state.last_c_drawdown_by_year.keys())
+    # Tolerate small float mismatches (e.g. 100.0 vs 100.0000001).
+    near = [y for y in available_years if abs(float(y) - float(year)) < 1e-6]
+    if not near:
+        raise HTTPException(400, f"Year {year} not available; choose from {available_years}")
+    y_key = near[0]
+
+    c_arr = state.last_c_drawdown_by_year[y_key]
+    if layer == "additional":
+        arr = c_arr
+    elif layer == "cumulative":
+        if state.baseline is None:
+            raise HTTPException(503, "Baseline not ready")
+        a_arr = state.baseline.drawdown_by_year.get(y_key)
+        if a_arr is None:
+            # Find the nearest baseline year.
+            keys = list(state.baseline.drawdown_by_year.keys())
+            nearest = min(keys, key=lambda k: abs(float(k) - float(y_key)))
+            a_arr = state.baseline.drawdown_by_year[nearest]
+        arr = a_arr + c_arr
+    else:
+        raise HTTPException(400, "layer must be 'cumulative' or 'additional'")
+
+    png = _drawdown_to_png(arr, state.grid.idomain[0])
+    headers = {"Cache-Control": "no-store"}    # avoid stale image after re-runs
+    return Response(content=png, media_type="image/png", headers=headers)
 
 
 _FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
