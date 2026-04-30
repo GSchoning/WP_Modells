@@ -1,6 +1,21 @@
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; font-family: -apple-system, system-ui, sans-serif; color: #1f2933; }
-#app { display: grid; grid-template-rows: auto minmax(280px, 1fr) minmax(440px, auto); height: 100%; min-height: 0; }
+#app { display: grid; grid-template-rows: auto minmax(160px, 1fr) 10px minmax(160px, 440px);
+  height: 100%; min-height: 0; }
+
+#splitter {
+  cursor: row-resize; background: #e4e7eb;
+  border-top: 1px solid #cbd2d9; border-bottom: 1px solid #cbd2d9;
+  position: relative; user-select: none;
+}
+#splitter::after {
+  content: ""; position: absolute;
+  left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 40px; height: 3px; background: #94a3b8; border-radius: 2px;
+}
+#splitter:hover { background: #cbd2d9; }
+#splitter:hover::after { background: #475569; }
+body.resizing, body.resizing * { cursor: row-resize !important; user-select: none !important; }
 
 header {
   display: flex; justify-content: space-between; align-items: center;

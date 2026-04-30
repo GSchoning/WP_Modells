@@ -104,6 +104,56 @@ async function init() {
   window.addEventListener("resize", () => {
     if (STATE.lastResult) renderBarChart(STATE.lastResult);
   });
+
+  setupSplitter(map);
+}
+
+function setupSplitter(map) {
+  const splitter = $("splitter");
+  if (!splitter) return;
+  let dragging = false;
+  let startY = 0;
+  let startLowerH = 0;
+
+  const onMove = (clientY) => {
+    if (!dragging) return;
+    const dy = clientY - startY;
+    const min = 140;
+    const max = window.innerHeight - 200;
+    const newH = Math.max(min, Math.min(max, startLowerH - dy));
+    $("app").style.gridTemplateRows = `auto minmax(140px, 1fr) 10px ${newH}px`;
+    if (map) map.resize();
+    if (STATE.lastResult) renderBarChart(STATE.lastResult);
+  };
+  const stop = () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove("resizing");
+  };
+
+  splitter.addEventListener("mousedown", (e) => {
+    dragging = true;
+    startY = e.clientY;
+    startLowerH = $("lower").getBoundingClientRect().height;
+    document.body.classList.add("resizing");
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => onMove(e.clientY));
+  window.addEventListener("mouseup", stop);
+  window.addEventListener("mouseleave", stop);
+
+  // Touch support for trackpads/mobile.
+  splitter.addEventListener("touchstart", (e) => {
+    if (!e.touches[0]) return;
+    dragging = true;
+    startY = e.touches[0].clientY;
+    startLowerH = $("lower").getBoundingClientRect().height;
+    document.body.classList.add("resizing");
+  }, { passive: true });
+  window.addEventListener("touchmove", (e) => {
+    if (e.touches[0]) onMove(e.touches[0].clientY);
+  }, { passive: true });
+  window.addEventListener("touchend", stop);
 }
 
 function buildLayers(map, mapData) {
