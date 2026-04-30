@@ -151,14 +151,15 @@ def run_scenario(
     perioddata = [(perlen_days, cfg.time.nstp, cfg.time.tsmult)]
 
     name = f"scen_{scenario}"
-    # Recharge stays on in transient runs. The IC is the recharge-balanced
-    # steady-state head field (with the same boundary CHD), so the recharge
-    # response is already in h_initial and cancels in drawdown = h_initial −
-    # h(t). Both Scenario A and C use the same recharge + CHD, so the
-    # cancellation is identical and superposition holds.
-    sim = build_transient(
+    # Twin-run drawdown: run the same model with and without wells, and
+    # compute s = h_no_pump(t) − h_with_pump(t). Anything that's identical
+    # between the two runs (IC, recharge, CHD, boundary effects, IC drift)
+    # cancels by construction, so drawdown is purely the well response.
+    # More robust than relying on s = h_initial − h(t), which only works
+    # cleanly if the IC is exactly steady-state for the same forcing.
+    sim_pump = build_transient(
         grid,
-        workspace,
+        workspace / "pump",
         name=name,
         wells=wells,
         initial_head=initial_head,
@@ -167,13 +168,30 @@ def run_scenario(
         recharge=True,
         complexity=cfg.solver.complexity,
     )
-    sim.write_simulation(silent=True)
-    success, _ = sim.run_simulation(silent=False)
+    sim_pump.write_simulation(silent=True)
+    success, _ = sim_pump.run_simulation(silent=False)
     if not success:
-        raise RuntimeError(f"scenario {scenario} run failed; check listing file in workspace")
+        raise RuntimeError(f"scenario {scenario} pump run failed; check listing file in workspace")
 
-    times_days, heads = _read_heads(Path(workspace), name)
-    drawdown = initial_head[np.newaxis, :, :] - heads        # (nt, nrow, ncol)
+    sim_nopump = build_transient(
+        grid,
+        workspace / "nopump",
+        name=name,
+        wells=[],
+        initial_head=initial_head,
+        perioddata=perioddata,
+        chd_cells=chd_cells,
+        recharge=True,
+        complexity=cfg.solver.complexity,
+    )
+    sim_nopump.write_simulation(silent=True)
+    success, _ = sim_nopump.run_simulation(silent=False)
+    if not success:
+        raise RuntimeError(f"scenario {scenario} no-pump twin failed; check listing file in workspace")
+
+    times_days, heads = _read_heads(workspace / "pump", name)
+    _, heads_nopump = _read_heads(workspace / "nopump", name)
+    drawdown = heads_nopump - heads                           # (nt, nrow, ncol)
     year_idx = _times_to_output_years(times_days, cfg.time.output_years)
     drawdown_by_year = {y: drawdown[i] for y, i in year_idx.items()}
 
