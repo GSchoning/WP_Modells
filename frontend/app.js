@@ -393,8 +393,11 @@ function renderDecision(result) {
 function renderBarChart(result) {
   const lastYear = Math.max(...result.output_years);
   const yearBlock = result.by_year.find(y => y.time_years === lastYear);
-  // Sort by s_total descending; keep all but cap at 30 for readability.
-  const allComplexes = [...yearBlock.complexes].sort((a,b) => b.s_total_m - a.s_total_m);
+  // Hide complexes with zero total impact — they'd just be empty bars and
+  // crowd the labels axis. 1 mm threshold absorbs floating-point noise.
+  const allComplexes = [...yearBlock.complexes]
+    .filter(c => c.s_total_m > 0.001)
+    .sort((a, b) => b.s_total_m - a.s_total_m);
   const complexes = allComplexes.slice(0, 30);
 
   const svg = $("bars");
@@ -536,9 +539,14 @@ function renderTable(result) {
   const lastYear = Math.max(...result.output_years);
   const yearBlock = result.by_year.find(y => y.time_years === lastYear);
   const all = [...yearBlock.complexes].sort((a, b) => b.s_total_m - a.s_total_m);
+  const hasTheis = all.some(c => c.s_additional_theis_m != null);
 
   let html = "<table><thead><tr>";
-  html += "<th>complex</th><th class=\"num\">existing (m)</th><th class=\"num\">proposed (m)</th><th class=\"num\">total (m)</th>";
+  html += "<th>complex</th>";
+  html += "<th class=\"num\">existing (m)</th>";
+  html += "<th class=\"num\">proposed (m)</th>";
+  if (hasTheis) html += "<th class=\"num\" title=\"Theis analytical estimate of proposed-bore drawdown\">Theis (m)</th>";
+  html += "<th class=\"num\">total (m)</th>";
   html += "</tr></thead><tbody>";
 
   for (const c of all) {
@@ -549,6 +557,7 @@ function renderTable(result) {
     html += `<td>${c.complex_id}</td>`;
     html += `<td class="num">${fmt(c.s_approved_m)}</td>`;
     html += `<td class="num">${fmt(c.s_additional_m)}</td>`;
+    if (hasTheis) html += `<td class="num">${fmt(c.s_additional_theis_m)}</td>`;
     html += `<td class="num"><strong>${fmt(c.s_total_m)}</strong></td>`;
     html += `</tr>`;
   }

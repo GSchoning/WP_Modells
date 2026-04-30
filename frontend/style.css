@@ -224,7 +224,7 @@ body.resizing, body.resizing * { cursor: row-resize !important; user-select: non
 #table-details summary:hover { background: var(--accent-soft); color: var(--accent); }
 #table-details[open] summary { background: var(--accent-soft); color: var(--accent); }
 
-table { width: 100%; max-width: 920px; border-collapse: separate;
+table { width: 100%; max-width: 1000px; border-collapse: separate;
   border-spacing: 0; font-size: 0.86rem; margin-top: 0.7rem;
   background: var(--surface-1); border-radius: 8px; overflow: hidden;
   box-shadow: var(--shadow-sm); border: 1px solid var(--line); }
