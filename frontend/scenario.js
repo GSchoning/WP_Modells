@@ -91,13 +91,42 @@ function createMap(elementId, layer, year) {
       id: "dd", type: "raster", source: "dd",
       paint: { "raster-opacity": STATE.opacity, "raster-fade-duration": 0 },
     });
-    // Bore marker
     new maplibregl.Marker({ color: "#f59e0b" })
       .setLngLat([STATE.info.bore.lng, STATE.info.bore.lat])
       .setPopup(new maplibregl.Popup().setHTML(
         `<strong>${STATE.info.bore.bore_id}</strong><br/>${STATE.info.bore.rate_ML_per_year} ML/yr`
       ))
       .addTo(map);
+
+    // Click-to-sample: query the underlying grid value at the clicked
+    // point. Server reprojects EPSG:4326 to project CRS and looks up
+    // the cell drawdown.
+    map.on("click", async (e) => {
+      const yr = $("year-select").value;
+      const url = `/api/last-scenario/drawdown/sample?lng=${e.lngLat.lng}&lat=${e.lngLat.lat}&layer=${layer}&year=${yr}`;
+      let resp;
+      try { resp = await fetch(url); } catch { return; }
+      if (!resp.ok) return;
+      const d = await resp.json();
+      let html;
+      if (!d.in_domain) {
+        html = "<em>outside model domain</em>";
+      } else {
+        const headerLine = layer === "cumulative"
+          ? "Cumulative drawdown"
+          : "Proposed-only drawdown";
+        const breakdown = layer === "cumulative" && d.s_approved_m != null
+          ? `<div class="muted-pop">existing ${d.s_approved_m.toFixed(2)} m + proposed ${d.s_additional_m.toFixed(2)} m</div>`
+          : "";
+        html = `<div><strong>${headerLine}</strong></div>` +
+               `<div style="font-size:1.1rem;margin:0.2rem 0">${d.drawdown_m.toFixed(2)} m</div>` +
+               breakdown +
+               `<div class="muted-pop">cell (${d.row}, ${d.col}) · ${yr} yr</div>`;
+      }
+      new maplibregl.Popup({ closeButton: true })
+        .setLngLat(e.lngLat).setHTML(html).addTo(map);
+    });
+    map.getCanvas().style.cursor = "crosshair";
   });
   return map;
 }

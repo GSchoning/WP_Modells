@@ -34,8 +34,9 @@
 .legend-label { font-size: 0.7rem; color: var(--ink-2);
   text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
 .ramp { width: 200px; height: 12px; border-radius: 4px;
-  background: linear-gradient(to right, #ffffcc, #ffeda0, #fed976, #feb24c, #fd8d3c, #fc4e2a, #e31a1c, #b10026);
+  background: linear-gradient(to right, #1e3a8a, #3b82f6, #fbbf24, #dc2626);
   border: 1px solid var(--line); }
+.muted-pop { color: #64748b; font-size: 0.72rem; margin-top: 0.15rem; }
 .ramp-min, .ramp-mid, .ramp-max { font-size: 0.7rem; color: var(--ink-2);
   font-variant-numeric: tabular-nums; }
 .ramp-mid { width: 0; opacity: 0; }   /* placeholder, dropped */

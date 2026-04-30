@@ -365,27 +365,42 @@ def _gdf_to_geojson(gdf):
     return json.loads(gdf.to_json())
 
 
+# Custom 4-stop blue→red sequential colormap for drawdown maps.
+# Navy → blue → amber → red; perceptually monotonic on a satellite
+# basemap. Created once at import time.
+_BLUE_RED_CMAP = mcolors.LinearSegmentedColormap.from_list(
+    "drawdown_blue_red",
+    ["#1e3a8a", "#3b82f6", "#fbbf24", "#dc2626"],
+)
+_BLUE_RED_CMAP.set_bad(alpha=0.0)
+
+# Drawdown below this value is rendered transparent. Matches the
+# regulatory trigger threshold's lower bound where values become
+# decision-relevant.
+DRAWDOWN_DISPLAY_FLOOR_M = 0.2
+
+
 def _drawdown_to_png(arr: np.ndarray, idomain: np.ndarray, vmax: float | None = None) -> bytes:
     """Render a (nrow, ncol) drawdown grid to a transparent PNG.
 
-    Cells outside the active domain or with drawdown < 1 cm are fully
-    transparent. Values are clipped to vmax (defaults to the 99th
-    percentile of |arr| over active cells) and mapped through YlOrRd.
+    Cells outside the active domain or with drawdown below
+    DRAWDOWN_DISPLAY_FLOOR_M are fully transparent. Values are clipped
+    to vmax (default: 99th percentile of |arr| over the visible cells)
+    and mapped through a navy→amber→red sequential colormap.
     """
     masked = np.where(idomain == 1, arr, np.nan)
-    masked = np.where(masked >= 0.01, masked, np.nan)        # below 1 cm: hide
+    masked = np.where(masked >= DRAWDOWN_DISPLAY_FLOOR_M, masked, np.nan)
     valid = masked[~np.isnan(masked)]
     if vmax is None:
-        vmax = float(np.nanpercentile(np.abs(valid), 99)) if valid.size else 0.1
-        vmax = max(vmax, 0.05)
+        vmax = float(np.nanpercentile(np.abs(valid), 99)) if valid.size else 1.0
+        vmax = max(vmax, DRAWDOWN_DISPLAY_FLOOR_M + 0.1)
     nrow, ncol = arr.shape
     fig = plt.figure(figsize=(ncol / 100, nrow / 100), dpi=100)
     ax = fig.add_axes([0, 0, 1, 1])
     ax.set_axis_off()
-    cmap = plt.get_cmap("YlOrRd").copy()
-    cmap.set_bad(alpha=0.0)
-    norm = mcolors.Normalize(vmin=0, vmax=vmax)
-    ax.imshow(masked, cmap=cmap, norm=norm, origin="upper", interpolation="nearest")
+    norm = mcolors.Normalize(vmin=DRAWDOWN_DISPLAY_FLOOR_M, vmax=vmax)
+    ax.imshow(masked, cmap=_BLUE_RED_CMAP, norm=norm,
+              origin="upper", interpolation="nearest")
     buf = io.BytesIO()
     fig.savefig(buf, format="png", transparent=True)
     plt.close(fig)
@@ -462,6 +477,54 @@ def last_scenario_drawdown_png(layer: str = "cumulative", year: float = 100.0):
     png = _drawdown_to_png(arr, state.grid.idomain[0])
     headers = {"Cache-Control": "no-store"}    # avoid stale image after re-runs
     return Response(content=png, media_type="image/png", headers=headers)
+
+
+@app.get("/api/last-scenario/drawdown/sample")
+def last_scenario_drawdown_sample(lng: float, lat: float,
+                                  layer: str = "cumulative", year: float = 100.0):
+    """Drawdown value at a clicked map point (EPSG:4326)."""
+    if state.last_c_drawdown_by_year is None:
+        raise HTTPException(404, "No scenario has been run yet")
+    available_years = list(state.last_c_drawdown_by_year.keys())
+    near = [yk for yk in available_years if abs(float(yk) - float(year)) < 1e-6]
+    if not near:
+        raise HTTPException(400, f"Year {year} not available")
+    y_key = near[0]
+
+    transformer = pyproj.Transformer.from_crs("EPSG:4326", state.cfg.project.crs, always_xy=True)
+    x, y_proj = transformer.transform(lng, lat)
+    rc = cell_of(state.grid, x, y_proj)
+    if rc is None or state.grid.idomain[0, rc[0], rc[1]] != 1:
+        return JSONResponse({
+            "in_domain": False,
+            "x": float(x), "y": float(y_proj),
+        })
+
+    c_val = float(state.last_c_drawdown_by_year[y_key][rc[0], rc[1]])
+    if layer == "additional":
+        s_total = c_val
+        s_approved = None
+    elif layer == "cumulative":
+        if state.baseline is None:
+            raise HTTPException(503, "Baseline not ready")
+        a_grid = state.baseline.drawdown_by_year.get(y_key)
+        if a_grid is None:
+            keys = list(state.baseline.drawdown_by_year.keys())
+            nearest = min(keys, key=lambda k: abs(float(k) - float(y_key)))
+            a_grid = state.baseline.drawdown_by_year[nearest]
+        s_approved = float(a_grid[rc[0], rc[1]])
+        s_total = s_approved + c_val
+    else:
+        raise HTTPException(400, "layer must be 'cumulative' or 'additional'")
+
+    return JSONResponse({
+        "in_domain": True,
+        "x": float(x), "y": float(y_proj),
+        "row": int(rc[0]), "col": int(rc[1]),
+        "drawdown_m": s_total,
+        "s_approved_m": s_approved,
+        "s_additional_m": c_val,
+    })
 
 
 _FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
