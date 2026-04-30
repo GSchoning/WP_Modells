@@ -112,9 +112,10 @@ def run(
                 cfg, grid, inputs, scen, ic_head, workspace_root / f"scen_{scen}",
             )
             typer.echo(f"  done; {len(results[scen].times_days)} time steps saved.")
-            recv_csv = out_dir / f"scenario_{scen}_receptors.csv"
+            recv_csv = out_dir / f"scenario_{scen}_springs.csv"
             results[scen].receptors_df.to_csv(recv_csv, index=False)
-            typer.echo(f"  receptors → {recv_csv}")
+            n_springs = results[scen].receptors_df["receptor_id"].nunique() if len(results[scen].receptors_df) else 0
+            typer.echo(f"  springs sampled: {n_springs} → {recv_csv}")
         except (RuntimeError, ValueError) as exc:
             typer.echo(f"  Scenario {scen} skipped: {exc}")
 

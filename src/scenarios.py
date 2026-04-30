@@ -75,6 +75,13 @@ def _times_to_output_years(times_days: np.ndarray, output_years: list[float]) ->
     return {float(y): int(np.argmin(np.abs(times_days - t))) for y, t in zip(output_years, targets)}
 
 
+def _pick_id_column(gdf: gpd.GeoDataFrame, candidates: tuple[str, ...]) -> str:
+    for c in candidates:
+        if c in gdf.columns:
+            return c
+    return gdf.columns[0]
+
+
 def _sample_receptors(
     drawdown: np.ndarray,                       # (nrow, ncol)
     receptor_points: gpd.GeoDataFrame,
@@ -165,15 +172,17 @@ def run_scenario(
     year_idx = _times_to_output_years(times_days, cfg.time.output_years)
     drawdown_by_year = {y: drawdown[i] for y, i in year_idx.items()}
 
+    # Sample springs only for now. Receptor bores share cells with the
+    # pumping bores, so their reported drawdown is dominated by mesh-
+    # artefact in-cell self-pumping; needs a Theis correction before the
+    # number is meaningful at a 1500 m cell size. TODO: re-enable with
+    # correction.
     receptor_frames: list[pd.DataFrame] = []
-    for y, idx in year_idx.items():
-        if inputs.springs is not None:
+    if inputs.springs is not None and len(inputs.springs):
+        spring_id_col = _pick_id_column(inputs.springs, ("spring_id", "SpringID", "Spring_ID", "ID", "OBJECTID", "FID"))
+        for y, idx in year_idx.items():
             receptor_frames.append(
-                _sample_receptors(drawdown[idx], inputs.springs, "spring_id" if "spring_id" in inputs.springs.columns else inputs.springs.columns[0], grid, y)
-            )
-        if inputs.receptor_bores is not None and len(inputs.receptor_bores):
-            receptor_frames.append(
-                _sample_receptors(drawdown[idx], inputs.receptor_bores, "bore_id", grid, y)
+                _sample_receptors(drawdown[idx], inputs.springs, spring_id_col, grid, y)
             )
     receptors_df = pd.concat(receptor_frames, ignore_index=True) if receptor_frames else pd.DataFrame(
         columns=["receptor_id", "time_years", "drawdown_m"]
