@@ -13,6 +13,7 @@ import numpy as np
 import typer
 
 from .config import load_config
+from .figures import make_all as make_figures
 from .grid import build_grid_from_properties
 from .io_layer import load_inputs, validate
 from .reporting import write_validation_report
@@ -53,6 +54,8 @@ def run(
     config: Path = typer.Option("config.yaml", "--config", "-c"),
     skip_scenarios: bool = typer.Option(False, "--skip-scenarios",
                                         help="Run ingest + grid + validate only."),
+    figures: bool = typer.Option(True, "--figures/--no-figures",
+                                 help="Write diagnostic PNGs to reports/figures/."),
     proposed_x: float = typer.Option(None, "--proposed-x"),
     proposed_y: float = typer.Option(None, "--proposed-y"),
     proposed_rate: float = typer.Option(None, "--proposed-rate",
@@ -128,6 +131,13 @@ def run(
         out_csv = out_dir / "receptors_combined.csv"
         combined.to_csv(out_csv, index=False)
         typer.echo(f"  combined receptor table → {out_csv}")
+
+    if figures and results:
+        typer.echo("\nWriting diagnostic figures…")
+        fig_dir = Path("reports/figures")
+        written = make_figures(grid, inputs, cfg, results, fig_dir)
+        for p in written:
+            typer.echo(f"  → {p}")
 
 
 @app.command()
