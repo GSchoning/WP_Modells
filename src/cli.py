@@ -51,9 +51,20 @@ def run(
     config: Path = typer.Option("config.yaml", "--config", "-c"),
     skip_scenarios: bool = typer.Option(False, "--skip-scenarios",
                                         help="Run ingest + grid + validate only."),
+    proposed_x: float = typer.Option(None, "--proposed-x"),
+    proposed_y: float = typer.Option(None, "--proposed-y"),
+    proposed_rate: float = typer.Option(None, "--proposed-rate",
+                                        help="Proposed bore extraction rate (m³/d)."),
 ):
     """Run the full pipeline: ingest → grid → scenarios A & C → superposition → report."""
     cfg = load_config(config)
+    if proposed_x is not None:
+        cfg.inputs.proposed_bore.x = proposed_x
+    if proposed_y is not None:
+        cfg.inputs.proposed_bore.y = proposed_y
+    if proposed_rate is not None:
+        cfg.inputs.proposed_bore.rate_m3_per_day = proposed_rate
+
     typer.echo(f"Loading inputs (project CRS: {cfg.project.crs})…")
     inputs = load_inputs(cfg)
 
@@ -78,6 +89,8 @@ def run(
 
     workspace_root = Path(cfg.run.workspace_root)
     workspace_root.mkdir(parents=True, exist_ok=True)
+    out_dir = Path("outputs")
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     typer.echo("\nRunning steady-state pre-run (no pumping, recharge on)…")
     try:
@@ -95,19 +108,21 @@ def run(
                 cfg, grid, inputs, scen, ic_head, workspace_root / f"scen_{scen}",
             )
             typer.echo(f"  done; {len(results[scen].times_days)} time steps saved.")
+            recv_csv = out_dir / f"scenario_{scen}_receptors.csv"
+            results[scen].receptors_df.to_csv(recv_csv, index=False)
+            typer.echo(f"  receptors → {recv_csv}")
         except (RuntimeError, ValueError) as exc:
             typer.echo(f"  Scenario {scen} skipped: {exc}")
 
     if "A" in results and "C" in results:
         typer.echo("\nCombining via superposition (B = A + C)…")
         combined = combine_receptor_tables(
-            results["A"].receptors_df.rename(columns={"drawdown_m": "drawdown_m"}),
-            results["C"].receptors_df.rename(columns={"drawdown_m": "drawdown_m"}),
+            results["A"].receptors_df,
+            results["C"].receptors_df,
         )
-        out_csv = Path("outputs/receptors_combined.csv")
-        out_csv.parent.mkdir(parents=True, exist_ok=True)
+        out_csv = out_dir / "receptors_combined.csv"
         combined.to_csv(out_csv, index=False)
-        typer.echo(f"  receptor table → {out_csv}")
+        typer.echo(f"  combined receptor table → {out_csv}")
 
 
 @app.command()
