@@ -1,21 +1,35 @@
 """Command-line entry point (CLAUDE.md §7).
 
 Usage:
-    python -m src.cli run --config config.yaml
     python -m src.cli validate --config config.yaml
+    python -m src.cli run      --config config.yaml
+    python -m src.cli theis                            # synthetic Theis sanity check
 """
 from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import typer
 
 from .config import load_config
-from .io_layer import load_inputs, validate
 from .grid import build_grid_from_properties
+from .io_layer import load_inputs, validate
 from .reporting import write_validation_report
+from .scenarios import run_scenario, run_steady_state
+from .superposition import combine_rasters, combine_receptor_tables
 
 app = typer.Typer(add_completion=False, help="Precipice POC pipeline")
+
+
+def _print_grid_summary(grid):
+    n_active = int((grid.idomain == 1).sum())
+    typer.echo(f"  grid: {grid.nlay} × {grid.nrow} × {grid.ncol}, "
+               f"dx={grid.delr[0]:.0f} m, dy={grid.delc[0]:.0f} m")
+    typer.echo(f"  active cells (IBOUND=1): {n_active}")
+    typer.echo(f"  domain bounds (project CRS): "
+               f"X {grid.xorigin:.0f}–{grid.xorigin + grid.delr.sum():.0f}, "
+               f"Y {grid.yorigin:.0f}–{grid.yorigin + grid.delc.sum():.0f}")
 
 
 @app.command("validate")
@@ -33,7 +47,11 @@ def validate_cmd(config: Path = typer.Option("config.yaml", "--config", "-c")):
 
 
 @app.command()
-def run(config: Path = typer.Option("config.yaml", "--config", "-c")):
+def run(
+    config: Path = typer.Option("config.yaml", "--config", "-c"),
+    skip_scenarios: bool = typer.Option(False, "--skip-scenarios",
+                                        help="Run ingest + grid + validate only."),
+):
     """Run the full pipeline: ingest → grid → scenarios A & C → superposition → report."""
     cfg = load_config(config)
     typer.echo(f"Loading inputs (project CRS: {cfg.project.crs})…")
@@ -41,13 +59,7 @@ def run(config: Path = typer.Option("config.yaml", "--config", "-c")):
 
     typer.echo("Building grid from properties.csv…")
     grid = build_grid_from_properties(inputs.properties, cfg.project.crs)
-    typer.echo(f"  grid: {grid.nlay} × {grid.nrow} × {grid.ncol}, "
-               f"dx={grid.delr[0]:.0f} m, dy={grid.delc[0]:.0f} m")
-    n_active = int((grid.idomain == 1).sum())
-    typer.echo(f"  active cells (IBOUND=1): {n_active}")
-    typer.echo(f"  domain bounds (project CRS): "
-               f"X {grid.xorigin:.0f}–{grid.xorigin + grid.delr.sum():.0f}, "
-               f"Y {grid.yorigin:.0f}–{grid.yorigin + grid.delc.sum():.0f}")
+    _print_grid_summary(grid)
 
     findings = validate(inputs, cfg, grid)
     write_validation_report(findings, Path("reports/validation.md"))
@@ -60,13 +72,55 @@ def run(config: Path = typer.Option("config.yaml", "--config", "-c")):
     typer.echo(f"  receptor bores: {len(inputs.receptor_bores)}")
     typer.echo(f"  springs: {0 if inputs.springs is None else len(inputs.springs)}")
 
-    typer.echo(
-        "\nScenario execution (build_scenario) is not yet wired up — see "
-        "src/model_builder.py. Codespace setup is complete: environment, "
-        "ingest, grid construction, and validation are working."
-    )
+    if skip_scenarios:
+        typer.echo("\nSkipping scenario execution (--skip-scenarios).")
+        return
+
+    workspace_root = Path(cfg.run.workspace_root)
+    workspace_root.mkdir(parents=True, exist_ok=True)
+
+    typer.echo("\nRunning steady-state pre-run (no pumping, recharge on)…")
+    try:
+        ic_head = run_steady_state(cfg, grid, workspace_root / "ss")
+    except RuntimeError as exc:
+        typer.echo(f"  steady-state failed: {exc}")
+        typer.echo("  Falling back to uniform initial head = grid.top.")
+        ic_head = grid.top.copy()
+
+    results = {}
+    for scen in cfg.run.scenarios:
+        typer.echo(f"\nRunning Scenario {scen}…")
+        try:
+            results[scen] = run_scenario(
+                cfg, grid, inputs, scen, ic_head, workspace_root / f"scen_{scen}",
+            )
+            typer.echo(f"  done; {len(results[scen].times_days)} time steps saved.")
+        except (RuntimeError, ValueError) as exc:
+            typer.echo(f"  Scenario {scen} skipped: {exc}")
+
+    if "A" in results and "C" in results:
+        typer.echo("\nCombining via superposition (B = A + C)…")
+        combined = combine_receptor_tables(
+            results["A"].receptors_df.rename(columns={"drawdown_m": "drawdown_m"}),
+            results["C"].receptors_df.rename(columns={"drawdown_m": "drawdown_m"}),
+        )
+        out_csv = Path("outputs/receptors_combined.csv")
+        out_csv.parent.mkdir(parents=True, exist_ok=True)
+        combined.to_csv(out_csv, index=False)
+        typer.echo(f"  receptor table → {out_csv}")
 
 
-# Allow `python -m src.cli` to invoke the app directly.
+@app.command()
+def theis():
+    """Run the synthetic Theis sanity check (no real data needed)."""
+    import shutil
+    if shutil.which("mf6") is None:
+        typer.echo("mf6 binary not on PATH; install via "
+                   "`python -m flopy.utils.get_modflow $HOME/.local/bin --subset mf6`")
+        raise typer.Exit(code=2)
+    import pytest
+    raise typer.Exit(code=pytest.main(["-q", "tests/test_theis.py"]))
+
+
 if __name__ == "__main__":
     app()
