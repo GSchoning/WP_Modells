@@ -1,6 +1,6 @@
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; font-family: -apple-system, system-ui, sans-serif; color: #1f2933; }
-#app { display: grid; grid-template-rows: auto 1fr 360px; height: 100%; min-height: 0; }
+#app { display: grid; grid-template-rows: auto minmax(280px, 1fr) minmax(440px, auto); height: 100%; min-height: 0; }
 
 header {
   display: flex; justify-content: space-between; align-items: center;
@@ -57,6 +57,7 @@ header .subtitle { font-size: 0.75rem; color: #cbd5e1; }
 #lower {
   display: grid; grid-template-columns: 240px 1fr; min-height: 0;
   border-top: 1px solid #cbd2d9; background: #ffffff;
+  overflow: auto;
 }
 #decision-panel {
   border-right: 1px solid #e4e7eb; padding: 0.8rem 1rem;
