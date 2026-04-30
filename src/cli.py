@@ -201,5 +201,21 @@ def theis():
     raise typer.Exit(code=pytest.main(["-q", "tests/test_theis.py"]))
 
 
+@app.command()
+def serve(
+    config: Path = typer.Option("config.yaml", "--config", "-c"),
+    host: str = typer.Option("0.0.0.0", "--host"),
+    port: int = typer.Option(8000, "--port"),
+    reload: bool = typer.Option(False, "--reload",
+                                help="Auto-reload on code changes (dev only)."),
+):
+    """Run the FastAPI service for the regulator UI."""
+    import os
+    import uvicorn
+    os.environ["PRECIPICE_CONFIG"] = str(config)
+    typer.echo(f"PRECIPICE_CONFIG={config}; serving on http://{host}:{port}")
+    uvicorn.run("src.api.app:app", host=host, port=port, reload=reload)
+
+
 if __name__ == "__main__":
     app()

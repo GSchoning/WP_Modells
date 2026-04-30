@@ -21,6 +21,15 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
 
+  api:
+    extends:
+      service: app
+    command: python -m src.cli serve --config config.yaml
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./frontend:/app/frontend
+
   notebook:
     extends:
       service: app

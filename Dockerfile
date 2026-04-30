@@ -45,6 +45,7 @@ RUN python -m flopy.utils.get_modflow /usr/local/bin --subset mf6 \
 
 # --- Source code ----------------------------------------------------------
 COPY src/ ./src/
+COPY frontend/ ./frontend/
 COPY config.yaml ./config.yaml
 
 # Default runtime user (non-root for safety; container can still write to

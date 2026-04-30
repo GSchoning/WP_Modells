@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Precipice — Water Licence Impact</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.css" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Precipice Sandstone — Water Licence Impact</h1>
+    <span id="status">loading…</span>
+  </header>
+
+  <main>
+    <section id="map-pane">
+      <div id="map"></div>
+      <div id="map-legend">
+        <div><span class="dot pumping"></span> existing licensed bore</div>
+        <div><span class="dot spring"></span> spring</div>
+        <div><span class="dot proposed"></span> proposed bore (click map to place)</div>
+      </div>
+    </section>
+
+    <aside id="controls">
+      <h2>Proposed bore</h2>
+      <form id="scenario-form">
+        <label>Bore ID
+          <input type="text" id="bore_id" value="PROPOSED_001" />
+        </label>
+        <label>Easting (m, project CRS)
+          <input type="number" id="x" step="any" required />
+        </label>
+        <label>Northing (m, project CRS)
+          <input type="number" id="y" step="any" required />
+        </label>
+        <label>Extraction rate (ML/year)
+          <input type="number" id="rate" step="any" min="0" value="1000" required />
+        </label>
+        <button type="submit" id="run-btn">Run scenario</button>
+        <p class="muted">A scenario takes ~5 minutes. Existing-bores baseline is cached.</p>
+      </form>
+
+      <section id="results">
+        <h2>Results</h2>
+        <p id="results-empty" class="muted">No scenario run yet.</p>
+        <div id="results-meta" hidden></div>
+        <div id="results-tables" hidden></div>
+      </section>
+    </aside>
+  </main>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

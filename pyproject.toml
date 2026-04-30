@@ -27,6 +27,8 @@ dependencies = [
   "pydantic>=2.5",
   "typer>=0.12",
   "pyarrow>=15",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
 ]
 
 [project.optional-dependencies]
