@@ -28,6 +28,11 @@ class Inputs:
 
 ML_PER_YEAR_TO_M3_PER_DAY = 1000.0 / 365.25
 
+# Springs >1 km from the outcrop are not hydrologically connected to the
+# Precipice in a way this single-layer model can represent, so we drop them
+# at ingest rather than reporting drawdown that's structurally meaningless.
+SPRINGS_OUTCROP_BUFFER_M = 1000.0
+
 
 def _read_water_use(cfg: Config) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
     """Return (pumping_bores, receptor_bores) as GeoDataFrames in project CRS.
@@ -108,6 +113,20 @@ def load_inputs(cfg: Config) -> Inputs:
     formation = _polygonize_extent(formation_raw, properties, cfg.project.crs)
     pumping, receptors = _read_water_use(cfg)
     springs = _read_springs(cfg)
+
+    if springs is not None and len(springs):
+        outcrop_buffered = outcrop.unary_union.buffer(SPRINGS_OUTCROP_BUFFER_M)
+        near_outcrop = springs.within(outcrop_buffered)
+        n_dropped = int((~near_outcrop).sum())
+        if n_dropped:
+            import sys
+            print(
+                f"[springs] dropped {n_dropped} of {len(springs)} springs "
+                f">{SPRINGS_OUTCROP_BUFFER_M:.0f} m from outcrop; "
+                f"kept {int(near_outcrop.sum())}",
+                file=sys.stderr,
+            )
+        springs = springs[near_outcrop].copy()
 
     return Inputs(
         formation_extent=formation,
