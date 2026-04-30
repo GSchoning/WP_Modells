@@ -67,6 +67,14 @@ class RunCfg(BaseModel):
     workspace_root: Path = Path("/tmp/mf6_workspaces")
 
 
+class AssessmentCfg(BaseModel):
+    # Regulatory drawdown trigger threshold (m). A spring complex is flagged
+    # as "exceeded" when s_total at any output year >= this value.
+    regulatory_threshold_m: float = 0.4
+    spring_complex_col: str = "complex_na"
+    spring_id_col: str = "site_no"
+
+
 class ProjectCfg(BaseModel):
     name: str
     crs: str
@@ -80,6 +88,7 @@ class Config(BaseModel):
     time: TimeCfg = TimeCfg()
     solver: SolverCfg = SolverCfg()
     run: RunCfg = RunCfg()
+    assessment: AssessmentCfg = AssessmentCfg()
 
 
 def load_config(path: str | Path) -> Config:

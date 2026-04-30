@@ -201,16 +201,42 @@ def run_scenario(
     # artefact in-cell self-pumping; needs a Theis correction before the
     # number is meaningful at a 1500 m cell size. TODO: re-enable with
     # correction.
+    # Sample drawdown at every member spring, then aggregate to complex
+    # taking the max — the regulatory unit of analysis is the complex,
+    # and the conservative choice for trigger-threshold reporting is the
+    # worst-affected spring within the complex.
     receptor_frames: list[pd.DataFrame] = []
     if inputs.springs is not None and len(inputs.springs):
-        spring_id_col = _pick_id_column(inputs.springs, ("spring_id", "SpringID", "Spring_ID", "ID", "OBJECTID", "FID"))
+        spring_id_col = cfg.assessment.spring_id_col
+        complex_col = cfg.assessment.spring_complex_col
+        if spring_id_col not in inputs.springs.columns:
+            spring_id_col = _pick_id_column(
+                inputs.springs,
+                ("spring_id", "SpringID", "Spring_ID", "ID", "OBJECTID", "FID"),
+            )
         for y, idx in year_idx.items():
             receptor_frames.append(
                 _sample_receptors(drawdown[idx], inputs.springs, spring_id_col, grid, y)
             )
-    receptors_df = pd.concat(receptor_frames, ignore_index=True) if receptor_frames else pd.DataFrame(
-        columns=["receptor_id", "time_years", "drawdown_m"]
-    )
+    if receptor_frames:
+        per_spring = pd.concat(receptor_frames, ignore_index=True)
+        if complex_col in inputs.springs.columns:
+            spring_to_complex = dict(
+                zip(inputs.springs[spring_id_col], inputs.springs[complex_col])
+            )
+            per_spring["complex"] = per_spring["receptor_id"].map(spring_to_complex)
+            receptors_df = (
+                per_spring.dropna(subset=["complex"])
+                .groupby(["complex", "time_years"], as_index=False)
+                .agg(drawdown_m=("drawdown_m", "max"),
+                     n_springs=("drawdown_m", "size"))
+                .rename(columns={"complex": "receptor_id"})
+            )
+        else:
+            receptors_df = per_spring
+            receptors_df["n_springs"] = 1
+    else:
+        receptors_df = pd.DataFrame(columns=["receptor_id", "time_years", "drawdown_m", "n_springs"])
 
     return ScenarioResult(
         name=name,

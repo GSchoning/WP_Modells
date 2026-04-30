@@ -128,6 +128,23 @@ def load_inputs(cfg: Config) -> Inputs:
             )
         springs = springs[near_outcrop].copy()
 
+        # Normalise the complex name and drop springs without one. Spring
+        # complexes are the regulatory unit of analysis; an unaffiliated
+        # spring would have to become its own complex which complicates
+        # downstream reporting for little gain.
+        complex_col = cfg.assessment.spring_complex_col
+        if complex_col in springs.columns:
+            springs[complex_col] = springs[complex_col].astype(str).str.strip()
+            blanks = springs[complex_col].isin(("", "nan", "None")) | springs[complex_col].isna()
+            n_blank = int(blanks.sum())
+            if n_blank:
+                import sys
+                print(
+                    f"[springs] dropped {n_blank} springs with no {complex_col}",
+                    file=sys.stderr,
+                )
+            springs = springs[~blanks].copy()
+
     return Inputs(
         formation_extent=formation,
         outcrop=outcrop,

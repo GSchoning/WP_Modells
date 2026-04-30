@@ -137,10 +137,23 @@ def write_impact_report(
                      f"(= {pb_m3d:,.0f} m³/d)")
     else:
         lines.append("- Proposed bore (Scenario C): _not set_")
-    n_springs_assessed = combined["receptor_id"].nunique() if len(combined) else 0
-    lines.append(f"- Springs assessed: **{n_springs_assessed}** (within "
-                 f"1 km of outcrop)")
+    n_complexes = combined["receptor_id"].nunique() if len(combined) else 0
+    threshold = cfg.assessment.regulatory_threshold_m
+    exceeded_any_year = (
+        combined.loc[combined["s_total"] >= threshold, "receptor_id"].nunique()
+        if len(combined) else 0
+    )
+    lines.append(f"- Spring complexes assessed: **{n_complexes}** (within "
+                 f"1 km of outcrop, with a `complex_na`)")
     lines.append(f"- Output years: {', '.join(f'{y:.0f}' for y in output_years)}")
+    lines.append(f"- Regulatory threshold: **{threshold:.2f} m**")
+    if n_complexes:
+        if exceeded_any_year:
+            lines.append(f"- ⚠ Complexes exceeding threshold at any output year: "
+                         f"**{exceeded_any_year} of {n_complexes}**")
+        else:
+            lines.append(f"- ✓ No complex exceeds the {threshold:.2f} m threshold "
+                         "at any output year.")
     lines.append("")
 
     lines.append("## Grid + properties summary")
@@ -154,11 +167,11 @@ def write_impact_report(
     lines.append("")
 
     for y in output_years:
-        lines.append(f"## Top {top_n} most-impacted springs at t = {y:.0f} yr")
+        lines.append(f"## Top {top_n} most-impacted complexes at t = {y:.0f} yr")
         lines.append("")
         top_df = _top_n_table(combined, y, top_n)
         top_df = top_df.rename(columns={
-            "receptor_id": "spring_id",
+            "receptor_id": "complex",
             "s_approved": "s_approved (m)",
             "s_additional": "s_additional (m)",
             "s_total": "s_total (m)",

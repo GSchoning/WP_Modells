@@ -59,13 +59,15 @@ def theis_at_springs(
     well_y: float,
     well_rate_m3_per_day: float,
     output_years: list[float],
+    complex_col: str | None = None,
 ) -> pd.DataFrame:
     """Theis drawdown at each spring for a single pumping bore.
 
-    Returns a tidy frame (receptor_id, time_years, drawdown_m_theis).
-    Uses local T and S at the well cell (the analytical solution assumes
-    homogeneity; we pick the well-cell values as the most representative
-    single point estimate).
+    If `complex_col` is given, aggregates by complex taking the **max**
+    drawdown over member springs (= min distance) and the corresponding
+    minimum r — matches the model-side aggregation in scenarios.py.
+
+    Returns a tidy frame keyed by (receptor_id, time_years).
     """
     rc = cell_of(grid, well_x, well_y)
     if rc is None:
@@ -81,16 +83,31 @@ def theis_at_springs(
     rows = []
     Q = abs(float(well_rate_m3_per_day))
     spring_ids = springs[spring_id_col].to_numpy()
+    complex_names = (
+        springs[complex_col].to_numpy() if complex_col and complex_col in springs.columns else None
+    )
     for y in output_years:
         t_days = y * YEAR_DAYS
         s = theis_drawdown(Q, T, S, r, t_days)
-        for sid, ri, di in zip(spring_ids, r, s):
+        for i, (sid, ri, di) in enumerate(zip(spring_ids, r, s)):
             rows.append({
-                "receptor_id": sid,
+                "receptor_id": str(complex_names[i]) if complex_names is not None else sid,
+                "spring_id": sid,
                 "time_years": float(y),
                 "drawdown_m_theis": float(di),
                 "T_m2_per_day": T,
                 "S_dimensionless": S,
                 "r_m": float(ri),
             })
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if complex_names is not None and not df.empty:
+        df = (
+            df.groupby(["receptor_id", "time_years"], as_index=False)
+            .agg(
+                drawdown_m_theis=("drawdown_m_theis", "max"),
+                r_m=("r_m", "min"),
+                T_m2_per_day=("T_m2_per_day", "first"),
+                S_dimensionless=("S_dimensionless", "first"),
+            )
+        )
+    return df

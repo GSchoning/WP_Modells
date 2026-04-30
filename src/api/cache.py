@@ -20,6 +20,11 @@ from ..config import Config
 
 CACHE_DIR = Path("outputs/cache")
 
+# Bump when the cached receptors_df schema changes (column names, what
+# rows mean) so old caches don't poison new code paths. v2 = per-complex
+# aggregation with n_springs column (was per-spring in v1).
+CACHE_SCHEMA_VERSION = "v2"
+
 
 @dataclass
 class BaselineCache:
@@ -37,8 +42,9 @@ def _file_sha256(path: Path) -> str:
 
 
 def baseline_key(cfg: Config, config_path: Path) -> str:
-    """Hash of every input that affects Scenario A."""
+    """Hash of every input that affects Scenario A's cached output."""
     parts = [
+        CACHE_SCHEMA_VERSION,
         _file_sha256(Path(config_path)),
         _file_sha256(Path(cfg.inputs.properties_csv)),
         _file_sha256(Path(cfg.inputs.water_use.path)),

@@ -1,18 +1,18 @@
 /* Frontend for the Precipice Sandstone water-licence impact API.
  *
  * Single-page MapLibre app: shows formation extent, outcrop, existing
- * bores, and springs, lets the user click to place a proposed bore,
- * POSTs to /api/scenarios, and renders results.
+ * bores, and **spring complex centroids**. Click to place a proposed
+ * bore, POST /api/scenarios, render results coloured by drawdown and
+ * a regulatory threshold (default 0.4 m).
  */
 
 const $ = (id) => document.getElementById(id);
 
 const STATE = {
   projectCRS: null,
-  proposedLngLat: null,
-  proposedXY: null,
-  cachedTransform: null,    // {forward(lon, lat) -> [x, y]}
-  springsLayer: null,
+  threshold: 0.4,
+  cachedTransform: null,
+  complexCount: 0,
 };
 
 function setStatus(msg, level = "") {
@@ -22,15 +22,10 @@ function setStatus(msg, level = "") {
 }
 
 async function projForward(lng, lat) {
-  // Convert (lng, lat) to project CRS (m). The backend exposes everything
-  // in EPSG:4326 for the map; we send the proposed bore back in the
-  // project CRS so the model uses it directly. We use proj4 via a lazy
-  // load and cache the transform per session.
   if (!STATE.cachedTransform) {
     if (!window.proj4) {
       await loadScript("https://unpkg.com/proj4@2.10.0/dist/proj4.js");
     }
-    // Fetch project CRS WKT from backend (proj4 supports EPSG codes too).
     const code = STATE.projectCRS;
     proj4.defs(code, await fetchEpsgWkt(code));
     STATE.cachedTransform = proj4("EPSG:4326", code);
@@ -40,7 +35,6 @@ async function projForward(lng, lat) {
 }
 
 async function fetchEpsgWkt(code) {
-  // epsg.io has a free endpoint. proj4 understands these strings.
   const num = code.split(":")[1];
   const r = await fetch(`https://epsg.io/${num}.proj4`);
   return await r.text();
@@ -71,6 +65,9 @@ async function init() {
     return;
   }
   STATE.projectCRS = mapData.crs;
+  STATE.threshold = mapData.regulatory_threshold_m ?? 0.4;
+  STATE.complexCount = mapData.spring_complexes?.features?.length ?? 0;
+  $("threshold-display").textContent = STATE.threshold.toFixed(2);
 
   const map = new maplibregl.Map({
     container: "map",
@@ -84,7 +81,7 @@ async function init() {
       map.addSource("formation", { type: "geojson", data: mapData.formation_extent });
       map.addLayer({
         id: "formation-fill", type: "fill", source: "formation",
-        paint: { "fill-color": "#cbd2d9", "fill-opacity": 0.25 },
+        paint: { "fill-color": "#cbd2d9", "fill-opacity": 0.2 },
       });
       map.addLayer({
         id: "formation-line", type: "line", source: "formation",
@@ -95,7 +92,7 @@ async function init() {
       map.addSource("outcrop", { type: "geojson", data: mapData.outcrop });
       map.addLayer({
         id: "outcrop-fill", type: "fill", source: "outcrop",
-        paint: { "fill-color": "#34d399", "fill-opacity": 0.35 },
+        paint: { "fill-color": "#34d399", "fill-opacity": 0.3 },
       });
     }
     if (mapData.pumping_bores) {
@@ -104,41 +101,43 @@ async function init() {
         id: "pumping-circles", type: "circle", source: "pumping",
         paint: {
           "circle-radius": 2.5, "circle-color": "#ef4444",
-          "circle-opacity": 0.7, "circle-stroke-color": "#7f1d1d",
+          "circle-opacity": 0.6, "circle-stroke-color": "#7f1d1d",
           "circle-stroke-width": 0.4,
         },
       });
     }
-    if (mapData.springs) {
-      map.addSource("springs", {
-        type: "geojson",
-        data: { ...mapData.springs, features: mapData.springs.features.map(f => ({...f, properties: {...f.properties, s_total: 0}})) },
-      });
+    if (mapData.spring_complexes) {
+      map.addSource("complexes", { type: "geojson", data: mapData.spring_complexes });
       map.addLayer({
-        id: "springs-circles", type: "circle", source: "springs",
+        id: "complex-circles", type: "circle", source: "complexes",
         paint: {
-          "circle-radius": 5,
+          "circle-radius": [
+            "interpolate", ["linear"], ["coalesce", ["get", "n_springs"], 1],
+            1, 4,  10, 7,  50, 11,
+          ],
           "circle-color": [
             "case",
-            [">", ["coalesce", ["get", "s_total"], 0], 5], "#7f1d1d",
-            [">", ["coalesce", ["get", "s_total"], 0], 1], "#dc2626",
-            [">", ["coalesce", ["get", "s_total"], 0], 0.1], "#f59e0b",
+            ["==", ["get", "exceeds_threshold"], true], "#dc2626",
+            [">", ["coalesce", ["get", "s_total"], 0], STATE.threshold * 0.5], "#f59e0b",
+            [">", ["coalesce", ["get", "s_total"], 0], 0.05], "#fde68a",
             "#2563eb",
           ],
-          "circle-stroke-color": "#fff", "circle-stroke-width": 1,
+          "circle-stroke-color": "#fff", "circle-stroke-width": 1.2,
+          "circle-opacity": 0.95,
         },
       });
-      STATE.springsLayer = "springs-circles";
 
-      map.on("click", "springs-circles", (e) => {
+      map.on("click", "complex-circles", (e) => {
         const f = e.features[0];
-        const props = f.properties || {};
-        const idKey = ["spring_id","SpringID","Spring_ID","ID","OBJECTID","FID","id"]
-          .find(k => props[k] != null);
-        const id = idKey ? props[idKey] : "(spring)";
+        const p = f.properties || {};
+        const exceed = p.exceeds_threshold === "true" || p.exceeds_threshold === true;
+        const flag = exceed ? `<div style="color:#dc2626;font-weight:600">⚠ exceeds ${STATE.threshold} m threshold</div>` : "";
         new maplibregl.Popup()
           .setLngLat(e.lngLat)
-          .setHTML(`<strong>${id}</strong><br/>s_total = ${fmt(Number(props.s_total) || 0)} m`)
+          .setHTML(`<strong>${p.complex_id}</strong><br/>
+            ${p.n_springs} member spring${p.n_springs == 1 ? "" : "s"}<br/>
+            s_total = ${fmt(Number(p.s_total) || 0)} m
+            ${flag}`)
           .addTo(map);
       });
     }
@@ -152,29 +151,20 @@ async function init() {
     });
 
     map.on("click", async (e) => {
-      // Don't intercept clicks on existing layers (springs/bores).
       const features = map.queryRenderedFeatures(e.point, {
-        layers: ["springs-circles", "pumping-circles"].filter(l => map.getLayer(l)),
+        layers: ["complex-circles", "pumping-circles"].filter(l => map.getLayer(l)),
       });
       if (features.length) return;
       placeProposed(map, e.lngLat.lng, e.lngLat.lat);
     });
 
-    setStatus(`ready — ${mapData.springs?.features?.length || 0} springs, click to place a bore`, "ok");
-    refreshHealth();
+    setStatus(`ready — ${STATE.complexCount} spring complexes, click to place a bore`, "ok");
   });
 
   $("scenario-form").addEventListener("submit", (e) => {
     e.preventDefault();
     runScenario(map);
   });
-}
-
-async function refreshHealth() {
-  try {
-    const h = await (await fetch("/api/healthz")).json();
-    if (!h.baseline_cached) setStatus("baseline still loading…");
-  } catch {}
 }
 
 async function placeProposed(map, lng, lat) {
@@ -187,8 +177,6 @@ async function placeProposed(map, lng, lat) {
     setStatus("CRS conversion failed", "error");
     return;
   }
-  STATE.proposedLngLat = [lng, lat];
-  STATE.proposedXY = xy;
   $("x").value = xy[0].toFixed(0);
   $("y").value = xy[1].toFixed(0);
   map.getSource("proposed").setData({
@@ -233,11 +221,15 @@ async function runScenario(map) {
   }
   const result = await resp.json();
   const dt = ((performance.now() - t0) / 1000).toFixed(1);
-  setStatus(`done in ${dt}s (server ${result.runtime_seconds.toFixed(1)}s)`, "ok");
+  const exceed = result.n_exceedances_any_year;
+  const verdict = exceed > 0
+    ? `⚠ ${exceed} complex${exceed === 1 ? "" : "es"} exceed ${result.regulatory_threshold_m} m`
+    : `✓ no complex exceeds ${result.regulatory_threshold_m} m`;
+  setStatus(`done in ${dt}s · ${verdict}`, exceed > 0 ? "error" : "ok");
   $("run-btn").disabled = false;
   $("run-btn").textContent = "Run scenario";
   renderResults(result);
-  recolorSprings(map, result);
+  recolorComplexes(map, result);
 }
 
 function renderResults(result) {
@@ -245,7 +237,12 @@ function renderResults(result) {
   $("results-meta").hidden = false;
   $("results-tables").hidden = false;
 
-  let metaHtml = `
+  const exceed = result.n_exceedances_any_year;
+  const verdictHtml = exceed > 0
+    ? `<div class="verdict bad">⚠ ${exceed} complex${exceed === 1 ? "" : "es"} exceed${exceed === 1 ? "s" : ""} the ${result.regulatory_threshold_m} m threshold</div>`
+    : `<div class="verdict ok">✓ no complex exceeds the ${result.regulatory_threshold_m} m threshold</div>`;
+
+  let metaHtml = verdictHtml + `
     <div><strong>${result.proposed_bore.bore_id}</strong>
       @ (${result.proposed_bore.x.toFixed(0)}, ${result.proposed_bore.y.toFixed(0)}),
       ${result.proposed_bore.rate_ML_per_year} ML/yr</div>
@@ -258,46 +255,51 @@ function renderResults(result) {
 
   const lastYear = Math.max(...result.output_years);
   const top = result.top_n_total;
-  const hasTheis = top.some(s => s.s_additional_theis_m != null);
-  let html = `<h3 style="font-size:0.95rem;margin:0.4rem 0 0.3rem">Top 10 most-impacted at t = ${lastYear} yr</h3>`;
+  const hasTheis = top.some(c => c.s_additional_theis_m != null);
+  let html = `<h3 style="font-size:0.95rem;margin:0.4rem 0 0.3rem">Top 10 most-impacted complexes at t = ${lastYear} yr</h3>`;
   if (hasTheis) {
-    html += "<table><thead><tr><th>spring</th><th>r (km)</th><th>s_appr.</th><th>s_add.</th><th>s_add. (Theis)</th><th>s_total</th></tr></thead><tbody>";
-    for (const s of top) {
-      const r_km = s.r_to_proposed_m != null ? (s.r_to_proposed_m / 1000).toFixed(1) : "—";
-      html += `<tr><td>${s.spring_id}</td>
-        <td class="num">${r_km}</td>
-        <td class="num">${fmt(s.s_approved_m)}</td>
-        <td class="num">${fmt(s.s_additional_m)}</td>
-        <td class="num">${fmt(s.s_additional_theis_m)}</td>
-        <td class="num"><strong>${fmt(s.s_total_m)}</strong></td></tr>`;
-    }
+    html += "<table><thead><tr><th>complex</th><th>#</th><th>r (km)</th><th>s_appr.</th><th>s_add.</th><th>Theis</th><th>s_total</th></tr></thead><tbody>";
   } else {
-    html += "<table><thead><tr><th>spring</th><th>s_appr.</th><th>s_add.</th><th>s_total</th></tr></thead><tbody>";
-    for (const s of top) {
-      html += `<tr><td>${s.spring_id}</td>
-        <td class="num">${fmt(s.s_approved_m)}</td>
-        <td class="num">${fmt(s.s_additional_m)}</td>
-        <td class="num"><strong>${fmt(s.s_total_m)}</strong></td></tr>`;
+    html += "<table><thead><tr><th>complex</th><th>#</th><th>s_appr.</th><th>s_add.</th><th>s_total</th></tr></thead><tbody>";
+  }
+  for (const c of top) {
+    const r_km = c.r_to_proposed_m != null ? (c.r_to_proposed_m / 1000).toFixed(1) : "—";
+    const exceed = c.exceeds_threshold ? ' class="bad-row"' : "";
+    if (hasTheis) {
+      html += `<tr${exceed}><td>${c.complex_id}</td>
+        <td class="num">${c.n_springs}</td>
+        <td class="num">${r_km}</td>
+        <td class="num">${fmt(c.s_approved_m)}</td>
+        <td class="num">${fmt(c.s_additional_m)}</td>
+        <td class="num">${fmt(c.s_additional_theis_m)}</td>
+        <td class="num"><strong>${fmt(c.s_total_m)}</strong></td></tr>`;
+    } else {
+      html += `<tr${exceed}><td>${c.complex_id}</td>
+        <td class="num">${c.n_springs}</td>
+        <td class="num">${fmt(c.s_approved_m)}</td>
+        <td class="num">${fmt(c.s_additional_m)}</td>
+        <td class="num"><strong>${fmt(c.s_total_m)}</strong></td></tr>`;
     }
   }
   html += "</tbody></table>";
   $("results-tables").innerHTML = html;
 }
 
-function recolorSprings(map, result) {
-  if (!STATE.springsLayer || !map.getSource("springs")) return;
+function recolorComplexes(map, result) {
+  if (!map.getSource("complexes")) return;
   const lastYear = Math.max(...result.output_years);
   const yearBlock = result.by_year.find(y => y.time_years === lastYear);
-  const totalById = {};
-  for (const s of yearBlock.springs) totalById[s.spring_id] = s.s_total_m;
+  const byId = {};
+  for (const c of yearBlock.complexes) byId[c.complex_id] = c;
 
-  const src = map.getSource("springs");
+  const src = map.getSource("complexes");
   const data = src._data;
-  const idKeys = ["spring_id","SpringID","Spring_ID","ID","OBJECTID","FID","id"];
   for (const f of data.features) {
-    const k = idKeys.find(k => f.properties[k] != null);
-    const id = k ? String(f.properties[k]) : null;
-    f.properties.s_total = id != null && id in totalById ? totalById[id] : 0;
+    const id = f.properties.complex_id;
+    if (id in byId) {
+      f.properties.s_total = byId[id].s_total_m;
+      f.properties.exceeds_threshold = byId[id].exceeds_threshold;
+    }
   }
   src.setData(data);
 }
