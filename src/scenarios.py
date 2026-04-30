@@ -109,7 +109,7 @@ def run_steady_state(
         complexity=cfg.solver.complexity,
     )
     sim.write_simulation(silent=True)
-    success, _ = sim.run_simulation(silent=True)
+    success, _ = sim.run_simulation(silent=False)
     if not success:
         raise RuntimeError("steady-state pre-run failed; check listing file in workspace")
     _, heads = _read_heads(Path(workspace), "ss")
@@ -156,7 +156,7 @@ def run_scenario(
         complexity=cfg.solver.complexity,
     )
     sim.write_simulation(silent=True)
-    success, _ = sim.run_simulation(silent=True)
+    success, _ = sim.run_simulation(silent=False)
     if not success:
         raise RuntimeError(f"scenario {scenario} run failed; check listing file in workspace")
 
