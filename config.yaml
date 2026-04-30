@@ -1,0 +1,81 @@
+# Precipice Sandstone POC — runtime configuration.
+#
+# Paths are relative to the repository root. Inside the Docker container the
+# repo root is mounted at /app, so paths resolve identically.
+
+project:
+  name: "precipice_poc"
+  # Project CRS = GDA94 / MGA Zone 55 (matches the Geometry shapefiles and
+  # the X/Y columns in Properties_recharge/properties.csv).
+  crs: "EPSG:28355"
+
+inputs:
+  # Aquifer geometry --------------------------------------------------------
+  formation_extent: "Data/Geometry/Edge around Precipice Sandstone 2017 Rev2B revised.shp"
+  outcrop:          "Data/Geometry/Precipice_outcrop_regional_geomodel_2017_250m.shp"
+
+  # Per-cell properties already on a structured grid (kx, SS, rch, IBOUND,
+  # OUTCROP, NTOP, NBOT, THICKNESS, X, Y). Replaces the K/Ss/recharge GeoTIFFs
+  # described in CLAUDE.md §5; the grid is read directly from this table.
+  properties_csv: "Data/Properties_recharge/properties.csv"
+
+  # Surface DEM (informational; not required for confined-aquifer drawdown).
+  dem: "Data/DEM/PCP_DEM.tif"
+
+  # Water-use database. Coordinates GIS_LAT/GIS_LNG are GDA94 geographic
+  # (EPSG:4283) and are reprojected to the project CRS on ingest.
+  water_use:
+    path: "Data/Water Use/WATERUSE_GDA94.csv"
+    source_crs: "EPSG:4283"
+    lon_col: "GIS_LNG"
+    lat_col: "GIS_LAT"
+    id_col: "RN"
+    # Annual extraction column (megalitres / year). Converted to m3/d on ingest.
+    rate_col: "ML_Aquifer"
+    rate_units: "ML/year"
+    # Filter to Precipice Sandstone only.
+    formation_col: "FORMATION"
+    formation_value: "Precipice Sandstone"
+    # Receptor classification: per user, receptor bores = bores that are NOT
+    # stock-and-domestic (i.e. licensed extractions). Pumping bores in
+    # Scenario A = all bores with a non-zero ML_Aquifer.
+    receptor_filter:
+      column: "OGIA_P3"
+      exclude_values: ["Stock_Domestic"]
+
+  # Springs shapefile. CRS is WGS84 Web Mercator (EPSG:3857); io_layer
+  # reprojects to the project CRS on ingest.
+  springs: "Data/Springs/Active springs_POINT_rJliS3wVll.shp"
+
+  # Proposed new bore (Scenario C). Either inline or a single-row CSV.
+  proposed_bore:
+    bore_id: "PROPOSED_001"
+    x: null            # easting in project CRS (m) — TBD
+    y: null            # northing in project CRS (m) — TBD
+    rate_m3_per_day: null
+
+aquifer:
+  # NTOP/NBOT and THICKNESS are read per-cell from properties.csv, so these
+  # fallbacks are only used for cells where those columns are missing.
+  thickness_m: 200
+  top_elevation_m: 0
+
+grid:
+  # The native grid in properties.csv is on a 1500 m spacing (X/Y stepped at
+  # 1500 m in the sample rows). Re-using it directly avoids a resample step.
+  source: "properties_csv"
+  buffer_m: 50000
+  boundary_type: "no_flow"      # or "chd_regional_gradient"
+
+time:
+  total_years: 100
+  nstp: 30
+  tsmult: 1.2
+  output_years: [10, 50, 100]
+
+solver:
+  complexity: "MODERATE"        # MODERATE | COMPLEX
+
+run:
+  scenarios: ["A", "C"]         # B is computed by superposition
+  workspace_root: "/tmp/mf6_workspaces"

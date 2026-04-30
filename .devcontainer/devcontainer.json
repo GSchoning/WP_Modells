@@ -1,0 +1,36 @@
+{
+  "name": "precipice-poc",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": ".."
+  },
+  "workspaceFolder": "/app",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/app,type=bind,consistency=cached",
+  "remoteUser": "modeller",
+  "containerUser": "modeller",
+  "postCreateCommand": "pip install --user -e '.[dev]' && python -m flopy.utils.get_modflow $HOME/.local/bin --subset mf6 || true",
+  "remoteEnv": {
+    "PATH": "/home/modeller/.local/bin:${containerEnv:PATH}",
+    "PYTHONUNBUFFERED": "1"
+  },
+  "forwardPorts": [8888],
+  "portsAttributes": {
+    "8888": { "label": "JupyterLab", "onAutoForward": "notify" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter",
+        "charliermarsh.ruff",
+        "redhat.vscode-yaml"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": ["tests"]
+      }
+    }
+  }
+}
