@@ -70,9 +70,23 @@ async function init() {
   STATE.complexCount = mapData.spring_complexes?.features?.length ?? 0;
   $("threshold-display").textContent = STATE.threshold.toFixed(2);
 
+  // Esri World Imagery as a raster basemap. No API key required;
+  // attribution is mandatory and shown by MapLibre's default control.
+  const satelliteStyle = {
+    version: 8,
+    sources: {
+      sat: {
+        type: "raster",
+        tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+        tileSize: 256,
+        attribution: "Imagery © Esri, Maxar, Earthstar Geographics, USDA, USGS, IGN",
+      },
+    },
+    layers: [{ id: "sat", type: "raster", source: "sat" }],
+  };
   const map = new maplibregl.Map({
     container: "map",
-    style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+    style: satelliteStyle,
     bounds: mapData.bbox_4326,
     fitBoundsOptions: { padding: 30 },
   });
@@ -229,20 +243,28 @@ async function runScenario(map) {
 }
 
 function renderDecision(result) {
-  const exceed = result.n_exceedances_any_year;
+  const triggered = result.n_triggered_any_year ?? 0;
+  const already = result.n_already_exceeded_any_year ?? 0;
+  const thresh = result.regulatory_threshold_m;
   const badge = $("decision-badge");
   const detail = $("decision-detail");
   const meta = $("decision-meta");
-  if (exceed > 0) {
+
+  if (triggered > 0) {
     badge.className = "reject";
     badge.textContent = "REJECT";
-    detail.textContent = `${exceed} spring complex${exceed === 1 ? "" : "es"} cross${exceed === 1 ? "es" : ""} the ${result.regulatory_threshold_m} m drawdown trigger threshold at one or more output years.`;
+    detail.textContent = `Proposed bore tips ${triggered} spring complex${triggered === 1 ? "" : "es"} over the ${thresh} m drawdown trigger threshold.`;
   } else {
     badge.className = "approve";
     badge.textContent = "APPROVE";
-    detail.textContent = `No spring complex exceeds the ${result.regulatory_threshold_m} m threshold at any output year.`;
+    detail.textContent = `No spring complex is tipped over the ${thresh} m threshold by the proposed bore.`;
   }
-  let mh = `<div><strong>${result.proposed_bore.bore_id}</strong> · ${result.proposed_bore.rate_ML_per_year} ML/yr</div>`;
+
+  let mh = "";
+  if (already > 0) {
+    mh += `<div class="advisory">⚠ Advisory: ${already} complex${already === 1 ? "" : "es"} ${already === 1 ? "is" : "are"} already predicted to exceed ${thresh} m from existing licences alone (not attributable to this proposal).</div>`;
+  }
+  mh += `<div><strong>${result.proposed_bore.bore_id}</strong> · ${result.proposed_bore.rate_ML_per_year} ML/yr</div>`;
   mh += `<div>(${result.proposed_bore.x.toFixed(0)}, ${result.proposed_bore.y.toFixed(0)}) · ${result.runtime_seconds.toFixed(1)}s</div>`;
   if (result.theis) {
     mh += `<div>Theis local T = ${result.theis.T_m2_per_day.toFixed(2)} m²/d, S = ${result.theis.S_dimensionless.toExponential(1)}</div>`;
@@ -321,38 +343,49 @@ function renderBarChart(result) {
   tl.textContent = `threshold ${STATE.threshold} m`;
   svg.appendChild(tl);
 
-  // Bars
+  // Bars. Three categories drive the colours:
+  //   triggered_by_proposed : the proposed bore tips it over (decision-relevant)
+  //   already_exceeded       : was already over from existing licences
+  //   ok                     : under threshold
   complexes.forEach((c, i) => {
     const x = margin.left + i * slot + (slot - barW) / 2;
-    const exceeded = c.exceeds_threshold;
+    const triggered = c.triggered_by_proposed;
+    const already = c.already_exceeded;
     const yApp = yScale(c.s_approved_m);
     const yTotal = yScale(c.s_total_m);
     const baseY = yScale(0);
-    // Existing (Scenario A)
+
+    // Existing (Scenario A): muted purple if already over, slate otherwise.
     if (c.s_approved_m > 0) {
+      const fill = already ? "#7c3aed" : "#475569";
       const r = make("rect", {
-        x, y: yApp, width: barW, height: Math.max(0, baseY - yApp),
-        fill: exceeded ? "#7f1d1d" : "#475569",
+        x, y: yApp, width: barW, height: Math.max(0, baseY - yApp), fill,
       });
-      r.appendChild(make_title(`${c.complex_id} · existing: ${fmt(c.s_approved_m)} m`));
+      r.appendChild(make_title(
+        `${c.complex_id} · existing: ${fmt(c.s_approved_m)} m${already ? " (already exceeds)" : ""}`
+      ));
       svg.appendChild(r);
     }
-    // Additional (Scenario C)
+    // Additional (Scenario C): bright red iff this segment is what tips
+    // the bar over; amber otherwise (including when bar was already over).
     if (c.s_additional_m > 0) {
+      const fill = triggered ? "#dc2626" : "#f59e0b";
       const r = make("rect", {
-        x, y: yTotal, width: barW, height: Math.max(0, yApp - yTotal),
-        fill: exceeded ? "#dc2626" : "#f59e0b",
+        x, y: yTotal, width: barW, height: Math.max(0, yApp - yTotal), fill,
       });
-      r.appendChild(make_title(`${c.complex_id} · proposed: +${fmt(c.s_additional_m)} m, total: ${fmt(c.s_total_m)} m${exceeded ? " (EXCEEDS)" : ""}`));
+      const tag = triggered ? " (TRIGGERS)" : (already ? " (on top of existing exceedance)" : "");
+      r.appendChild(make_title(
+        `${c.complex_id} · proposed: +${fmt(c.s_additional_m)} m, total: ${fmt(c.s_total_m)} m${tag}`
+      ));
       svg.appendChild(r);
     }
     // Label
     const labelX = x + barW / 2;
     const labelY = margin.top + innerH + 8;
+    const labelColor = triggered ? "#991b1b" : already ? "#5b21b6" : "#1f2933";
     const t = make("text", {
       x: labelX, y: labelY,
-      "text-anchor": "end", "font-size": 9.5,
-      fill: exceeded ? "#991b1b" : "#1f2933",
+      "text-anchor": "end", "font-size": 9.5, fill: labelColor,
       transform: `rotate(-50 ${labelX} ${labelY})`,
     });
     t.textContent = c.complex_id.length > 22 ? c.complex_id.slice(0, 21) + "…" : c.complex_id;
@@ -364,7 +397,9 @@ function renderBarChart(result) {
     x: margin.left + innerW / 2, y: H - 6,
     "text-anchor": "middle", "font-size": 10, fill: "#52606d",
   });
-  caption.textContent = `top ${complexes.length} of ${allComplexes.length} complexes at t = ${lastYear} yr · slate = existing, amber = proposed, red = exceeds threshold`;
+  caption.textContent =
+    `top ${complexes.length} of ${allComplexes.length} complexes at t = ${lastYear} yr · ` +
+    `slate = existing, amber = proposed, red = triggered by proposal, purple = already exceeded`;
   svg.appendChild(caption);
 
   function make_title(text) {
@@ -389,8 +424,10 @@ function renderTable(result) {
 
   for (const c of all) {
     const r_km = c.r_to_proposed_m != null ? (c.r_to_proposed_m / 1000).toFixed(1) : "—";
-    const cls = c.exceeds_threshold ? ' class="bad-row"' : "";
-    html += `<tr${cls}><td>${c.complex_id}</td><td class="num">${c.n_springs}</td>`;
+    const rowClass = c.triggered_by_proposed ? "triggered-row"
+                    : c.already_exceeded ? "already-row" : "";
+    const cls = rowClass ? ` class="${rowClass}"` : "";
+    html += `<tr${cls} data-id="${c.complex_id}"><td>${c.complex_id}</td><td class="num">${c.n_springs}</td>`;
     if (hasTheis) html += `<td class="num">${r_km}</td>`;
     html += `<td class="num">${fmt(c.s_approved_m)}</td>`;
     html += `<td class="num">${fmt(c.s_additional_m)}</td>`;

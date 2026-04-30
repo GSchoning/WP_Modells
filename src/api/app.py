@@ -150,27 +150,49 @@ app = FastAPI(
 
 
 def _df_to_year_results(combined: pd.DataFrame, threshold: float) -> list[YearResults]:
+    """Build YearResults with three threshold classifications per complex:
+
+    - already_exceeded: s_approved_m >= threshold (existing licences alone
+      already cause an exceedance — informational, not the proposed bore's
+      fault).
+    - triggered_by_proposed: s_approved_m < threshold but s_total >= threshold
+      (the proposed bore is what tips this complex over — the regulatory
+      decision-maker).
+    - exceeds_threshold: s_total >= threshold (union of the two — kept for
+      back-compat).
+    """
     out: list[YearResults] = []
     has_theis = "drawdown_m_theis" in combined.columns
     has_r = "r_m" in combined.columns
     has_n = "n_springs" in combined.columns
     for y in sorted(combined["time_years"].unique()):
         sub = combined[combined["time_years"] == y].sort_values("s_total", ascending=False)
-        complexes = [
-            ComplexDrawdown(
+        complexes: list[ComplexDrawdown] = []
+        for _, r in sub.iterrows():
+            s_appr = float(r["s_approved"])
+            s_tot = float(r["s_total"])
+            already = s_appr >= threshold
+            exceeds = s_tot >= threshold
+            triggered = exceeds and not already
+            complexes.append(ComplexDrawdown(
                 complex_id=str(r["receptor_id"]),
                 n_springs=int(r["n_springs"]) if has_n and not pd.isna(r["n_springs"]) else 1,
-                s_approved_m=float(r["s_approved"]),
+                s_approved_m=s_appr,
                 s_additional_m=float(r["s_additional"]),
-                s_total_m=float(r["s_total"]),
+                s_total_m=s_tot,
                 s_additional_theis_m=float(r["drawdown_m_theis"]) if has_theis and not pd.isna(r["drawdown_m_theis"]) else None,
                 r_to_proposed_m=float(r["r_m"]) if has_r and not pd.isna(r["r_m"]) else None,
-                exceeds_threshold=bool(float(r["s_total"]) >= threshold),
-            )
-            for _, r in sub.iterrows()
-        ]
-        n_exc = sum(1 for c in complexes if c.exceeds_threshold)
-        out.append(YearResults(time_years=float(y), complexes=complexes, n_exceedances=n_exc))
+                exceeds_threshold=exceeds,
+                already_exceeded=already,
+                triggered_by_proposed=triggered,
+            ))
+        out.append(YearResults(
+            time_years=float(y),
+            complexes=complexes,
+            n_exceedances=sum(1 for c in complexes if c.exceeds_threshold),
+            n_triggered=sum(1 for c in complexes if c.triggered_by_proposed),
+            n_already_exceeded=sum(1 for c in complexes if c.already_exceeded),
+        ))
     return out
 
 
@@ -270,6 +292,12 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
     exceedance_ids = {
         c.complex_id for yr in year_results for c in yr.complexes if c.exceeds_threshold
     }
+    triggered_ids = {
+        c.complex_id for yr in year_results for c in yr.complexes if c.triggered_by_proposed
+    }
+    already_ids = {
+        c.complex_id for yr in year_results for c in yr.complexes if c.already_exceeded
+    }
     return ScenarioResponse(
         proposed_bore=req.proposed_bore,
         output_years=[yr.time_years for yr in year_results],
@@ -277,6 +305,8 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
         by_year=year_results,
         top_n_total=top_n,
         n_exceedances_any_year=len(exceedance_ids),
+        n_triggered_any_year=len(triggered_ids),
+        n_already_exceeded_any_year=len(already_ids),
         runtime_seconds=runtime,
         theis=theis_diag,
     )

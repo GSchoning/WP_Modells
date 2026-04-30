@@ -24,12 +24,16 @@ class ComplexDrawdown(BaseModel):
     s_additional_theis_m: float | None = None
     r_to_proposed_m: float | None = None             # min distance over member springs
     exceeds_threshold: bool = False                   # s_total_m >= regulatory threshold
+    already_exceeded: bool = False                    # s_approved_m alone >= threshold
+    triggered_by_proposed: bool = False               # s_approved < threshold but s_total >=
 
 
 class YearResults(BaseModel):
     time_years: float
     complexes: list[ComplexDrawdown]
     n_exceedances: int = 0
+    n_triggered: int = 0
+    n_already_exceeded: int = 0
 
 
 class TheisDiagnostics(BaseModel):
@@ -45,6 +49,8 @@ class ScenarioResponse(BaseModel):
     by_year: list[YearResults]
     top_n_total: list[ComplexDrawdown]
     n_exceedances_any_year: int = 0
+    n_triggered_any_year: int = 0                     # tips over because of proposed bore
+    n_already_exceeded_any_year: int = 0              # was already over without proposed
     runtime_seconds: float
     theis: TheisDiagnostics | None = None
 
