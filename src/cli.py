@@ -122,9 +122,11 @@ def run(
     # sink for outcrop recharge so the steady-state pre-run converges, and
     # is reused unchanged in the transient runs so its contribution cancels
     # in drawdown = h_initial − h(t). Same CHD across A and C → superposition
-    # holds.
-    chd_cells = active_boundary_chd_cells(grid)
-    typer.echo(f"\nBoundary CHD on {len(chd_cells)} active-edge cells (head = NTOP).")
+    # holds. Outcrop cells are excluded from the CHD set: the outcrop edge
+    # is a recharge inflow, not a regional discharge — pinning heads there
+    # would suppress the recharge response.
+    chd_cells = active_boundary_chd_cells(grid, exclude_mask=grid.outcrop_mask)
+    typer.echo(f"\nBoundary CHD on {len(chd_cells)} active-edge cells (head = NTOP, outcrop excluded).")
 
     typer.echo("Running steady-state pre-run (no pumping, recharge on)…")
     try:

@@ -21,9 +21,11 @@ from ..config import Config
 CACHE_DIR = Path("outputs/cache")
 
 # Bump when the cached receptors_df schema changes (column names, what
-# rows mean) so old caches don't poison new code paths. v2 = per-complex
-# aggregation with n_springs column (was per-spring in v1).
-CACHE_SCHEMA_VERSION = "v2"
+# rows mean) OR when the underlying simulation produces materially
+# different numbers (boundary conditions, IC formulation, etc.). v2 =
+# per-complex aggregation with n_springs column. v3 = boundary CHD now
+# excludes outcrop cells.
+CACHE_SCHEMA_VERSION = "v3"
 
 
 @dataclass

@@ -132,7 +132,14 @@ async def lifespan(app: FastAPI):
     )
     state.workspace_root = Path(state.cfg.run.workspace_root)
     state.workspace_root.mkdir(parents=True, exist_ok=True)
-    state.chd_cells = active_boundary_chd_cells(state.grid)
+    # Boundary CHD excludes outcrop cells: the outcrop edge is a recharge
+    # inflow, not a regional discharge, so pinning heads there would
+    # suppress the recharge response. The deep edges (where the formation
+    # pinches out into surrounding country rock) still get CHD so recharge
+    # can equilibrate against a regional sink.
+    state.chd_cells = active_boundary_chd_cells(
+        state.grid, exclude_mask=state.grid.outcrop_mask,
+    )
 
     try:
         state.ic_head = run_steady_state(
