@@ -120,6 +120,47 @@ def _bootstrap_baseline(force: bool = False) -> cache_mod.BaselineCache:
     return cache
 
 
+def _bootstrap_ic() -> None:
+    """Pick the best (CHD config + IC) for the current cfg.
+
+    1. Try outcrop excluded from CHD (physically correct: outcrop edge is a
+       recharge inflow, not a regional discharge).
+    2. If steady-state can't converge with that boundary, fall back to
+       outcrop included (the older, robust configuration) — recharge gets
+       pinned to NTOP at the outcrop edge but at least the model runs.
+    3. If both fail, use a uniform IC = mean(active NTOP). Drawdown
+       computed from this is still well-behaved because of the twin-run
+       differencing, just less physically meaningful.
+
+    Sets state.chd_cells and state.ic_head as a side effect.
+    """
+    grid = state.grid
+    workspace = state.workspace_root / "ss"
+
+    chd_excluded = active_boundary_chd_cells(grid, exclude_mask=grid.outcrop_mask)
+    chd_included = active_boundary_chd_cells(grid)
+    attempts = [
+        ("outcrop excluded", chd_excluded),
+        ("outcrop included", chd_included),
+    ]
+    for label, chd in attempts:
+        try:
+            ic = run_steady_state(state.cfg, grid, workspace, chd_cells=chd)
+            state.chd_cells = chd
+            state.ic_head = ic
+            print(f"[boundary] steady-state converged with {label} ({len(chd)} CHD cells)")
+            return
+        except RuntimeError as exc:
+            print(f"[boundary] steady-state failed with {label}: {exc}")
+
+    print("[boundary] all steady-state attempts failed; using uniform IC")
+    active = grid.idomain[0] == 1
+    mean_top = float(np.nanmean(np.where(active, grid.top, np.nan)))
+    state.ic_head = np.full_like(grid.top, mean_top)
+    # Use the safer (outcrop-included) CHD with the uniform IC.
+    state.chd_cells = chd_included
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config_path = Path(os.environ.get("PRECIPICE_CONFIG", "config.yaml"))
@@ -132,25 +173,8 @@ async def lifespan(app: FastAPI):
     )
     state.workspace_root = Path(state.cfg.run.workspace_root)
     state.workspace_root.mkdir(parents=True, exist_ok=True)
-    # Boundary CHD excludes outcrop cells: the outcrop edge is a recharge
-    # inflow, not a regional discharge, so pinning heads there would
-    # suppress the recharge response. The deep edges (where the formation
-    # pinches out into surrounding country rock) still get CHD so recharge
-    # can equilibrate against a regional sink.
-    state.chd_cells = active_boundary_chd_cells(
-        state.grid, exclude_mask=state.grid.outcrop_mask,
-    )
 
-    try:
-        state.ic_head = run_steady_state(
-            state.cfg, state.grid, state.workspace_root / "ss",
-            chd_cells=state.chd_cells,
-        )
-    except RuntimeError:
-        active = state.grid.idomain[0] == 1
-        mean_top = float(np.nanmean(np.where(active, state.grid.top, np.nan)))
-        state.ic_head = np.full_like(state.grid.top, mean_top)
-
+    _bootstrap_ic()
     state.baseline = _bootstrap_baseline()
     state.complex_centroids_4326 = _build_complex_centroids(
         state.inputs.springs, state.cfg.assessment.spring_complex_col,
@@ -267,15 +291,7 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
     # automatically picks the right slot or computes fresh if missing.
     if req.recharge_multiplier != state.cfg.assessment.recharge_multiplier:
         state.cfg.assessment.recharge_multiplier = req.recharge_multiplier
-        try:
-            state.ic_head = run_steady_state(
-                state.cfg, state.grid, state.workspace_root / "ss",
-                chd_cells=state.chd_cells,
-            )
-        except RuntimeError:
-            active = state.grid.idomain[0] == 1
-            mean_top = float(np.nanmean(np.where(active, state.grid.top, np.nan)))
-            state.ic_head = np.full_like(state.grid.top, mean_top)
+        _bootstrap_ic()
         state.baseline = _bootstrap_baseline()
 
     t0 = time.time()
