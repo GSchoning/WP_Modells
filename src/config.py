@@ -78,6 +78,11 @@ class AssessmentCfg(BaseModel):
     # recharge, 2.0 doubles it. Drawdown is theoretically invariant under
     # confined-linear superposition, so this is mostly an integrity check.
     recharge_multiplier: float = 1.0
+    # Compass quadrants (relative to the active-domain centroid) where the
+    # boundary CHD is placed. Empty/None = all four (NE, NW, SW, SE).
+    # Set to e.g. ["NW", "SE"] to keep CHD only on the deep-pinch-out
+    # edges and leave the outcrop / regional-flow sides as no-flow.
+    chd_quadrants: list[Literal["N", "NE", "E", "SE", "S", "SW", "W", "NW"]] | None = None
 
 
 class ProjectCfg(BaseModel):

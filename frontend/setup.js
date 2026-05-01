@@ -17,11 +17,14 @@ const SAT_STYLE = {
   layers: [{ id: "sat", type: "raster", source: "sat" }],
 };
 
-const RASTER_LAYERS = [
-  { id: "active",  pngLayer: "active"  },
-  { id: "outcrop", pngLayer: "outcrop" },
-  { id: "chd",     pngLayer: "chd"     },
-  { id: "noflow",  pngLayer: "noflow"  },
+// Per-layer vector polygon configuration. Colours match the legend swatches
+// in setup.css. Each layer renders the cell-square polygons fetched from
+// /api/model-setup/<layer>.geojson.
+const VECTOR_LAYERS = [
+  { id: "active",  url: "/api/model-setup/active.geojson",  fill: "#9ca3af", stroke: "#475569", opacity: 0.25, strokeOpacity: 0.0 },
+  { id: "outcrop", url: "/api/model-setup/outcrop.geojson", fill: "#10b981", stroke: "#047857", opacity: 0.55, strokeOpacity: 0.0 },
+  { id: "chd",     url: "/api/model-setup/chd.geojson",     fill: "#dc2626", stroke: "#7f1d1d", opacity: 0.85, strokeOpacity: 0.6 },
+  { id: "noflow",  url: "/api/model-setup/noflow.geojson",  fill: "#1f2937", stroke: "#000000", opacity: 0.85, strokeOpacity: 0.6 },
 ];
 
 async function init() {
@@ -58,17 +61,26 @@ async function init() {
     fitBoundsOptions: { padding: 30 },
   });
 
-  map.on("load", () => {
-    // Raster layers from the per-layer PNG endpoints.
-    for (const { id, pngLayer } of RASTER_LAYERS) {
-      map.addSource(`raster-${id}`, {
-        type: "image",
-        url: `/api/model-setup/${pngLayer}.png`,
-        coordinates: info.image_corners_4326,
+  map.on("load", async () => {
+    // Vector layers — fetch once, add as GeoJSON sources for crisp
+    // rendering at any zoom (vs. the previous PNG raster overlays).
+    for (const { id, url, fill, stroke, opacity, strokeOpacity } of VECTOR_LAYERS) {
+      let data;
+      try {
+        data = await (await fetch(url)).json();
+      } catch (err) {
+        console.warn("failed to load layer", id, err);
+        continue;
+      }
+      map.addSource(`vec-${id}`, { type: "geojson", data });
+      map.addLayer({
+        id: `vec-${id}-fill`, type: "fill", source: `vec-${id}`,
+        paint: { "fill-color": fill, "fill-opacity": opacity },
+        layout: { visibility: $(`toggle-${id}`).checked ? "visible" : "none" },
       });
       map.addLayer({
-        id: `raster-${id}`, type: "raster", source: `raster-${id}`,
-        paint: { "raster-opacity": 1, "raster-fade-duration": 0 },
+        id: `vec-${id}-line`, type: "line", source: `vec-${id}`,
+        paint: { "line-color": stroke, "line-width": 0.4, "line-opacity": strokeOpacity },
         layout: { visibility: $(`toggle-${id}`).checked ? "visible" : "none" },
       });
     }
@@ -122,10 +134,10 @@ async function init() {
       }
     });
   };
-  toggle("toggle-active",    ["raster-active"]);
-  toggle("toggle-outcrop",   ["raster-outcrop"]);
-  toggle("toggle-chd",       ["raster-chd"]);
-  toggle("toggle-noflow",    ["raster-noflow"]);
+  toggle("toggle-active",    ["vec-active-fill",  "vec-active-line"]);
+  toggle("toggle-outcrop",   ["vec-outcrop-fill", "vec-outcrop-line"]);
+  toggle("toggle-chd",       ["vec-chd-fill",     "vec-chd-line"]);
+  toggle("toggle-noflow",    ["vec-noflow-fill",  "vec-noflow-line"]);
   toggle("toggle-bores",     ["pumping"]);
   toggle("toggle-complexes", ["complexes"]);
 }

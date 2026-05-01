@@ -68,6 +68,7 @@ class _State:
     # Last Scenario C run, retained for the drawdown-maps page.
     last_proposed_bore: dict | None = None
     last_c_drawdown_by_year: dict | None = None      # year -> (nrow, ncol)
+    setup_geojson: dict | None = None                 # layer -> FeatureCollection
 
 
 state = _State()
@@ -137,11 +138,17 @@ def _bootstrap_ic() -> None:
     grid = state.grid
     workspace = state.workspace_root / "ss"
 
-    chd_excluded = active_boundary_chd_cells(grid, exclude_mask=grid.outcrop_mask)
-    chd_included = active_boundary_chd_cells(grid)
+    quadrants = state.cfg.assessment.chd_quadrants
+    chd_filtered = active_boundary_chd_cells(
+        grid, exclude_mask=grid.outcrop_mask, quadrants=quadrants,
+    )
+    chd_unfiltered = active_boundary_chd_cells(grid)
     attempts = [
-        ("outcrop excluded", chd_excluded),
-        ("outcrop included", chd_included),
+        (
+            f"quadrants={quadrants or 'all'} + outcrop excluded",
+            chd_filtered,
+        ),
+        ("all-edges fallback", chd_unfiltered),
     ]
     for label, chd in attempts:
         try:
@@ -179,6 +186,7 @@ async def lifespan(app: FastAPI):
     state.complex_centroids_4326 = _build_complex_centroids(
         state.inputs.springs, state.cfg.assessment.spring_complex_col,
     )
+    state.setup_geojson = _build_setup_geojson()
     yield
 
 
@@ -567,6 +575,60 @@ def last_scenario_drawdown_sample(lng: float, lat: float,
     })
 
 
+def _cells_to_geojson(mask: np.ndarray) -> dict:
+    """Convert a (nrow, ncol) bool mask to a GeoJSON FeatureCollection of cell-square
+    polygons in EPSG:4326. Vector polygons render crisply at any zoom (vs. PNG)."""
+    g = state.grid
+    rs, cs = np.where(mask)
+    if rs.size == 0:
+        return {"type": "FeatureCollection", "features": []}
+
+    dx = float(g.delr[0])
+    dy = float(g.delc[0])
+    y_top = g.yorigin + float(g.delc.sum())
+    x0s = g.xorigin + cs * dx
+    x1s = x0s + dx
+    y1s = y_top - rs * dy            # row 0 is at the top of the grid
+    y0s = y1s - dy
+
+    # Batch-reproject all four corners at once.
+    transformer = pyproj.Transformer.from_crs(state.cfg.project.crs, "EPSG:4326", always_xy=True)
+    all_xs = np.concatenate([x0s, x1s, x1s, x0s])
+    all_ys = np.concatenate([y0s, y0s, y1s, y1s])
+    all_lons, all_lats = transformer.transform(all_xs, all_ys)
+
+    n = rs.size
+    ll_lon, ll_lat = all_lons[:n],       all_lats[:n]
+    lr_lon, lr_lat = all_lons[n:2*n],    all_lats[n:2*n]
+    ur_lon, ur_lat = all_lons[2*n:3*n],  all_lats[2*n:3*n]
+    ul_lon, ul_lat = all_lons[3*n:],     all_lats[3*n:]
+
+    features = []
+    for i in range(n):
+        ring = [
+            [float(ll_lon[i]), float(ll_lat[i])],
+            [float(lr_lon[i]), float(lr_lat[i])],
+            [float(ur_lon[i]), float(ur_lat[i])],
+            [float(ul_lon[i]), float(ul_lat[i])],
+            [float(ll_lon[i]), float(ll_lat[i])],
+        ]
+        features.append({
+            "type": "Feature",
+            "properties": {"row": int(rs[i]), "col": int(cs[i])},
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+        })
+    return {"type": "FeatureCollection", "features": features}
+
+
+def _build_setup_geojson() -> dict:
+    return {
+        "active":  _cells_to_geojson(state.grid.idomain[0] == 1),
+        "outcrop": _cells_to_geojson(state.grid.outcrop_mask),
+        "chd":     _cells_to_geojson(_chd_mask()),
+        "noflow":  _cells_to_geojson(_noflow_boundary_mask()),
+    }
+
+
 def _bool_mask_to_png(mask: np.ndarray, hex_color: str, alpha: float = 0.7) -> bytes:
     """Render a (nrow, ncol) bool mask as a transparent PNG.
 
@@ -634,25 +696,18 @@ def model_setup_info():
     })
 
 
-@app.get("/api/model-setup/{layer}.png")
-def model_setup_png(layer: str):
-    """Per-layer PNG overlay of the model setup."""
-    if state.grid is None:
-        raise HTTPException(503, "Grid not ready")
-    g = state.grid
-    if layer == "active":
-        mask, color, alpha = (g.idomain[0] == 1), "#9ca3af", 0.30
-    elif layer == "outcrop":
-        mask, color, alpha = g.outcrop_mask, "#10b981", 0.55
-    elif layer == "chd":
-        mask, color, alpha = _chd_mask(), "#dc2626", 0.85
-    elif layer == "noflow":
-        mask, color, alpha = _noflow_boundary_mask(), "#1f2937", 0.85
-    else:
+@app.get("/api/model-setup/{layer}.geojson")
+def model_setup_geojson(layer: str):
+    """Per-layer cell polygons (EPSG:4326) for the model setup map.
+
+    Crisper than rasterised PNGs at high zoom because each cell is a
+    proper polygon, not a stretched pixel.
+    """
+    if state.setup_geojson is None:
+        raise HTTPException(503, "Setup not ready")
+    if layer not in state.setup_geojson:
         raise HTTPException(400, "layer must be one of: active, outcrop, chd, noflow")
-    png = _bool_mask_to_png(mask, color, alpha=alpha)
-    return Response(content=png, media_type="image/png",
-                    headers={"Cache-Control": "no-store"})
+    return JSONResponse(state.setup_geojson[layer])
 
 
 _FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"

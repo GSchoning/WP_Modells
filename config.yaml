@@ -79,3 +79,13 @@ solver:
 run:
   scenarios: ["A", "C"]         # B is computed by superposition
   workspace_root: "/tmp/mf6_workspaces"
+
+assessment:
+  regulatory_threshold_m: 0.4
+  spring_complex_col: complex_na
+  spring_id_col: site_no
+  recharge_multiplier: 1.0
+  # Place CHD only on the NW and SE quadrants of the active-domain
+  # boundary. The NE quadrant is the outcrop / recharge-inflow side
+  # and SW is excluded for symmetry; both become no-flow boundaries.
+  chd_quadrants: ["NW", "SE"]

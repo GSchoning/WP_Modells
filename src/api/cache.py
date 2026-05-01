@@ -25,7 +25,7 @@ CACHE_DIR = Path("outputs/cache")
 # different numbers (boundary conditions, IC formulation, etc.). v2 =
 # per-complex aggregation with n_springs column. v3 = boundary CHD now
 # excludes outcrop cells.
-CACHE_SCHEMA_VERSION = "v3"
+CACHE_SCHEMA_VERSION = "v4"
 
 
 @dataclass
@@ -51,6 +51,7 @@ def baseline_key(cfg: Config, config_path: Path) -> str:
         _file_sha256(Path(cfg.inputs.properties_csv)),
         _file_sha256(Path(cfg.inputs.water_use.path)),
         f"rmult={cfg.assessment.recharge_multiplier:.6g}",
+        f"chdq={','.join(cfg.assessment.chd_quadrants or [])}",
     ]
     if cfg.inputs.springs is not None and Path(cfg.inputs.springs).exists():
         parts.append(_file_sha256(Path(cfg.inputs.springs)))

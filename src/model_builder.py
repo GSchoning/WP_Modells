@@ -173,9 +173,54 @@ def boundary_chd_cells(grid: Grid, head: float | np.ndarray) -> list[ChdRecord]:
     return cells
 
 
+def _quadrant_filter(grid: Grid, on_boundary: np.ndarray, allowed: list[str]) -> np.ndarray:
+    """Restrict on_boundary to cells whose centroid-relative direction is in `allowed`.
+
+    Quadrants are 90° wedges centred on N/E/S/W; e.g. NW = upper-left
+    relative to the mean (row, col) of all active cells. "N", "S", "E",
+    "W" are 90° wedges as well, oriented to those cardinals. Used to
+    keep CHD off, say, the outcrop face of the active domain.
+    """
+    if not allowed:
+        return on_boundary
+    active = grid.idomain[0] == 1
+    rs_a, cs_a = np.where(active)
+    rc, cc = float(rs_a.mean()), float(cs_a.mean())
+
+    rs_b, cs_b = np.where(on_boundary)
+    if rs_b.size == 0:
+        return on_boundary
+    dr = rs_b - rc
+    dc = cs_b - cc
+    # arctan2 with north = -dr (row 0 is at top), east = +dc.
+    # range = (-π, π]. North = π/2, west = π, south = -π/2, east = 0.
+    angles = np.arctan2(-dr, dc)
+
+    pi = np.pi
+    quadrant_ranges = {
+        "E":  ((-pi/4, pi/4),),
+        "NE": ((0, pi/2),),
+        "N":  ((pi/4, 3*pi/4),),
+        "NW": ((pi/2, pi), (-pi, -pi)),       # second range a no-op (handled by closure below)
+        "W":  ((3*pi/4, pi), (-pi, -3*pi/4)),
+        "SW": ((-pi, -pi/2),),
+        "S":  ((-3*pi/4, -pi/4),),
+        "SE": ((-pi/2, 0),),
+    }
+    keep = np.zeros_like(angles, dtype=bool)
+    for name in allowed:
+        for (lo, hi) in quadrant_ranges.get(name, ()):
+            keep |= (angles >= lo) & (angles <= hi)
+
+    out = np.zeros_like(on_boundary)
+    out[rs_b[keep], cs_b[keep]] = True
+    return out
+
+
 def active_boundary_chd_cells(
     grid: Grid, head: float | np.ndarray | None = None,
     *, exclude_mask: np.ndarray | None = None,
+    quadrants: list[str] | None = None,
 ) -> list[ChdRecord]:
     """CHD on the boundary of the active domain (active cells with ≥1 inactive neighbour).
 
@@ -198,6 +243,8 @@ def active_boundary_chd_cells(
     on_boundary = active & has_inactive_neighbour
     if exclude_mask is not None:
         on_boundary = on_boundary & ~exclude_mask
+    if quadrants:
+        on_boundary = _quadrant_filter(grid, on_boundary, quadrants)
     rs, cs = np.where(on_boundary)
 
     if head is None:
