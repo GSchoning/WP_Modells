@@ -73,6 +73,11 @@ class AssessmentCfg(BaseModel):
     regulatory_threshold_m: float = 0.4
     spring_complex_col: str = "complex_na"
     spring_id_col: str = "site_no"
+    # Sensitivity-analysis knob: scales the rch array uniformly. Default
+    # 1.0 = use the calibrated values from the properties CSV. 0.5 halves
+    # recharge, 2.0 doubles it. Drawdown is theoretically invariant under
+    # confined-linear superposition, so this is mostly an integrity check.
+    recharge_multiplier: float = 1.0
 
 
 class ProjectCfg(BaseModel):

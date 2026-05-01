@@ -13,6 +13,8 @@ class ProposedBore(BaseModel):
 
 class ScenarioRequest(BaseModel):
     proposed_bore: ProposedBore
+    recharge_multiplier: float = Field(1.0, ge=0.0, le=10.0,
+        description="Sensitivity-analysis scale on recharge (1.0 = calibrated).")
 
 
 class ComplexDrawdown(BaseModel):

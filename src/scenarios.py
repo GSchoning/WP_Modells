@@ -114,6 +114,7 @@ def run_steady_state(
         name="ss",
         chd_cells=chd_cells,
         complexity=cfg.solver.complexity,
+        recharge_multiplier=cfg.assessment.recharge_multiplier,
     )
     sim.write_simulation(silent=True)
     success, _ = sim.run_simulation(silent=False)
@@ -168,6 +169,7 @@ def run_scenario(
         chd_cells=chd_cells,
         recharge=True,
         complexity=cfg.solver.complexity,
+        recharge_multiplier=cfg.assessment.recharge_multiplier,
     )
     sim_pump.write_simulation(silent=True)
     success, _ = sim_pump.run_simulation(silent=False)
@@ -184,6 +186,7 @@ def run_scenario(
         chd_cells=chd_cells,
         recharge=True,
         complexity=cfg.solver.complexity,
+        recharge_multiplier=cfg.assessment.recharge_multiplier,
     )
     sim_nopump.write_simulation(silent=True)
     success, _ = sim_nopump.run_simulation(silent=False)

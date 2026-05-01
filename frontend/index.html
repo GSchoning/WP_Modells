@@ -50,6 +50,10 @@
         <label>Extraction rate (ML/year)
           <input type="number" id="rate" step="any" min="0" value="1000" required />
         </label>
+        <label>Recharge multiplier
+          <input type="number" id="recharge_mult" step="0.1" min="0" max="10" value="1.0" />
+          <span class="muted" style="font-size:0.7rem">1.0 = calibrated; changing this re-runs the baseline (~5 min)</span>
+        </label>
         <button type="submit" id="run-btn">Run scenario</button>
         <p class="muted">A scenario takes ~5 minutes. Existing-bores baseline is cached.</p>
       </form>

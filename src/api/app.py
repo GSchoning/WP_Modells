@@ -254,6 +254,23 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
     state.cfg.inputs.proposed_bore.y = req.proposed_bore.y
     state.cfg.inputs.proposed_bore.rate_ML_per_year = req.proposed_bore.rate_ML_per_year
 
+    # Recharge multiplier change re-runs the IC and re-baselines Scenario A
+    # against a different cache slot. Both the steady-state IC and the
+    # cached A baseline are tied to the multiplier, so the cache key
+    # automatically picks the right slot or computes fresh if missing.
+    if req.recharge_multiplier != state.cfg.assessment.recharge_multiplier:
+        state.cfg.assessment.recharge_multiplier = req.recharge_multiplier
+        try:
+            state.ic_head = run_steady_state(
+                state.cfg, state.grid, state.workspace_root / "ss",
+                chd_cells=state.chd_cells,
+            )
+        except RuntimeError:
+            active = state.grid.idomain[0] == 1
+            mean_top = float(np.nanmean(np.where(active, state.grid.top, np.nan)))
+            state.ic_head = np.full_like(state.grid.top, mean_top)
+        state.baseline = _bootstrap_baseline()
+
     t0 = time.time()
     workspace = state.workspace_root / f"scen_C_{req.proposed_bore.bore_id}"
     try:

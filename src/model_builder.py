@@ -61,10 +61,11 @@ def _add_ic(gwf: ModflowGwf, initial_head: np.ndarray | float) -> None:
     ModflowGwfic(gwf, strt=initial_head)
 
 
-def _add_rch(gwf: ModflowGwf, grid: Grid) -> None:
+def _add_rch(gwf: ModflowGwf, grid: Grid, multiplier: float = 1.0) -> None:
     if not np.any(grid.rch):
         return
-    ModflowGwfrch(gwf, recharge=grid.rch)
+    rch = grid.rch * float(multiplier) if multiplier != 1.0 else grid.rch
+    ModflowGwfrch(gwf, recharge=rch)
 
 
 def _add_chd(gwf: ModflowGwf, chd_cells: Sequence[ChdRecord]) -> None:
@@ -109,6 +110,7 @@ def build_steady_state(
     chd_cells: Sequence[ChdRecord] | None = None,
     initial_head: np.ndarray | float | None = None,
     complexity: str = "MODERATE",
+    recharge_multiplier: float = 1.0,
 ) -> MFSimulation:
     """Pre-development steady-state run (no wells, recharge active)."""
     sim, gwf = _make_sim(workspace, name, perioddata=[(1.0, 1, 1.0)], complexity=complexity)
@@ -116,7 +118,7 @@ def build_steady_state(
     _add_ic(gwf, initial_head if initial_head is not None else grid.top)
     _add_npf(gwf, grid)
     _add_sto(gwf, grid, transient=False)
-    _add_rch(gwf, grid)
+    _add_rch(gwf, grid, multiplier=recharge_multiplier)
     _add_chd(gwf, chd_cells or [])
     _add_oc(gwf, name)
     return sim
@@ -133,6 +135,7 @@ def build_transient(
     chd_cells: Sequence[ChdRecord] | None = None,
     recharge: bool = True,
     complexity: str = "MODERATE",
+    recharge_multiplier: float = 1.0,
 ) -> MFSimulation:
     """One transient stress period, with wells, optionally recharge + CHD."""
     sim, gwf = _make_sim(workspace, name, perioddata=perioddata, complexity=complexity)
@@ -141,7 +144,7 @@ def build_transient(
     _add_npf(gwf, grid)
     _add_sto(gwf, grid, transient=True)
     if recharge:
-        _add_rch(gwf, grid)
+        _add_rch(gwf, grid, multiplier=recharge_multiplier)
     _add_chd(gwf, chd_cells or [])
     _add_wel(gwf, list(wells))
     _add_oc(gwf, name)

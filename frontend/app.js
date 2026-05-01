@@ -257,12 +257,14 @@ async function runScenario(map) {
   const y = parseFloat($("y").value);
   const rate = parseFloat($("rate").value);
   const bore_id = $("bore_id").value || "PROPOSED_001";
+  const rechargeMult = parseFloat($("recharge_mult").value);
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(rate)) {
     setStatus("fill in x, y, rate", "error");
     return;
   }
+  const mult = Number.isFinite(rechargeMult) && rechargeMult >= 0 ? rechargeMult : 1.0;
   $("run-btn").disabled = true;
-  $("run-btn").textContent = "Running… (~5 min)";
+  $("run-btn").textContent = mult !== 1.0 ? "Running… (~10 min, re-baselining)" : "Running… (~5 min)";
   setStatus("running scenario C…");
   const t0 = performance.now();
   let resp;
@@ -270,7 +272,10 @@ async function runScenario(map) {
     resp = await fetch("/api/scenarios", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ proposed_bore: { bore_id, x, y, rate_ML_per_year: rate } }),
+      body: JSON.stringify({
+        proposed_bore: { bore_id, x, y, rate_ML_per_year: rate },
+        recharge_multiplier: mult,
+      }),
     });
   } catch (err) {
     setStatus("network error", "error");
