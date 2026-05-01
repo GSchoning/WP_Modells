@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Model setup — GAB Regulatory Advisor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.css" />
+<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="setup.css" />
+</head>
+<body>
+<div id="setup-app">
+  <header>
+    <div class="brand">
+      <a href="/" class="back-link" title="Back to main">←</a>
+      <div class="logo">GAB</div>
+      <div>
+        <h1>Model setup</h1>
+        <div class="subtitle">Grid extent, boundaries, recharge zone, bores, and spring complexes</div>
+      </div>
+    </div>
+    <div id="setup-meta" class="muted-strong">loading…</div>
+  </header>
+
+  <aside id="layer-panel">
+    <h2>Layers</h2>
+    <div class="layer-group">
+      <label class="layer-row">
+        <input type="checkbox" id="toggle-active" />
+        <span class="swatch active"></span>
+        <span class="layer-name">Active grid cells</span>
+      </label>
+      <label class="layer-row">
+        <input type="checkbox" id="toggle-outcrop" checked />
+        <span class="swatch outcrop"></span>
+        <span class="layer-name">Outcrop / recharge zone</span>
+      </label>
+      <label class="layer-row">
+        <input type="checkbox" id="toggle-chd" checked />
+        <span class="swatch chd"></span>
+        <span class="layer-name">CHD boundary <span class="muted">(deep edge)</span></span>
+      </label>
+      <label class="layer-row">
+        <input type="checkbox" id="toggle-noflow" checked />
+        <span class="swatch noflow"></span>
+        <span class="layer-name">No-flow boundary <span class="muted">(outcrop edge)</span></span>
+      </label>
+      <label class="layer-row">
+        <input type="checkbox" id="toggle-bores" checked />
+        <span class="swatch bores"></span>
+        <span class="layer-name">Existing pumping bores</span>
+      </label>
+      <label class="layer-row">
+        <input type="checkbox" id="toggle-complexes" checked />
+        <span class="swatch complex"></span>
+        <span class="layer-name">Spring complexes</span>
+      </label>
+    </div>
+    <div id="counts" class="muted"></div>
+    <div class="notes">
+      <h3>What you're looking at</h3>
+      <p><strong>Active cells</strong> are the modelled domain — the formation extent from the properties CSV.</p>
+      <p><strong>Outcrop / recharge</strong> cells receive recharge from above. Non-outcrop cells get zero recharge.</p>
+      <p><strong>CHD boundary</strong> cells have heads pinned to NTOP. They sit on the deep pinch-out edge so recharge has somewhere to leave the system.</p>
+      <p><strong>No-flow boundary</strong> cells are active edge cells that <em>don't</em> have CHD — typically the outcrop pinch-out edge, where the boundary is a recharge inflow rather than a regional discharge.</p>
+    </div>
+  </aside>
+
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.js"></script>
+<script src="setup.js"></script>
+</body>
+</html>

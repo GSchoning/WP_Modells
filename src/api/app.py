@@ -551,6 +551,94 @@ def last_scenario_drawdown_sample(lng: float, lat: float,
     })
 
 
+def _bool_mask_to_png(mask: np.ndarray, hex_color: str, alpha: float = 0.7) -> bytes:
+    """Render a (nrow, ncol) bool mask as a transparent PNG.
+
+    Cells where the mask is True get the chosen colour at the chosen
+    alpha; cells where the mask is False are fully transparent.
+    """
+    nrow, ncol = mask.shape
+    arr = np.where(mask, 1.0, np.nan)
+    cmap = mcolors.ListedColormap([hex_color])
+    cmap.set_bad(alpha=0.0)
+    fig = plt.figure(figsize=(ncol / 100, nrow / 100), dpi=100)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_axis_off()
+    ax.imshow(arr, cmap=cmap, vmin=0, vmax=1, origin="upper",
+              interpolation="nearest", alpha=alpha)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", transparent=True)
+    plt.close(fig)
+    return buf.getvalue()
+
+
+def _chd_mask() -> np.ndarray:
+    """(nrow, ncol) bool mask of cells carrying CHD."""
+    g = state.grid
+    mask = np.zeros((g.nrow, g.ncol), dtype=bool)
+    for (_l, r, c, _h) in (state.chd_cells or []):
+        mask[r, c] = True
+    return mask
+
+
+def _noflow_boundary_mask() -> np.ndarray:
+    """Active-boundary cells that aren't CHD = effective no-flow boundary."""
+    g = state.grid
+    active = g.idomain[0] == 1
+    padded = np.pad(active, 1, constant_values=False)
+    has_inactive_neighbour = (
+        ~padded[:-2, 1:-1] | ~padded[2:, 1:-1]
+        | ~padded[1:-1, :-2] | ~padded[1:-1, 2:]
+    )
+    on_boundary = active & has_inactive_neighbour
+    return on_boundary & ~_chd_mask()
+
+
+@app.get("/api/model-setup/info")
+def model_setup_info():
+    """Metadata for the model-setup page."""
+    if state.grid is None:
+        raise HTTPException(503, "Grid not ready")
+    g = state.grid
+    bbox = _bbox_4326()
+    return JSONResponse({
+        "image_corners_4326": bbox["tl_tr_br_bl"],
+        "bbox_4326": bbox["bbox"],
+        "grid": {
+            "nrow": g.nrow, "ncol": g.ncol,
+            "dx_m": float(g.delr[0]), "dy_m": float(g.delc[0]),
+            "n_active_cells": int((g.idomain == 1).sum()),
+            "n_outcrop_cells": int(g.outcrop_mask.sum()),
+        },
+        "boundaries": {
+            "n_chd_cells": int(_chd_mask().sum()),
+            "n_noflow_boundary_cells": int(_noflow_boundary_mask().sum()),
+        },
+        "recharge_multiplier": state.cfg.assessment.recharge_multiplier,
+    })
+
+
+@app.get("/api/model-setup/{layer}.png")
+def model_setup_png(layer: str):
+    """Per-layer PNG overlay of the model setup."""
+    if state.grid is None:
+        raise HTTPException(503, "Grid not ready")
+    g = state.grid
+    if layer == "active":
+        mask, color, alpha = (g.idomain[0] == 1), "#9ca3af", 0.30
+    elif layer == "outcrop":
+        mask, color, alpha = g.outcrop_mask, "#10b981", 0.55
+    elif layer == "chd":
+        mask, color, alpha = _chd_mask(), "#dc2626", 0.85
+    elif layer == "noflow":
+        mask, color, alpha = _noflow_boundary_mask(), "#1f2937", 0.85
+    else:
+        raise HTTPException(400, "layer must be one of: active, outcrop, chd, noflow")
+    png = _bool_mask_to_png(mask, color, alpha=alpha)
+    return Response(content=png, media_type="image/png",
+                    headers={"Cache-Control": "no-store"})
+
+
 _FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 if _FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=str(_FRONTEND_DIR), html=True), name="frontend")

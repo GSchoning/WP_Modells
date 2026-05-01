@@ -54,6 +54,12 @@ header {
 }
 header h1 { margin: 0; font-size: 1.1rem; font-weight: 600; letter-spacing: -0.01em; }
 header .subtitle { font-size: 0.75rem; color: #cbd5e1; margin-top: 1px; }
+.header-actions { display: flex; align-items: center; gap: 0.6rem; }
+.header-link { color: #cbd5e1; font-size: 0.78rem; text-decoration: none;
+  padding: 0.35rem 0.75rem; border-radius: 999px;
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+  transition: background 0.15s, color 0.15s; font-weight: 500; }
+.header-link:hover { background: rgba(255,255,255,0.14); color: #f1f5f9; }
 #status { font-size: 0.78rem; color: #cbd5e1; padding: 0.35rem 0.85rem;
   border-radius: 999px; background: rgba(255,255,255,0.08);
   backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.12);

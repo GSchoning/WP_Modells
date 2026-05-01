@@ -1,0 +1,55 @@
+/* Model-setup page (setup.html). Reuses tokens from style.css. */
+
+#setup-app {
+  display: grid; grid-template-columns: 320px 1fr; grid-template-rows: auto 1fr;
+  height: 100%; min-height: 0;
+}
+#setup-app header { grid-column: 1 / -1; padding: 0.7rem 1.4rem; }
+
+.back-link { color: #f8fafc; text-decoration: none; font-size: 1.4rem;
+  padding: 0 0.3rem; border-radius: 4px; transition: background 0.15s; }
+.back-link:hover { background: rgba(255,255,255,0.1); }
+.muted-strong { color: #f1f5f9; font-size: 0.82rem; font-weight: 500;
+  background: rgba(255,255,255,0.08); padding: 0.4rem 0.8rem;
+  border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); }
+
+#layer-panel {
+  background: var(--surface-1); border-right: 1px solid var(--line);
+  padding: 1rem 1.1rem; overflow-y: auto;
+}
+#layer-panel h2 { font-size: 0.72rem; margin: 0 0 0.7rem;
+  text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2);
+  font-weight: 600; }
+
+.layer-group { display: flex; flex-direction: column; gap: 0.45rem; }
+.layer-row {
+  display: flex; align-items: center; gap: 0.55rem;
+  padding: 0.45rem 0.55rem; border-radius: 6px; cursor: pointer;
+  font-size: 0.82rem; color: var(--ink-1);
+  border: 1px solid transparent; transition: background 0.12s, border-color 0.12s;
+}
+.layer-row:hover { background: var(--surface-2); border-color: var(--line); }
+.layer-row input[type="checkbox"] { margin: 0; cursor: pointer; }
+.layer-row .layer-name { flex: 1; }
+.layer-row .muted { font-size: 0.72rem; }
+
+.swatch { display: inline-block; width: 16px; height: 16px;
+  border-radius: 3px; flex-shrink: 0; box-shadow: 0 0 0 1px rgba(15,23,42,0.1); }
+.swatch.active   { background: rgba(156,163,175,0.5); }
+.swatch.outcrop  { background: #10b981; }
+.swatch.chd      { background: #dc2626; }
+.swatch.noflow   { background: #1f2937; }
+.swatch.bores    { background: #ef4444; border-radius: 50%; }
+.swatch.complex  { background: #2563eb; border-radius: 50%; }
+
+#counts { margin-top: 0.8rem; padding-top: 0.6rem; border-top: 1px solid var(--line);
+  line-height: 1.7; }
+
+.notes { margin-top: 0.8rem; font-size: 0.78rem; color: var(--ink-1);
+  line-height: 1.55; padding-top: 0.6rem; border-top: 1px solid var(--line); }
+.notes h3 { font-size: 0.7rem; margin: 0 0 0.5rem; color: var(--ink-2);
+  text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+.notes p { margin: 0 0 0.4rem; }
+.notes strong { color: var(--ink-0); }
+
+#map { position: relative; }
