@@ -25,8 +25,9 @@ CACHE_DIR = Path("outputs/cache")
 # different numbers (boundary conditions, IC formulation, time stepping,
 # etc.). v2 = per-complex aggregation with n_springs column. v3 =
 # boundary CHD excludes outcrop cells. v4 = chd_quadrants. v5 = yearly
-# fine-period stress block (fine_period_years).
-CACHE_SCHEMA_VERSION = "v5"
+# fine-period stress block (fine_period_years). v6 = per-complex time
+# series persisted alongside output-year aggregates.
+CACHE_SCHEMA_VERSION = "v6"
 
 
 @dataclass
@@ -34,6 +35,7 @@ class BaselineCache:
     key: str
     receptors_df: pd.DataFrame                          # tidy springs table
     drawdown_by_year: dict[float, np.ndarray]           # for raster overlays
+    complex_series_df: pd.DataFrame                      # long-form per-complex series
 
 
 def _file_sha256(path: Path) -> str:
@@ -61,25 +63,35 @@ def baseline_key(cfg: Config, config_path: Path) -> str:
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 
-def cache_paths(key: str) -> tuple[Path, Path, Path]:
+def cache_paths(key: str) -> tuple[Path, Path, Path, Path]:
     base = CACHE_DIR / key
-    return base / "receptors.parquet", base / "drawdown_by_year.npz", base / "manifest.json"
+    return (
+        base / "receptors.parquet",
+        base / "drawdown_by_year.npz",
+        base / "manifest.json",
+        base / "complex_series.parquet",
+    )
 
 
 def load(key: str) -> BaselineCache | None:
-    receptors_p, drawdown_p, manifest_p = cache_paths(key)
-    if not (receptors_p.exists() and drawdown_p.exists() and manifest_p.exists()):
+    receptors_p, drawdown_p, manifest_p, series_p = cache_paths(key)
+    if not (receptors_p.exists() and drawdown_p.exists() and manifest_p.exists() and series_p.exists()):
         return None
     receptors = pd.read_parquet(receptors_p)
     npz = np.load(drawdown_p)
     drawdown = {float(name.removeprefix("y")): npz[name] for name in npz.files}
-    return BaselineCache(key=key, receptors_df=receptors, drawdown_by_year=drawdown)
+    series = pd.read_parquet(series_p)
+    return BaselineCache(
+        key=key, receptors_df=receptors, drawdown_by_year=drawdown,
+        complex_series_df=series,
+    )
 
 
 def save(cache: BaselineCache, cfg: Config, config_path: Path) -> None:
-    receptors_p, drawdown_p, manifest_p = cache_paths(cache.key)
+    receptors_p, drawdown_p, manifest_p, series_p = cache_paths(cache.key)
     receptors_p.parent.mkdir(parents=True, exist_ok=True)
     cache.receptors_df.to_parquet(receptors_p)
+    cache.complex_series_df.to_parquet(series_p)
     np.savez_compressed(
         drawdown_p,
         **{f"y{y}": arr for y, arr in cache.drawdown_by_year.items()},
@@ -89,5 +101,7 @@ def save(cache: BaselineCache, cfg: Config, config_path: Path) -> None:
         "config_path": str(config_path),
         "n_springs": int(cache.receptors_df["receptor_id"].nunique()),
         "output_years": sorted(cache.drawdown_by_year.keys()),
+        "n_series_complexes": int(cache.complex_series_df["complex_id"].nunique())
+            if len(cache.complex_series_df) else 0,
     }
     manifest_p.write_text(json.dumps(manifest, indent=2))

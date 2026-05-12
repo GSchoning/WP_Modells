@@ -29,6 +29,7 @@ class ScenarioResult:
     drawdown: np.ndarray              # (nstp, nrow, ncol) = h_initial - h(t)
     drawdown_at_output_years: dict[float, np.ndarray]  # year -> (nrow, ncol)
     receptors_df: pd.DataFrame        # tidy (receptor_id, time_years, drawdown_m)
+    complex_series_df: pd.DataFrame   # (complex_id, time_days, drawdown_m) — every timestep
 
 
 def _bores_to_wells(
@@ -245,6 +246,15 @@ def run_scenario(
     else:
         receptors_df = pd.DataFrame(columns=["receptor_id", "time_years", "drawdown_m", "n_springs"])
 
+    # Per-complex drawdown time series across every model timestep, taking
+    # max over the member springs at each step. Powers the click-to-plot
+    # line chart so the regulator can see when (not just whether) a
+    # complex crosses the threshold.
+    complex_series_df = _build_complex_series(
+        drawdown, times_days, inputs.springs, grid,
+        complex_col if inputs.springs is not None else None,
+    )
+
     return ScenarioResult(
         name=name,
         times_days=times_days,
@@ -252,4 +262,54 @@ def run_scenario(
         drawdown=drawdown,
         drawdown_at_output_years=drawdown_by_year,
         receptors_df=receptors_df,
+        complex_series_df=complex_series_df,
     )
+
+
+def _build_complex_series(
+    drawdown_grid: np.ndarray,                   # (nt, nrow, ncol)
+    times_days: np.ndarray,                      # (nt,)
+    springs: gpd.GeoDataFrame | None,
+    grid: Grid,
+    complex_col: str | None,
+) -> pd.DataFrame:
+    """Long-form time series per spring complex: (complex_id, time_days, drawdown_m).
+
+    Max-over-member-springs at every timestep. Returns an empty frame if
+    there's no springs layer or no complex column.
+    """
+    cols = ["complex_id", "time_days", "drawdown_m"]
+    if springs is None or len(springs) == 0 or not complex_col or complex_col not in springs.columns:
+        return pd.DataFrame(columns=cols)
+
+    # Group member springs by complex; resolve each to its model cell.
+    complex_cells: dict[str, list[tuple[int, int]]] = {}
+    for cname, group in springs.groupby(complex_col):
+        cname_str = str(cname).strip()
+        if not cname_str or cname_str.lower() in ("nan", "none"):
+            continue
+        cells: list[tuple[int, int]] = []
+        for x, y in zip(group.geometry.x, group.geometry.y):
+            rc = cell_of(grid, float(x), float(y))
+            if rc is None or grid.idomain[0, rc[0], rc[1]] != 1:
+                continue
+            cells.append(rc)
+        if cells:
+            complex_cells[cname_str] = cells
+
+    if not complex_cells:
+        return pd.DataFrame(columns=cols)
+
+    rows = []
+    for cname, cells in complex_cells.items():
+        rs = np.array([r for r, _c in cells])
+        cs = np.array([_c for _r, _c in cells])
+        # (nt, n_members) → max over member axis → (nt,)
+        max_dd = drawdown_grid[:, rs, cs].max(axis=1)
+        for t_days, dd in zip(times_days, max_dd):
+            rows.append({
+                "complex_id": cname,
+                "time_days": float(t_days),
+                "drawdown_m": float(dd),
+            })
+    return pd.DataFrame(rows)
