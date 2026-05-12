@@ -357,6 +357,141 @@ function selectComplex(id) {
     if (tr.getAttribute("data-id") === id) tr.classList.add("row-selected");
     else tr.classList.remove("row-selected");
   });
+  // Time-series chart for this complex
+  loadAndRenderSeries(id);
+}
+
+async function loadAndRenderSeries(complexId) {
+  let data;
+  try {
+    const resp = await fetch(`/api/spring-series?complex_id=${encodeURIComponent(complexId)}`);
+    if (!resp.ok) return;
+    data = await resp.json();
+  } catch (err) {
+    return;
+  }
+  renderSeriesChart(data);
+}
+
+function renderSeriesChart(data) {
+  const pane = $("series-pane");
+  const svg = $("series-chart");
+  const title = $("series-title");
+  const legend = $("series-legend");
+  if (!data || !data.times_years || !data.times_years.length) {
+    pane.hidden = true; return;
+  }
+  pane.hidden = false;
+  const hasC = data.s_total_m != null;
+  title.innerHTML = `Drawdown over time · <strong>${data.complex_id}</strong>` +
+    (data.n_springs ? ` <span class="muted">(${data.n_springs} spring${data.n_springs === 1 ? "" : "s"})</span>` : "");
+
+  const W = svg.clientWidth || svg.parentElement.clientWidth;
+  const H = 180;
+  const margin = { top: 14, right: 14, bottom: 28, left: 38 };
+  const innerW = Math.max(40, W - margin.left - margin.right);
+  const innerH = Math.max(30, H - margin.top - margin.bottom);
+
+  const times = data.times_years;
+  const tMin = times[0];
+  const tMax = times[times.length - 1];
+  const seriesA = data.s_approved_m;
+  const seriesT = hasC ? data.s_total_m : seriesA;
+  const threshold = data.threshold_m ?? 0.4;
+  const peak = Math.max(threshold * 1.2, ...seriesT, ...seriesA, 0.05);
+
+  const xScale = t => margin.left + ((t - tMin) / (tMax - tMin || 1)) * innerW;
+  const yScale = v => margin.top + innerH - (Math.max(0, v) / peak) * innerH;
+
+  svg.innerHTML = "";
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("width", "100%");
+  svg.setAttribute("height", H);
+  const ns = "http://www.w3.org/2000/svg";
+  const make = (tag, attrs) => {
+    const el = document.createElementNS(ns, tag);
+    for (const k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
+  };
+  const path = (vals, color, dash, width) => {
+    let d = "";
+    for (let i = 0; i < times.length; i++) {
+      d += (i === 0 ? "M" : "L") + xScale(times[i]) + "," + yScale(vals[i]) + " ";
+    }
+    return make("path", {
+      d, fill: "none", stroke: color, "stroke-width": width || 1.6,
+      "stroke-dasharray": dash || "",
+    });
+  };
+
+  // Axes + grid
+  const nTicks = 4;
+  for (let i = 0; i <= nTicks; i++) {
+    const v = (peak * i) / nTicks;
+    const y = yScale(v);
+    svg.appendChild(make("line", {
+      x1: margin.left, x2: margin.left + innerW, y1: y, y2: y,
+      stroke: "#e4e7eb", "stroke-width": 1,
+    }));
+    const t = make("text", {
+      x: margin.left - 5, y: y + 3, "text-anchor": "end",
+      "font-size": 9, fill: "#52606d",
+    });
+    t.textContent = v.toFixed(2);
+    svg.appendChild(t);
+  }
+  const xTicks = times.length <= 5 ? times : [times[0], 10, 25, 50, 100].filter(v => v <= tMax + 0.01);
+  for (const xt of xTicks) {
+    const x = xScale(xt);
+    svg.appendChild(make("line", {
+      x1: x, x2: x, y1: margin.top + innerH, y2: margin.top + innerH + 3,
+      stroke: "#94a3b8", "stroke-width": 1,
+    }));
+    const t = make("text", {
+      x, y: margin.top + innerH + 13, "text-anchor": "middle",
+      "font-size": 9, fill: "#52606d",
+    });
+    t.textContent = `${xt}`;
+    svg.appendChild(t);
+  }
+  const xLab = make("text", {
+    x: margin.left + innerW / 2, y: H - 2, "text-anchor": "middle",
+    "font-size": 9, fill: "#52606d",
+  });
+  xLab.textContent = "years";
+  svg.appendChild(xLab);
+
+  // Threshold line
+  const tY = yScale(threshold);
+  svg.appendChild(make("line", {
+    x1: margin.left, x2: margin.left + innerW, y1: tY, y2: tY,
+    stroke: "#dc2626", "stroke-width": 1.3, "stroke-dasharray": "4,3",
+  }));
+  const tLab = make("text", {
+    x: margin.left + innerW - 3, y: tY - 3, "text-anchor": "end",
+    "font-size": 9, fill: "#dc2626", "font-weight": 600,
+  });
+  tLab.textContent = `${threshold} m`;
+  svg.appendChild(tLab);
+
+  // Lines: existing in slate, total in red/amber depending on threshold
+  svg.appendChild(path(seriesA, "#475569", "", 1.6));
+  let totColor = "#f59e0b";
+  if (hasC) {
+    const peakT = Math.max(...seriesT);
+    const peakA = Math.max(...seriesA);
+    if (peakT >= threshold && peakA < threshold) totColor = "#dc2626";
+    else if (peakA >= threshold) totColor = "#7c3aed";
+    svg.appendChild(path(seriesT, totColor, "", 2.0));
+  }
+
+  // Legend
+  let legendHtml = `<span><span class="swatch-line" style="background:#475569"></span>existing (A)</span>`;
+  if (hasC) {
+    legendHtml += `<span><span class="swatch-line" style="background:${totColor}"></span>total (A + C)</span>`;
+  }
+  legendHtml += `<span><span class="swatch-line" style="background:#dc2626"></span>threshold</span>`;
+  legend.innerHTML = legendHtml;
 }
 
 function renderDecision(result) {
