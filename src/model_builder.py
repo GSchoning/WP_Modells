@@ -47,13 +47,18 @@ def _add_npf(gwf: ModflowGwf, grid: Grid) -> None:
     ModflowGwfnpf(gwf, icelltype=0, k=grid.k)
 
 
-def _add_sto(gwf: ModflowGwf, grid: Grid, *, transient: bool) -> None:
+def _add_sto(gwf: ModflowGwf, grid: Grid, *, transient: bool, n_periods: int = 1) -> None:
+    # Flag every period the same way; STO defaults to the previous flag
+    # if a period isn't listed, but being explicit avoids surprises with
+    # multi-period transient runs.
+    steady = {i: not transient for i in range(n_periods)}
+    trans = {i: transient for i in range(n_periods)}
     ModflowGwfsto(
         gwf,
         iconvert=0,
         ss=grid.ss,
-        steady_state={0: not transient},
-        transient={0: transient},
+        steady_state=steady,
+        transient=trans,
     )
 
 
@@ -82,12 +87,15 @@ def _add_wel(gwf: ModflowGwf, wells: Sequence[WellRecord]) -> None:
     ModflowGwfwel(gwf, stress_period_data=spd)
 
 
-def _add_oc(gwf: ModflowGwf, name: str) -> None:
+def _add_oc(gwf: ModflowGwf, name: str, n_periods: int = 1) -> None:
+    # saverecord as a dict so the SAVE rule fires in every stress period;
+    # passing a bare list applies only to period 0.
+    saverecord = {i: [("HEAD", "ALL"), ("BUDGET", "ALL")] for i in range(n_periods)}
     ModflowGwfoc(
         gwf,
         head_filerecord=f"{name}.hds",
         budget_filerecord=f"{name}.cbc",
-        saverecord=[("HEAD", "ALL"), ("BUDGET", "ALL")],
+        saverecord=saverecord,
     )
 
 
@@ -142,12 +150,12 @@ def build_transient(
     _add_dis(gwf, grid)
     _add_ic(gwf, initial_head)
     _add_npf(gwf, grid)
-    _add_sto(gwf, grid, transient=True)
+    _add_sto(gwf, grid, transient=True, n_periods=len(perioddata))
     if recharge:
         _add_rch(gwf, grid, multiplier=recharge_multiplier)
     _add_chd(gwf, chd_cells or [])
     _add_wel(gwf, list(wells))
-    _add_oc(gwf, name)
+    _add_oc(gwf, name, n_periods=len(perioddata))
     return sim
 
 

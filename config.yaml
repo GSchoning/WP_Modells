@@ -71,6 +71,10 @@ time:
   total_years: 100
   nstp: 30
   tsmult: 1.2
+  # Yearly steps for the first N years so early-time drawdown is well
+  # resolved; the remaining (total_years - fine_period_years) is broken
+  # into nstp geometric steps. Set to 0 to disable.
+  fine_period_years: 10
   output_years: [10, 50, 100]
 
 solver:

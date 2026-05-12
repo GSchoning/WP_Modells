@@ -149,8 +149,17 @@ def run_scenario(
     else:
         raise ValueError(f"unknown scenario: {scenario}")
 
-    perlen_days = cfg.time.total_years * YEAR_DAYS
-    perioddata = [(perlen_days, cfg.time.nstp, cfg.time.tsmult)]
+    # Stress periods: optional yearly-step fine period + geometric remainder.
+    fine_years = int(cfg.time.fine_period_years or 0)
+    if 0 < fine_years < cfg.time.total_years:
+        perioddata = [
+            (fine_years * YEAR_DAYS, fine_years, 1.0),
+            ((cfg.time.total_years - fine_years) * YEAR_DAYS,
+             cfg.time.nstp, cfg.time.tsmult),
+        ]
+    else:
+        perioddata = [(cfg.time.total_years * YEAR_DAYS,
+                       cfg.time.nstp, cfg.time.tsmult)]
 
     name = f"scen_{scenario}"
     # Twin-run drawdown: run the same model with and without wells, and
@@ -199,11 +208,6 @@ def run_scenario(
     year_idx = _times_to_output_years(times_days, cfg.time.output_years)
     drawdown_by_year = {y: drawdown[i] for y, i in year_idx.items()}
 
-    # Sample springs only for now. Receptor bores share cells with the
-    # pumping bores, so their reported drawdown is dominated by mesh-
-    # artefact in-cell self-pumping; needs a Theis correction before the
-    # number is meaningful at a 1500 m cell size. TODO: re-enable with
-    # correction.
     # Sample drawdown at every member spring, then aggregate to complex
     # taking the max — the regulatory unit of analysis is the complex,
     # and the conservative choice for trigger-threshold reporting is the
