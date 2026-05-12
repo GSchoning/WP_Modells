@@ -68,6 +68,7 @@ class _State:
     # Last Scenario C run, retained for the drawdown-maps page.
     last_proposed_bore: dict | None = None
     last_c_drawdown_by_year: dict | None = None      # year -> (nrow, ncol)
+    last_c_series_df: pd.DataFrame | None = None     # per-complex time series
     setup_geojson: dict | None = None                 # layer -> FeatureCollection
 
 
@@ -116,6 +117,7 @@ def _bootstrap_baseline(force: bool = False) -> cache_mod.BaselineCache:
         key=key,
         receptors_df=result.receptors_df.copy(),
         drawdown_by_year=result.drawdown_at_output_years,
+        complex_series_df=result.complex_series_df.copy(),
     )
     cache_mod.save(cache, state.cfg, state.config_path)
     return cache
@@ -164,8 +166,8 @@ def _bootstrap_ic() -> None:
     active = grid.idomain[0] == 1
     mean_top = float(np.nanmean(np.where(active, grid.top, np.nan)))
     state.ic_head = np.full_like(grid.top, mean_top)
-    # Use the safer (outcrop-included) CHD with the uniform IC.
-    state.chd_cells = chd_included
+    # Use the safer (all-edges) CHD with the uniform IC.
+    state.chd_cells = chd_unfiltered
 
 
 @asynccontextmanager
@@ -318,6 +320,7 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
     # Retain Scenario C grids for the drawdown-maps page.
     state.last_proposed_bore = req.proposed_bore.model_dump()
     state.last_c_drawdown_by_year = c_result.drawdown_at_output_years
+    state.last_c_series_df = c_result.complex_series_df.copy()
 
     combined = combine_receptor_tables(
         state.baseline.receptors_df,
@@ -371,6 +374,84 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
         runtime_seconds=runtime,
         theis=theis_diag,
     )
+
+
+@app.get("/api/spring-series")
+def spring_series(complex_id: str | None = None):
+    """Per-complex drawdown time series across every model timestep.
+
+    Returns a JSON payload of the form
+
+      {
+        "complex_id": "...",
+        "n_springs": int,
+        "threshold_m": 0.4,
+        "times_years": [...],
+        "s_approved_m": [...],
+        "s_additional_m": [...] | null,
+        "s_total_m":     [...] | null
+      }
+
+    s_additional / s_total are present only if a Scenario C has been run
+    on the live server since startup. If `complex_id` is omitted, a list
+    of available complex IDs (sorted by peak s_total) is returned so the
+    frontend can populate a selector.
+    """
+    if state.baseline is None or state.baseline.complex_series_df is None:
+        raise HTTPException(503, "Baseline not ready")
+    base = state.baseline.complex_series_df
+
+    if complex_id is None:
+        # Catalog mode: list complexes with peak (max over time) drawdown.
+        live = state.last_c_series_df
+        ranked = (base.groupby("complex_id")["drawdown_m"].max().rename("peak_s_approved_m"))
+        out = ranked.reset_index().to_dict("records")
+        if live is not None and len(live):
+            peak_c = live.groupby("complex_id")["drawdown_m"].max()
+            for row in out:
+                row["peak_s_additional_m"] = float(peak_c.get(row["complex_id"], 0.0))
+        return JSONResponse({"complexes": out})
+
+    base_c = base[base["complex_id"] == complex_id].sort_values("time_days")
+    if base_c.empty:
+        raise HTTPException(404, f"complex_id '{complex_id}' not found")
+
+    times_days = base_c["time_days"].to_numpy()
+    s_approved = base_c["drawdown_m"].to_numpy()
+    YEAR_DAYS_LOC = 365.25
+    times_years = (times_days / YEAR_DAYS_LOC).tolist()
+
+    n_springs = 0
+    if state.inputs is not None and state.inputs.springs is not None:
+        col = state.cfg.assessment.spring_complex_col
+        if col in state.inputs.springs.columns:
+            n_springs = int((state.inputs.springs[col] == complex_id).sum())
+
+    payload = {
+        "complex_id": complex_id,
+        "n_springs": n_springs,
+        "threshold_m": state.cfg.assessment.regulatory_threshold_m,
+        "times_years": times_years,
+        "s_approved_m": s_approved.tolist(),
+        "s_additional_m": None,
+        "s_total_m": None,
+    }
+
+    live = state.last_c_series_df
+    if live is not None and len(live):
+        live_c = live[live["complex_id"] == complex_id].sort_values("time_days")
+        if not live_c.empty:
+            # The two runs share the same time grid (same cfg.time block).
+            # Inner-join on time_days to be defensive against length drift.
+            merged = base_c.merge(
+                live_c, on="time_days", how="inner",
+                suffixes=("_a", "_c"),
+            )
+            payload["times_years"] = (merged["time_days"].to_numpy() / YEAR_DAYS_LOC).tolist()
+            payload["s_approved_m"] = merged["drawdown_m_a"].tolist()
+            payload["s_additional_m"] = merged["drawdown_m_c"].tolist()
+            payload["s_total_m"] = (merged["drawdown_m_a"] + merged["drawdown_m_c"]).tolist()
+    return JSONResponse(payload)
 
 
 @app.get("/api/map-data")
