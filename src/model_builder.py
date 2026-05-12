@@ -103,7 +103,9 @@ def _make_sim(workspace: Path, name: str, perioddata, complexity: str) -> tuple[
     workspace = Path(workspace)
     workspace.mkdir(parents=True, exist_ok=True)
     sim = MFSimulation(sim_name=name, sim_ws=str(workspace), exe_name="mf6")
-    ModflowTdis(sim, time_units="days", perioddata=perioddata)
+    # nper must match len(perioddata); FloPy's TDIS default is nper=1
+    # and silently truncates PERLEN otherwise (mem_set_value size mismatch).
+    ModflowTdis(sim, time_units="days", nper=len(perioddata), perioddata=perioddata)
     ims = ModflowIms(sim, complexity=complexity, print_option="SUMMARY")
     gwf = ModflowGwf(sim, modelname=name, save_flows=True)
     sim.register_ims_package(ims, [gwf.name])
