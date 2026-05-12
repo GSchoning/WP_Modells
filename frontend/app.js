@@ -1,7 +1,10 @@
 /* Frontend for the Precipice Sandstone water-licence impact API.
  *
  * Single-page MapLibre app: shows formation extent, outcrop, existing
- * bores, and spring complex centroids. Click to place a proposed bore,
+ * bores, and spring complex centroids. Three scenario flavours:
+ *   - single: click map to place one new bore.
+ *   - multi:  click map to add bores; per-row rate inputs.
+ *   - trade:  pick an existing bore by ID, click map for destination.
  * POST /api/scenarios, render results as a stacked bar chart by
  * complex with a regulatory threshold line, plus an Approve/Reject
  * recommendation.
@@ -18,6 +21,11 @@ const STATE = {
   lastResult: null,
   complexLngLat: {},      // complex_id -> [lng, lat] for fly-to
   selectedComplexId: null,
+  scenarioType: "single", // "single" | "multi" | "trade"
+  multiWells: [],         // [{x, y, lng, lat, rate_ML_per_year}]
+  tradeFrom: null,        // {bore_id, x, y, lng, lat, rate_ML_per_year}
+  tradeTo: null,          // {x, y, lng, lat}
+  existingBores: [],
 };
 
 function setStatus(msg, level = "") {
@@ -72,8 +80,6 @@ async function init() {
   STATE.complexCount = mapData.spring_complexes?.features?.length ?? 0;
   $("threshold-display").textContent = STATE.threshold.toFixed(2);
 
-  // Esri World Imagery as a raster basemap. No API key required;
-  // attribution is mandatory and shown by MapLibre's default control.
   const satelliteStyle = {
     version: 8,
     sources: {
@@ -101,11 +107,45 @@ async function init() {
     runScenario(map);
   });
 
+  // Scenario-type radios swap which form pane is visible and re-target
+  // map clicks. State is preserved per mode.
+  document.querySelectorAll('input[name="scenario-type"]').forEach((r) => {
+    r.addEventListener("change", () => {
+      STATE.scenarioType = r.value;
+      $("mode-single").hidden = r.value !== "single";
+      $("mode-multi").hidden  = r.value !== "multi";
+      $("mode-trade").hidden  = r.value !== "trade";
+      refreshScenarioMarkers(map);
+      if (r.value === "trade" && STATE.existingBores.length === 0) {
+        loadExistingBores();
+      }
+    });
+  });
+
+  // Trade-mode: when the user picks a from_bore_id, look it up and
+  // mirror the selection onto the map.
+  $("trade-from").addEventListener("input", () => {
+    const id = $("trade-from").value.trim();
+    const b = STATE.existingBores.find((x) => String(x.bore_id) === id);
+    if (b) {
+      STATE.tradeFrom = b;
+      $("trade-from-info").textContent =
+        `${b.bore_id}: ${b.rate_ML_per_year.toFixed(0)} ML/yr at (${b.x.toFixed(0)}, ${b.y.toFixed(0)})`;
+    } else {
+      STATE.tradeFrom = null;
+      $("trade-from-info").textContent = "";
+    }
+    refreshScenarioMarkers(map);
+  });
+  $("trade-to-x").addEventListener("input", () => syncTradeToFromInputs(map));
+  $("trade-to-y").addEventListener("input", () => syncTradeToFromInputs(map));
+
   window.addEventListener("resize", () => {
     if (STATE.lastResult) renderBarChart(STATE.lastResult);
   });
 
   setupSplitter(map);
+  renderMultiWellsList();
 }
 
 function setupSplitter(map) {
@@ -142,7 +182,6 @@ function setupSplitter(map) {
   window.addEventListener("mouseup", stop);
   window.addEventListener("mouseleave", stop);
 
-  // Touch support for trackpads/mobile.
   splitter.addEventListener("touchstart", (e) => {
     if (!e.touches[0]) return;
     dragging = true;
@@ -179,7 +218,6 @@ function buildLayers(map, mapData) {
       } });
   }
   if (mapData.spring_complexes) {
-    // Build complex_id -> [lng, lat] lookup for fly-to from bars/table.
     for (const f of mapData.spring_complexes.features) {
       STATE.complexLngLat[f.properties.complex_id] = f.geometry.coordinates;
     }
@@ -218,7 +256,14 @@ function buildLayers(map, mapData) {
   map.addSource("proposed", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   map.addLayer({ id: "proposed-circle", type: "circle", source: "proposed",
     paint: {
-      "circle-radius": 9, "circle-color": "#f59e0b",
+      "circle-radius": 9,
+      // gold for new extractions, dark slate for the "from" bore in a
+      // trade (the source being decommissioned by the transfer).
+      "circle-color": [
+        "case",
+        ["==", ["get", "kind"], "from"], "#475569",
+        "#f59e0b",
+      ],
       "circle-stroke-color": "#1f2933", "circle-stroke-width": 2,
     } });
 
@@ -234,7 +279,7 @@ function buildLayers(map, mapData) {
 }
 
 async function placeProposed(map, lng, lat) {
-  setStatus("converting click to project CRS…");
+  // Dispatch the map click based on the active scenario mode.
   let xy;
   try {
     xy = await projForward(lng, lat);
@@ -243,26 +288,193 @@ async function placeProposed(map, lng, lat) {
     setStatus("CRS conversion failed", "error");
     return;
   }
-  $("x").value = xy[0].toFixed(0);
-  $("y").value = xy[1].toFixed(0);
-  map.getSource("proposed").setData({
-    type: "FeatureCollection",
-    features: [{ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [lng, lat] } }],
+  const [x, y] = xy;
+  if (STATE.scenarioType === "single") {
+    $("x").value = x.toFixed(0);
+    $("y").value = y.toFixed(0);
+    setStatus(`proposed bore at (${x.toFixed(0)}, ${y.toFixed(0)})`, "ok");
+  } else if (STATE.scenarioType === "multi") {
+    const rate = parseFloat($("multi-default-rate").value) || 1000;
+    STATE.multiWells.push({ x, y, lng, lat, rate_ML_per_year: rate });
+    renderMultiWellsList();
+    setStatus(`added bore #${STATE.multiWells.length} at (${x.toFixed(0)}, ${y.toFixed(0)})`, "ok");
+  } else if (STATE.scenarioType === "trade") {
+    STATE.tradeTo = { x, y, lng, lat };
+    $("trade-to-x").value = x.toFixed(0);
+    $("trade-to-y").value = y.toFixed(0);
+    setStatus(`trade destination at (${x.toFixed(0)}, ${y.toFixed(0)})`, "ok");
+  }
+  refreshScenarioMarkers(map);
+}
+
+function renderMultiWellsList() {
+  const list = $("multi-wells-list");
+  if (!STATE.multiWells.length) {
+    list.innerHTML = `<div class="multi-empty">No bores yet — click map to add</div>`;
+    return;
+  }
+  let html = "";
+  STATE.multiWells.forEach((w, i) => {
+    html += `<div class="multi-well-row" data-i="${i}">
+      <div class="well-coords">#${i + 1} · (${w.x.toFixed(0)}, ${w.y.toFixed(0)})</div>
+      <input class="well-rate-input" type="number" min="0" step="any" value="${w.rate_ML_per_year}" data-i="${i}" />
+      <button type="button" class="remove-btn" data-i="${i}" title="Remove">&times;</button>
+    </div>`;
   });
-  setStatus(`proposed bore at (${xy[0].toFixed(0)}, ${xy[1].toFixed(0)})`, "ok");
+  list.innerHTML = html;
+  list.querySelectorAll(".well-rate-input").forEach((inp) => {
+    inp.addEventListener("input", (e) => {
+      const i = Number(e.target.dataset.i);
+      const v = parseFloat(e.target.value);
+      if (Number.isFinite(v)) STATE.multiWells[i].rate_ML_per_year = v;
+    });
+  });
+  list.querySelectorAll(".remove-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const i = Number(btn.dataset.i);
+      STATE.multiWells.splice(i, 1);
+      renderMultiWellsList();
+      refreshScenarioMarkers(STATE.map);
+    });
+  });
+}
+
+async function syncTradeToFromInputs(map) {
+  const x = parseFloat($("trade-to-x").value);
+  const y = parseFloat($("trade-to-y").value);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    STATE.tradeTo = null;
+    refreshScenarioMarkers(map);
+    return;
+  }
+  if (!window.proj4) await loadScript("https://unpkg.com/proj4@2.10.0/dist/proj4.js");
+  if (!proj4.defs(STATE.projectCRS)) {
+    proj4.defs(STATE.projectCRS, await fetchEpsgWkt(STATE.projectCRS));
+  }
+  const [lng, lat] = proj4(STATE.projectCRS, "EPSG:4326").forward([x, y]);
+  STATE.tradeTo = { x, y, lng, lat };
+  refreshScenarioMarkers(map);
+}
+
+async function loadExistingBores() {
+  try {
+    const r = await fetch("/api/existing-bores");
+    if (!r.ok) return;
+    const d = await r.json();
+    STATE.existingBores = d.bores || [];
+    const dl = $("existing-bores-list");
+    dl.innerHTML = "";
+    for (const b of STATE.existingBores) {
+      const opt = document.createElement("option");
+      opt.value = b.bore_id;
+      opt.label = `${b.rate_ML_per_year.toFixed(0)} ML/yr`;
+      dl.appendChild(opt);
+    }
+  } catch (err) {
+    console.warn("failed to load existing bores", err);
+  }
+}
+
+function refreshScenarioMarkers(map) {
+  // The "proposed" map source holds whatever markers the current scenario
+  // mode wants displayed: gold star for new extractions, slate for the
+  // trade source (which is being removed).
+  if (!map || !map.getSource) return;
+  const src = map.getSource("proposed");
+  if (!src) return;
+  const features = [];
+  if (STATE.scenarioType === "single") {
+    const x = parseFloat($("x").value);
+    const y = parseFloat($("y").value);
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      const lngLat = projInverseCached(x, y);
+      if (lngLat) {
+        features.push({ type: "Feature", properties: { kind: "new" },
+          geometry: { type: "Point", coordinates: lngLat } });
+      }
+    }
+  } else if (STATE.scenarioType === "multi") {
+    for (const w of STATE.multiWells) {
+      features.push({ type: "Feature", properties: { kind: "new" },
+        geometry: { type: "Point", coordinates: [w.lng, w.lat] } });
+    }
+  } else if (STATE.scenarioType === "trade") {
+    if (STATE.tradeFrom) {
+      features.push({ type: "Feature", properties: { kind: "from" },
+        geometry: { type: "Point", coordinates: [STATE.tradeFrom.lng, STATE.tradeFrom.lat] } });
+    }
+    if (STATE.tradeTo) {
+      features.push({ type: "Feature", properties: { kind: "new" },
+        geometry: { type: "Point", coordinates: [STATE.tradeTo.lng, STATE.tradeTo.lat] } });
+    }
+  }
+  src.setData({ type: "FeatureCollection", features });
+}
+
+function projInverseCached(x, y) {
+  try {
+    if (!window.proj4 || !STATE.projectCRS) return null;
+    if (!proj4.defs(STATE.projectCRS)) return null;
+    return proj4(STATE.projectCRS, "EPSG:4326").forward([x, y]);
+  } catch { return null; }
 }
 
 async function runScenario(map) {
-  const x = parseFloat($("x").value);
-  const y = parseFloat($("y").value);
-  const rate = parseFloat($("rate").value);
-  const bore_id = $("bore_id").value || "PROPOSED_001";
+  // Build the request body based on the active scenario mode.
   const rechargeMult = parseFloat($("recharge_mult").value);
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(rate)) {
-    setStatus("fill in x, y, rate", "error");
+  const mult = Number.isFinite(rechargeMult) && rechargeMult >= 0 ? rechargeMult : 1.0;
+  let body;
+  if (STATE.scenarioType === "single") {
+    const x = parseFloat($("x").value);
+    const y = parseFloat($("y").value);
+    const rate = parseFloat($("rate").value);
+    const bore_id = $("bore_id").value || "PROPOSED_001";
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(rate) || rate <= 0) {
+      setStatus("fill in x, y, rate (rate > 0)", "error");
+      return;
+    }
+    body = {
+      scenario_type: "single",
+      proposed_bore: { bore_id, x, y, rate_ML_per_year: rate },
+      recharge_multiplier: mult,
+    };
+  } else if (STATE.scenarioType === "multi") {
+    if (STATE.multiWells.length === 0) {
+      setStatus("add at least one bore (click map)", "error");
+      return;
+    }
+    if (!STATE.multiWells.every((w) => w.rate_ML_per_year > 0)) {
+      setStatus("all rates must be > 0", "error");
+      return;
+    }
+    body = {
+      scenario_type: "multi",
+      new_wells: STATE.multiWells.map((w, i) => ({
+        label: `BORE_${i + 1}`, x: w.x, y: w.y, rate_ML_per_year: w.rate_ML_per_year,
+      })),
+      recharge_multiplier: mult,
+    };
+  } else if (STATE.scenarioType === "trade") {
+    if (!STATE.tradeFrom) {
+      setStatus("pick an existing bore to trade from", "error");
+      return;
+    }
+    if (!STATE.tradeTo || !Number.isFinite(STATE.tradeTo.x) || !Number.isFinite(STATE.tradeTo.y)) {
+      setStatus("set a trade destination (click map)", "error");
+      return;
+    }
+    body = {
+      scenario_type: "trade",
+      from_bore_id: STATE.tradeFrom.bore_id,
+      to_x: STATE.tradeTo.x,
+      to_y: STATE.tradeTo.y,
+      recharge_multiplier: mult,
+    };
+  } else {
+    setStatus("unknown scenario type", "error");
     return;
   }
-  const mult = Number.isFinite(rechargeMult) && rechargeMult >= 0 ? rechargeMult : 1.0;
+
   $("run-btn").disabled = true;
   $("run-btn").textContent = mult !== 1.0 ? "Running… (~10 min, re-baselining)" : "Running… (~5 min)";
   setStatus("running scenario C…");
@@ -272,10 +484,7 @@ async function runScenario(map) {
     resp = await fetch("/api/scenarios", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        proposed_bore: { bore_id, x, y, rate_ML_per_year: rate },
-        recharge_multiplier: mult,
-      }),
+      body: JSON.stringify(body),
     });
   } catch (err) {
     setStatus("network error", "error");
@@ -320,11 +529,9 @@ function renderSummaryStats(result) {
 
 function selectComplex(id) {
   STATE.selectedComplexId = id;
-  // Map: fly to centroid + popup
   const lngLat = STATE.complexLngLat[id];
   if (lngLat && STATE.map) {
     STATE.map.flyTo({ center: lngLat, zoom: Math.max(STATE.map.getZoom(), 9), speed: 1.4 });
-    // Find the latest data for this complex (if a scenario was run)
     let popupHtml = `<strong>${id}</strong>`;
     if (STATE.lastResult) {
       const lastYear = Math.max(...STATE.lastResult.output_years);
@@ -345,19 +552,16 @@ function selectComplex(id) {
     new maplibregl.Popup({ closeOnClick: true })
       .setLngLat(lngLat).setHTML(popupHtml).addTo(STATE.map);
   }
-  // Bars: highlight matching rect
   const bars = document.querySelectorAll("#bars rect, #bars text");
   bars.forEach(el => {
     if (el.getAttribute("data-id") === id) el.classList.add("selected");
     else el.classList.remove("selected");
   });
-  // Table: highlight matching row
   const rows = document.querySelectorAll("#results-tables tbody tr");
   rows.forEach(tr => {
     if (tr.getAttribute("data-id") === id) tr.classList.add("row-selected");
     else tr.classList.remove("row-selected");
   });
-  // Time-series chart for this complex
   loadAndRenderSeries(id);
 }
 
@@ -424,7 +628,6 @@ function renderSeriesChart(data) {
     });
   };
 
-  // Axes + grid
   const nTicks = 4;
   for (let i = 0; i <= nTicks; i++) {
     const v = (peak * i) / nTicks;
@@ -461,7 +664,6 @@ function renderSeriesChart(data) {
   xLab.textContent = "years";
   svg.appendChild(xLab);
 
-  // Threshold line
   const tY = yScale(threshold);
   svg.appendChild(make("line", {
     x1: margin.left, x2: margin.left + innerW, y1: tY, y2: tY,
@@ -474,7 +676,6 @@ function renderSeriesChart(data) {
   tLab.textContent = `${threshold} m`;
   svg.appendChild(tLab);
 
-  // Lines: existing in slate, total in red/amber depending on threshold
   svg.appendChild(path(seriesA, "#475569", "", 1.6));
   let totColor = "#f59e0b";
   if (hasC) {
@@ -485,7 +686,6 @@ function renderSeriesChart(data) {
     svg.appendChild(path(seriesT, totColor, "", 2.0));
   }
 
-  // Legend
   let legendHtml = `<span><span class="swatch-line" style="background:#475569"></span>existing (A)</span>`;
   if (hasC) {
     legendHtml += `<span><span class="swatch-line" style="background:${totColor}"></span>total (A + C)</span>`;
@@ -496,9 +696,6 @@ function renderSeriesChart(data) {
 
 function renderDecision(result) {
   // Decision is anchored to the last output year (the regulatory horizon).
-  // Using "any year" for triggered would flag complexes that briefly tip
-  // over en route to already_exceeded — by year 100 those would have
-  // exceeded without the proposal anyway, so it's not the bore's fault.
   const lastYear = Math.max(...result.output_years);
   const yearBlock = result.by_year.find(y => y.time_years === lastYear);
   const triggered = yearBlock.complexes.filter(c => c.triggered_by_proposed).length;
@@ -522,8 +719,26 @@ function renderDecision(result) {
   if (already > 0) {
     mh += `<div class="advisory">⚠ Advisory: ${already} complex${already === 1 ? "" : "es"} ${already === 1 ? "is" : "are"} already predicted to exceed ${thresh} m from existing licences alone (not attributable to this proposal).</div>`;
   }
-  mh += `<div><strong>${result.proposed_bore.bore_id}</strong> · ${result.proposed_bore.rate_ML_per_year} ML/yr</div>`;
-  mh += `<div>(${result.proposed_bore.x.toFixed(0)}, ${result.proposed_bore.y.toFixed(0)}) · ${result.runtime_seconds.toFixed(1)}s</div>`;
+  // The response may describe a single bore, several new bores (multi), or
+  // a trade change set. Render a one-line summary of whichever shape we got.
+  const wellsRun = result.wells_run || [];
+  const stype = result.scenario_type || "single";
+  if (stype === "trade" && wellsRun.length >= 2) {
+    const toW = wellsRun.find((w) => w.rate_ML_per_year > 0);
+    const fromW = wellsRun.find((w) => w.rate_ML_per_year < 0);
+    mh += `<div><strong>Trade</strong> · ${Math.abs(toW.rate_ML_per_year).toFixed(0)} ML/yr</div>`;
+    if (fromW) mh += `<div>from (${fromW.x.toFixed(0)}, ${fromW.y.toFixed(0)})</div>`;
+    if (toW)   mh += `<div>to (${toW.x.toFixed(0)}, ${toW.y.toFixed(0)})</div>`;
+    mh += `<div class="muted">runtime ${result.runtime_seconds.toFixed(1)}s</div>`;
+  } else if (stype === "multi" && wellsRun.length > 1) {
+    const total = wellsRun.reduce((s, w) => s + Math.max(0, w.rate_ML_per_year), 0);
+    mh += `<div><strong>${wellsRun.length} bores</strong> · total ${total.toFixed(0)} ML/yr</div>`;
+    mh += `<div class="muted">runtime ${result.runtime_seconds.toFixed(1)}s</div>`;
+  } else if (result.proposed_bore) {
+    const pb = result.proposed_bore;
+    mh += `<div><strong>${pb.bore_id}</strong> · ${pb.rate_ML_per_year} ML/yr</div>`;
+    mh += `<div>(${pb.x.toFixed(0)}, ${pb.y.toFixed(0)}) · ${result.runtime_seconds.toFixed(1)}s</div>`;
+  }
   if (result.theis) {
     mh += `<div>Theis local T = ${result.theis.T_m2_per_day.toFixed(2)} m²/d, S = ${result.theis.S_dimensionless.toExponential(1)}</div>`;
   }
@@ -534,9 +749,6 @@ function renderDecision(result) {
 function renderBarChart(result) {
   const lastYear = Math.max(...result.output_years);
   const yearBlock = result.by_year.find(y => y.time_years === lastYear);
-  // Hide complexes whose total drawdown rounds to "0.00" in the table.
-  // The cutoff matches fmt(v, 2): anything below 0.005 m displays as
-  // 0.00 and adds noise to the chart's label axis without signal.
   const ZERO_CUTOFF_M = 0.005;
   const allComplexes = [...yearBlock.complexes]
     .filter(c => c.s_total_m >= ZERO_CUTOFF_M)
@@ -568,7 +780,6 @@ function renderBarChart(result) {
     return el;
   };
 
-  // Y-axis ticks
   const nTicks = 4;
   for (let i = 0; i <= nTicks; i++) {
     const v = (maxTotal * i) / nTicks;
@@ -584,7 +795,6 @@ function renderBarChart(result) {
     t.textContent = v.toFixed(2);
     svg.appendChild(t);
   }
-  // Y-axis label
   const yl = make("text", {
     x: 14, y: margin.top + innerH / 2,
     "text-anchor": "middle", "font-size": 10, fill: "#52606d",
@@ -593,7 +803,6 @@ function renderBarChart(result) {
   yl.textContent = "drawdown (m)";
   svg.appendChild(yl);
 
-  // Threshold line
   const threshY = yScale(STATE.threshold);
   svg.appendChild(make("line", {
     x1: margin.left, x2: margin.left + innerW,
@@ -607,10 +816,6 @@ function renderBarChart(result) {
   tl.textContent = `threshold ${STATE.threshold} m`;
   svg.appendChild(tl);
 
-  // Bars. Three categories drive the colours:
-  //   triggered_by_proposed : the proposed bore tips it over (decision-relevant)
-  //   already_exceeded       : was already over from existing licences
-  //   ok                     : under threshold
   complexes.forEach((c, i) => {
     const x = margin.left + i * slot + (slot - barW) / 2;
     const triggered = c.triggered_by_proposed;
@@ -619,7 +824,6 @@ function renderBarChart(result) {
     const yTotal = yScale(c.s_total_m);
     const baseY = yScale(0);
 
-    // Existing (Scenario A): muted purple if already over, slate otherwise.
     if (c.s_approved_m > 0) {
       const fill = already ? "#7c3aed" : "#475569";
       const r = make("rect", {
@@ -645,7 +849,6 @@ function renderBarChart(result) {
       r.addEventListener("click", () => selectComplex(c.complex_id));
       svg.appendChild(r);
     }
-    // Label
     const labelX = x + barW / 2;
     const labelY = margin.top + innerH + 8;
     const labelColor = triggered ? "#991b1b" : already ? "#5b21b6" : "#1f2933";
@@ -661,7 +864,6 @@ function renderBarChart(result) {
     svg.appendChild(t);
   });
 
-  // Caption
   const caption = make("text", {
     x: margin.left + innerW / 2, y: H - 6,
     "text-anchor": "middle", "font-size": 10, fill: "#52606d",
