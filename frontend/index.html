@@ -39,20 +39,56 @@
     </section>
 
     <aside id="controls">
-      <h2>Proposed bore</h2>
       <form id="scenario-form">
-        <label>Bore ID
-          <input type="text" id="bore_id" value="PROPOSED_001" />
-        </label>
-        <label>Easting (m, project CRS)
-          <input type="number" id="x" step="any" required />
-        </label>
-        <label>Northing (m, project CRS)
-          <input type="number" id="y" step="any" required />
-        </label>
-        <label>Extraction rate (ML/year)
-          <input type="number" id="rate" step="any" min="0" value="1000" required />
-        </label>
+        <fieldset id="scenario-type-fieldset">
+          <legend>Scenario type</legend>
+          <label class="seg"><input type="radio" name="scenario-type" value="single" checked /><span>Single bore</span></label>
+          <label class="seg"><input type="radio" name="scenario-type" value="multi" /><span>Multi bore</span></label>
+          <label class="seg"><input type="radio" name="scenario-type" value="trade" /><span>Trade</span></label>
+        </fieldset>
+
+        <div id="mode-single" class="mode-pane">
+          <h2>Proposed bore</h2>
+          <label>Bore ID
+            <input type="text" id="bore_id" value="PROPOSED_001" />
+          </label>
+          <label>Easting (m, project CRS)
+            <input type="number" id="x" step="any" />
+          </label>
+          <label>Northing (m, project CRS)
+            <input type="number" id="y" step="any" />
+          </label>
+          <label>Extraction rate (ML/year)
+            <input type="number" id="rate" step="any" min="0" value="1000" />
+          </label>
+          <p class="muted">Click anywhere on the map to set easting/northing.</p>
+        </div>
+
+        <div id="mode-multi" class="mode-pane" hidden>
+          <h2>Multiple bores</h2>
+          <p class="muted" style="margin-top:0">Click map to add a bore. Edit rate per row; ✕ removes.</p>
+          <div id="multi-wells-list"></div>
+          <label>Default rate (ML/year)
+            <input type="number" id="multi-default-rate" step="any" min="0" value="1000" />
+          </label>
+        </div>
+
+        <div id="mode-trade" class="mode-pane" hidden>
+          <h2>Trade an existing licence</h2>
+          <label>From bore (entitlement / ID)
+            <input type="text" id="trade-from" list="existing-bores-list" placeholder="search by ID" autocomplete="off" />
+            <datalist id="existing-bores-list"></datalist>
+          </label>
+          <div id="trade-from-info" class="muted" style="font-size:0.78rem"></div>
+          <p class="muted">Click map to set the destination of the transferred rate.</p>
+          <label>To easting (m)
+            <input type="number" id="trade-to-x" step="any" />
+          </label>
+          <label>To northing (m)
+            <input type="number" id="trade-to-y" step="any" />
+          </label>
+        </div>
+
         <label>Recharge multiplier
           <input type="number" id="recharge_mult" step="0.1" min="0" max="10" value="1.0" />
           <span class="muted" style="font-size:0.7rem">1.0 = calibrated; changing this re-runs the baseline (~5 min)</span>

@@ -34,8 +34,6 @@ html, body {
 #app { display: grid; grid-template-rows: auto minmax(160px, 1fr) 10px minmax(160px, 440px);
   height: 100%; min-height: 0; }
 
-/* ----- Header --------------------------------------------------- */
-
 header {
   display: flex; justify-content: space-between; align-items: center;
   padding: 0.7rem 1.4rem;
@@ -68,8 +66,6 @@ header .subtitle { font-size: 0.75rem; color: #cbd5e1; margin-top: 1px; }
 #status.error { color: #fecaca; background: rgba(220,38,38,0.22); border-color: rgba(220,38,38,0.4); }
 #status.ok    { color: #a7f3d0; background: rgba(5,150,105,0.22); border-color: rgba(5,150,105,0.4); }
 
-/* ----- Splitter ------------------------------------------------- */
-
 #splitter { cursor: row-resize; background: var(--surface-2);
   border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
   position: relative; user-select: none; transition: background 0.15s; }
@@ -82,8 +78,6 @@ header .subtitle { font-size: 0.75rem; color: #cbd5e1; margin-top: 1px; }
 #splitter:hover { background: #e2e8f0; }
 #splitter:hover::after { background: var(--ink-1); width: 56px; }
 body.resizing, body.resizing * { cursor: row-resize !important; user-select: none !important; }
-
-/* ----- Upper: map + controls ------------------------------------ */
 
 #upper { display: grid; grid-template-columns: 1fr 360px; min-height: 0;
   border-bottom: 1px solid var(--line); }
@@ -117,6 +111,61 @@ body.resizing, body.resizing * { cursor: row-resize !important; user-select: non
 #controls h2 { font-size: 0.72rem; margin: 0 0 0.85rem;
   text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2);
   font-weight: 600; }
+
+#scenario-type-fieldset {
+  display: flex; flex-wrap: wrap; gap: 0.4rem;
+  padding: 0 0 0.85rem; margin: 0 0 0.9rem;
+  border: 0; border-bottom: 1px solid var(--line);
+}
+#scenario-type-fieldset legend { font-size: 0.7rem; color: var(--ink-2);
+  text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+  width: 100%; padding: 0 0 0.4rem; }
+#scenario-type-fieldset .seg {
+  flex: 1 1 0; min-width: 70px; cursor: pointer; text-align: center;
+  padding: 0.45rem 0.4rem; border: 1px solid var(--line-strong);
+  border-radius: 6px; background: white; font-size: 0.78rem;
+  color: var(--ink-1); font-weight: 500; transition: all 0.12s;
+}
+#scenario-type-fieldset .seg input { display: none; }
+#scenario-type-fieldset .seg:has(input:checked) {
+  background: var(--accent); color: white; border-color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+#scenario-type-fieldset .seg:hover:not(:has(input:checked)) {
+  border-color: var(--ink-3); background: var(--surface-2);
+}
+
+.mode-pane { margin-bottom: 0.5rem; }
+
+#multi-wells-list { display: flex; flex-direction: column; gap: 0.3rem;
+  margin: 0.4rem 0 0.6rem; }
+.multi-well-row {
+  display: grid; grid-template-columns: 1fr 80px auto;
+  gap: 0.3rem; align-items: center; padding: 0.35rem 0.45rem;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface-2); font-size: 0.78rem;
+}
+.multi-well-row .well-coords {
+  color: var(--ink-2); font-size: 0.72rem;
+  font-variant-numeric: tabular-nums; line-height: 1.2;
+}
+.multi-well-row .well-rate-input {
+  padding: 0.3rem 0.4rem; font-size: 0.8rem;
+  border: 1px solid var(--line-strong); border-radius: 4px;
+  background: white; font-variant-numeric: tabular-nums; width: 100%;
+}
+.multi-well-row .remove-btn {
+  background: transparent; border: 0; color: var(--ink-2); cursor: pointer;
+  font-size: 1.1rem; padding: 0.1rem 0.3rem; border-radius: 4px; line-height: 1;
+}
+.multi-well-row .remove-btn:hover { color: var(--bad); background: var(--bad-soft); }
+.multi-empty {
+  color: var(--ink-3); font-size: 0.78rem; font-style: italic;
+  padding: 0.4rem 0.5rem;
+}
+
+#trade-from-info { margin: 0.3rem 0 0.6rem; line-height: 1.5; }
+
 #scenario-form label { display: block; margin-bottom: 0.7rem; font-size: 0.82rem;
   color: var(--ink-1); font-weight: 500; }
 #scenario-form input {
@@ -140,8 +189,6 @@ body.resizing, body.resizing * { cursor: row-resize !important; user-select: non
   transform: none; box-shadow: var(--shadow-sm); }
 .muted { color: var(--ink-2); font-size: 0.75rem; margin: 0.5rem 0 0;
   line-height: 1.5; }
-
-/* ----- Lower: decision + summary ------------------------------- */
 
 #lower {
   display: grid; grid-template-columns: 270px 1fr; min-height: 0;
@@ -264,7 +311,6 @@ tr.already-row   { background: var(--already-soft); }
 tr.already-row td { color: #5b21b6; }
 tr.row-selected  { box-shadow: inset 3px 0 0 var(--accent); }
 
-/* MapLibre popup polish */
 .maplibregl-popup-content {
   border-radius: 8px; box-shadow: var(--shadow-lg);
   border: 1px solid var(--line); padding: 0.7rem 0.9rem;
