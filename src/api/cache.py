@@ -22,10 +22,11 @@ CACHE_DIR = Path("outputs/cache")
 
 # Bump when the cached receptors_df schema changes (column names, what
 # rows mean) OR when the underlying simulation produces materially
-# different numbers (boundary conditions, IC formulation, etc.). v2 =
-# per-complex aggregation with n_springs column. v3 = boundary CHD now
-# excludes outcrop cells.
-CACHE_SCHEMA_VERSION = "v4"
+# different numbers (boundary conditions, IC formulation, time stepping,
+# etc.). v2 = per-complex aggregation with n_springs column. v3 =
+# boundary CHD excludes outcrop cells. v4 = chd_quadrants. v5 = yearly
+# fine-period stress block (fine_period_years).
+CACHE_SCHEMA_VERSION = "v5"
 
 
 @dataclass

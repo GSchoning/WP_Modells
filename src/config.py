@@ -55,6 +55,12 @@ class TimeCfg(BaseModel):
     total_years: float = 100
     nstp: int = 30
     tsmult: float = 1.2
+    # Optional yearly-step early period. If > 0, the simulation is split
+    # into two stress periods: a fine period of fine_period_years length
+    # with one step per year (tsmult=1), then the remaining time in nstp
+    # geometric steps. Useful when receptors near a well need resolution
+    # in the first few years of drawdown.
+    fine_period_years: int = 10
     output_years: list[float] = Field(default_factory=lambda: [10, 50, 100])
 
 
