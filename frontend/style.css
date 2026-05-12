@@ -179,6 +179,17 @@ body.resizing, body.resizing * { cursor: row-resize !important; user-select: non
 .advisory { background: var(--already-soft); color: #5b21b6;
   padding: 0.55rem 0.7rem; border-radius: 6px; font-size: 0.77rem;
   border-left: 3px solid var(--already); line-height: 1.5; }
+
+#series-pane { margin-top: 0.5rem; padding-top: 0.6rem;
+  border-top: 1px solid var(--line); }
+#series-pane h3 { font-size: 0.78rem; margin: 0 0 0.4rem;
+  color: var(--ink-1); font-weight: 600; }
+#series-chart { background: #fafafa; border-radius: 6px;
+  border: 1px solid var(--line); display: block; }
+.series-legend { font-size: 0.7rem; color: var(--ink-2);
+  margin-top: 0.3rem; display: flex; gap: 0.7rem; flex-wrap: wrap; }
+.series-legend .swatch-line { display: inline-block; width: 14px;
+  height: 2px; vertical-align: middle; margin-right: 0.25rem; }
 .detail-link { display: inline-block; margin-top: 0.25rem;
   color: var(--accent); text-decoration: none; font-weight: 500;
   font-size: 0.82rem; padding: 0.35rem 0.6rem; border-radius: 6px;
