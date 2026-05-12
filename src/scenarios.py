@@ -134,19 +134,38 @@ def run_scenario(
     workspace: Path,
     *,
     chd_cells=None,
+    proposed_wells: list[tuple[float, float, float]] | None = None,
 ) -> ScenarioResult:
-    """Run Scenario A (existing) or C (proposed only) and sample receptors."""
+    """Run Scenario A (existing) or C (change set vs baseline) and sample receptors.
+
+    For Scenario C, `proposed_wells` is a list of (x, y, rate_ML_per_year)
+    tuples. Positive rate = new extraction; negative rate = removed extraction
+    (used for trade scenarios where an existing licence is transferred —
+    +rate at the new location and -rate at the old). The change set is fed
+    to MF6 as WEL records with the sign flipped (MF6 takes extraction as
+    negative q). If `proposed_wells` is None, falls back to the single
+    cfg.inputs.proposed_bore for backward compat.
+    """
     if scenario == "A":
         wells, _accepted, _rejected = _bores_to_wells(inputs.pumping_bores, grid)
     elif scenario == "C":
-        pb = cfg.inputs.proposed_bore
-        if pb.x is None or pb.y is None or pb.rate_ML_per_year is None:
-            raise ValueError("Scenario C requires inputs.proposed_bore.{x,y,rate_ML_per_year}")
-        rc = cell_of(grid, float(pb.x), float(pb.y))
-        if rc is None or grid.idomain[0, rc[0], rc[1]] != 1:
-            raise ValueError(f"Proposed bore {pb.bore_id} falls outside the active domain.")
-        rate_m3d = float(pb.rate_ML_per_year) * ML_PER_YEAR_TO_M3_PER_DAY
-        wells = [(0, rc[0], rc[1], -rate_m3d)]
+        if proposed_wells is None:
+            pb = cfg.inputs.proposed_bore
+            if pb.x is None or pb.y is None or pb.rate_ML_per_year is None:
+                raise ValueError(
+                    "Scenario C requires either `proposed_wells` or "
+                    "cfg.inputs.proposed_bore.{x,y,rate_ML_per_year}"
+                )
+            proposed_wells = [(float(pb.x), float(pb.y), float(pb.rate_ML_per_year))]
+        if not proposed_wells:
+            raise ValueError("Scenario C: proposed_wells list is empty")
+        wells = []
+        for x, y, rate_ml in proposed_wells:
+            rc = cell_of(grid, float(x), float(y))
+            if rc is None or grid.idomain[0, rc[0], rc[1]] != 1:
+                raise ValueError(f"Proposed well at ({x:.0f}, {y:.0f}) falls outside the active domain.")
+            rate_m3d = float(rate_ml) * ML_PER_YEAR_TO_M3_PER_DAY
+            wells.append((0, rc[0], rc[1], -rate_m3d))
     else:
         raise ValueError(f"unknown scenario: {scenario}")
 
