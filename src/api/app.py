@@ -4,10 +4,12 @@ Architecture (CLAUDE.md §12):
 - App startup: load config + inputs + grid, build boundary CHD, run (or
   load cached) steady-state IC, run (or load cached) Scenario A. These
   are reused across all requests.
-- POST /scenarios: runs Scenario C only with the user-supplied proposed
-  bore, combines with cached A by superposition, returns drawdowns.
+- POST /scenarios: runs Scenario C only with a user-supplied well change
+  set (single / multi / trade), combines with cached A by superposition,
+  returns drawdowns.
 - GET /baseline: cached Scenario A drawdowns at all spring complexes.
 - GET /map-data: GeoJSON layers for the frontend map.
+- GET /existing-bores: list of licensed pumping bores for the trade UI.
 - GET /healthz: liveness check.
 
 Receptor unit of analysis is the **spring complex** (configurable via
@@ -47,10 +49,14 @@ from . import cache as cache_mod
 from .schemas import (
     BaselineResponse,
     ComplexDrawdown,
+    ExistingBore,
+    ExistingBoresResponse,
     HealthResponse,
+    ProposedBore,
     ScenarioRequest,
     ScenarioResponse,
     TheisDiagnostics,
+    WellSpec,
     YearResults,
 )
 
@@ -69,6 +75,7 @@ class _State:
     last_proposed_bore: dict | None = None
     last_c_drawdown_by_year: dict | None = None      # year -> (nrow, ncol)
     last_c_series_df: pd.DataFrame | None = None     # per-complex time series
+    last_wells_run: list[dict] | None = None          # full change set echoed back
     setup_geojson: dict | None = None                 # layer -> FeatureCollection
 
 
@@ -194,7 +201,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Precipice Sandstone — Water Licence Impact API",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
@@ -203,10 +210,9 @@ def _df_to_year_results(combined: pd.DataFrame, threshold: float) -> list[YearRe
     """Build YearResults with three threshold classifications per complex:
 
     - already_exceeded: s_approved_m >= threshold (existing licences alone
-      already cause an exceedance — informational, not the proposed bore's
-      fault).
+      already cause an exceedance — informational, not the proposal's fault).
     - triggered_by_proposed: s_approved_m < threshold but s_total >= threshold
-      (the proposed bore is what tips this complex over — the regulatory
+      (the proposal is what tips this complex over — the regulatory
       decision-maker).
     - exceeds_threshold: s_total >= threshold (union of the two — kept for
       back-compat).
@@ -285,15 +291,57 @@ def baseline() -> BaselineResponse:
     )
 
 
+def _build_wells_from_request(req: ScenarioRequest) -> list[dict]:
+    """Resolve the scenario request to a list of well-change dicts.
+
+    Each entry: {label, x, y, rate_ML_per_year}. Positive rate = adding
+    extraction, negative rate = removing existing extraction (used for
+    trade scenarios).
+    """
+    if req.scenario_type == "single":
+        if req.proposed_bore is None:
+            raise HTTPException(400, "single mode requires `proposed_bore`")
+        pb = req.proposed_bore
+        return [{"label": pb.bore_id, "x": pb.x, "y": pb.y,
+                 "rate_ML_per_year": pb.rate_ML_per_year}]
+
+    if req.scenario_type == "multi":
+        if not req.new_wells:
+            raise HTTPException(400, "multi mode requires at least one entry in `new_wells`")
+        return [w.model_dump() for w in req.new_wells]
+
+    if req.scenario_type == "trade":
+        if not req.from_bore_id or req.to_x is None or req.to_y is None:
+            raise HTTPException(400, "trade mode requires `from_bore_id`, `to_x`, `to_y`")
+        bores = state.inputs.pumping_bores
+        if "bore_id" not in bores.columns:
+            raise HTTPException(500, "pumping bores lack a `bore_id` column")
+        match = bores[bores["bore_id"].astype(str) == str(req.from_bore_id)]
+        if match.empty:
+            raise HTTPException(404, f"existing bore {req.from_bore_id} not found")
+        row = match.iloc[0]
+        from_x = float(row.geometry.x)
+        from_y = float(row.geometry.y)
+        rate_m3d = float(row["rate_m3_per_day"])
+        rate_ml_yr = rate_m3d / ML_PER_YEAR_TO_M3_PER_DAY
+        # +rate at destination (new extraction), -rate at source (recovery).
+        return [
+            {"label": f"to {req.from_bore_id}", "x": float(req.to_x), "y": float(req.to_y),
+             "rate_ML_per_year": rate_ml_yr},
+            {"label": f"from {req.from_bore_id}", "x": from_x, "y": from_y,
+             "rate_ML_per_year": -rate_ml_yr},
+        ]
+
+    raise HTTPException(400, f"unknown scenario_type: {req.scenario_type}")
+
+
 @app.post("/api/scenarios", response_model=ScenarioResponse)
 def scenarios(req: ScenarioRequest) -> ScenarioResponse:
     if state.baseline is None:
         raise HTTPException(503, "Baseline not ready")
 
-    state.cfg.inputs.proposed_bore.bore_id = req.proposed_bore.bore_id
-    state.cfg.inputs.proposed_bore.x = req.proposed_bore.x
-    state.cfg.inputs.proposed_bore.y = req.proposed_bore.y
-    state.cfg.inputs.proposed_bore.rate_ML_per_year = req.proposed_bore.rate_ML_per_year
+    wells_dicts = _build_wells_from_request(req)
+    proposed_wells_xy_rate = [(w["x"], w["y"], w["rate_ML_per_year"]) for w in wells_dicts]
 
     # Recharge multiplier change re-runs the IC and re-baselines Scenario A
     # against a different cache slot. Both the steady-state IC and the
@@ -305,11 +353,13 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
         state.baseline = _bootstrap_baseline()
 
     t0 = time.time()
-    workspace = state.workspace_root / f"scen_C_{req.proposed_bore.bore_id}"
+    label_safe = "".join(c if c.isalnum() else "_" for c in (wells_dicts[0]["label"] or "scen_C"))[:40]
+    workspace = state.workspace_root / f"scen_C_{label_safe}"
     try:
         c_result = run_scenario(
             state.cfg, state.grid, state.inputs, "C",
             state.ic_head, workspace, chd_cells=state.chd_cells,
+            proposed_wells=proposed_wells_xy_rate,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))
@@ -317,36 +367,75 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
         raise HTTPException(500, str(exc))
     runtime = time.time() - t0
 
-    # Retain Scenario C grids for the drawdown-maps page.
-    state.last_proposed_bore = req.proposed_bore.model_dump()
+    # Retain Scenario C grids for the drawdown-maps page. wells_run carries
+    # the resolved change set (for trade this is +at-new and -at-old).
+    state.last_wells_run = wells_dicts
     state.last_c_drawdown_by_year = c_result.drawdown_at_output_years
     state.last_c_series_df = c_result.complex_series_df.copy()
+    # Back-compat slot for the drawdown-maps page: first positive-rate well.
+    positive = [w for w in wells_dicts if w["rate_ML_per_year"] > 0]
+    if positive:
+        first = positive[0]
+        state.last_proposed_bore = {
+            "bore_id": first["label"],
+            "x": first["x"], "y": first["y"],
+            "rate_ML_per_year": first["rate_ML_per_year"],
+        }
 
     combined = combine_receptor_tables(
         state.baseline.receptors_df,
         c_result.receptors_df,
     )
 
+    # Theis comparison: sum the analytical drawdown contribution from every
+    # well in the change set (linear superposition). Signs follow rate.
     theis_diag: TheisDiagnostics | None = None
     if state.inputs.springs is not None and len(state.inputs.springs):
         spring_id_col = state.cfg.assessment.spring_id_col
         complex_col = state.cfg.assessment.spring_complex_col
         if spring_id_col not in state.inputs.springs.columns:
             spring_id_col = state.inputs.springs.columns[0]
-        rate_m3d = req.proposed_bore.rate_ML_per_year * ML_PER_YEAR_TO_M3_PER_DAY
-        theis_df = theis_at_springs(
-            state.grid, state.inputs.springs, spring_id_col,
-            req.proposed_bore.x, req.proposed_bore.y, rate_m3d,
-            output_years=sorted(combined["time_years"].unique()),
-            complex_col=complex_col if complex_col in state.inputs.springs.columns else None,
-        )
-        combined = combined.merge(
-            theis_df[["receptor_id", "time_years", "drawdown_m_theis", "r_m"]],
-            on=["receptor_id", "time_years"], how="left",
-        )
-        rc = cell_of(state.grid, req.proposed_bore.x, req.proposed_bore.y)
-        T, S = _local_T_S(state.grid, rc[0], rc[1])
-        theis_diag = TheisDiagnostics(T_m2_per_day=T, S_dimensionless=S, well_cell=[rc[0], rc[1]])
+        output_years_sorted = sorted(combined["time_years"].unique())
+        theis_merged = None
+        for w in wells_dicts:
+            rate_m3d = float(w["rate_ML_per_year"]) * ML_PER_YEAR_TO_M3_PER_DAY
+            try:
+                df = theis_at_springs(
+                    state.grid, state.inputs.springs, spring_id_col,
+                    float(w["x"]), float(w["y"]), rate_m3d,
+                    output_years=output_years_sorted,
+                    complex_col=complex_col if complex_col in state.inputs.springs.columns else None,
+                )
+            except ValueError:
+                continue
+            # theis_at_springs always returns positive drawdown for |Q|;
+            # recover the sign of the contribution from rate.
+            sign = 1.0 if rate_m3d >= 0 else -1.0
+            df = df[["receptor_id", "time_years", "drawdown_m_theis", "r_m"]].copy()
+            df["drawdown_m_theis"] = df["drawdown_m_theis"] * sign
+            if theis_merged is None:
+                theis_merged = df.rename(columns={"r_m": "r_m_first"})
+            else:
+                m = df.rename(columns={"drawdown_m_theis": "_dd2", "r_m": "_r2"})
+                theis_merged = theis_merged.merge(
+                    m, on=["receptor_id", "time_years"], how="outer",
+                )
+                theis_merged["drawdown_m_theis"] = (
+                    theis_merged["drawdown_m_theis"].fillna(0) + theis_merged["_dd2"].fillna(0)
+                )
+                theis_merged["r_m_first"] = theis_merged[["r_m_first", "_r2"]].min(axis=1)
+                theis_merged = theis_merged.drop(columns=["_dd2", "_r2"])
+        if theis_merged is not None:
+            combined = combined.merge(
+                theis_merged.rename(columns={"r_m_first": "r_m"}),
+                on=["receptor_id", "time_years"], how="left",
+            )
+        # Local T/S at the first positive-rate well for the diagnostics line.
+        if positive:
+            rc = cell_of(state.grid, float(positive[0]["x"]), float(positive[0]["y"]))
+            if rc is not None:
+                T, S = _local_T_S(state.grid, rc[0], rc[1])
+                theis_diag = TheisDiagnostics(T_m2_per_day=T, S_dimensionless=S, well_cell=[rc[0], rc[1]])
 
     threshold = state.cfg.assessment.regulatory_threshold_m
     year_results = _df_to_year_results(combined, threshold)
@@ -362,8 +451,19 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
     already_ids = {
         c.complex_id for yr in year_results for c in yr.complexes if c.already_exceeded
     }
+
+    proposed_bore_echo = None
+    if positive:
+        p = positive[0]
+        proposed_bore_echo = ProposedBore(
+            bore_id=p["label"], x=p["x"], y=p["y"],
+            rate_ML_per_year=p["rate_ML_per_year"],
+        )
+
     return ScenarioResponse(
-        proposed_bore=req.proposed_bore,
+        scenario_type=req.scenario_type,
+        wells_run=[WellSpec(**w) for w in wells_dicts],
+        proposed_bore=proposed_bore_echo,
         output_years=[yr.time_years for yr in year_results],
         regulatory_threshold_m=threshold,
         by_year=year_results,
@@ -374,6 +474,33 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
         runtime_seconds=runtime,
         theis=theis_diag,
     )
+
+
+@app.get("/api/existing-bores", response_model=ExistingBoresResponse)
+def existing_bores() -> ExistingBoresResponse:
+    """List existing licensed pumping bores for the trade-mode selector."""
+    if state.inputs is None:
+        raise HTTPException(503, "Inputs not ready")
+    bores = state.inputs.pumping_bores
+    if bores is None or len(bores) == 0:
+        return ExistingBoresResponse(bores=[])
+
+    transformer = pyproj.Transformer.from_crs(state.cfg.project.crs, "EPSG:4326", always_xy=True)
+    out: list[ExistingBore] = []
+    has_id = "bore_id" in bores.columns
+    for _, row in bores.iterrows():
+        x = float(row.geometry.x)
+        y = float(row.geometry.y)
+        lng, lat = transformer.transform(x, y)
+        rate_ml = float(row["rate_m3_per_day"]) / ML_PER_YEAR_TO_M3_PER_DAY
+        out.append(ExistingBore(
+            bore_id=str(row["bore_id"]) if has_id else f"row{int(row.name)}",
+            x=x, y=y, lng=float(lng), lat=float(lat),
+            rate_ML_per_year=rate_ml,
+        ))
+    # Largest rates first — typical trade interest.
+    out.sort(key=lambda b: -b.rate_ML_per_year)
+    return ExistingBoresResponse(bores=out)
 
 
 @app.get("/api/spring-series")
