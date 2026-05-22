@@ -311,8 +311,8 @@ def _build_wells_from_request(req: ScenarioRequest) -> list[dict]:
         return [w.model_dump() for w in req.new_wells]
 
     if req.scenario_type == "trade":
-        if not req.from_bore_id or req.to_x is None or req.to_y is None:
-            raise HTTPException(400, "trade mode requires `from_bore_id`, `to_x`, `to_y`")
+        if not req.from_bore_id:
+            raise HTTPException(400, "trade mode requires `from_bore_id`")
         bores = state.inputs.pumping_bores
         if "bore_id" not in bores.columns:
             raise HTTPException(500, "pumping bores lack a `bore_id` column")
@@ -322,15 +322,44 @@ def _build_wells_from_request(req: ScenarioRequest) -> list[dict]:
         row = match.iloc[0]
         from_x = float(row.geometry.x)
         from_y = float(row.geometry.y)
-        rate_m3d = float(row["rate_m3_per_day"])
-        rate_ml_yr = rate_m3d / ML_PER_YEAR_TO_M3_PER_DAY
-        # +rate at destination (new extraction), -rate at source (recovery).
-        return [
-            {"label": f"to {req.from_bore_id}", "x": float(req.to_x), "y": float(req.to_y),
-             "rate_ML_per_year": rate_ml_yr},
-            {"label": f"from {req.from_bore_id}", "x": from_x, "y": from_y,
-             "rate_ML_per_year": -rate_ml_yr},
+        source_rate = float(row["rate_m3_per_day"]) / ML_PER_YEAR_TO_M3_PER_DAY
+
+        # Resolve destination(s). Prefer to_wells (multi-destination); fall
+        # back to a single destination at (to_x, to_y) carrying the full
+        # source rate (back-compat).
+        if req.to_wells:
+            dests = [
+                {"x": float(d.x), "y": float(d.y),
+                 "rate_ML_per_year": float(d.rate_ML_per_year)}
+                for d in req.to_wells
+            ]
+        elif req.to_x is not None and req.to_y is not None:
+            dests = [{"x": float(req.to_x), "y": float(req.to_y),
+                      "rate_ML_per_year": source_rate}]
+        else:
+            raise HTTPException(400, "trade mode requires `to_wells` or `(to_x, to_y)`")
+
+        total_dest = sum(d["rate_ML_per_year"] for d in dests)
+        # Allow 0.1% slack for floating-point round-off.
+        if total_dest > source_rate * 1.001:
+            raise HTTPException(
+                400,
+                f"trade is over-subscribed: destinations sum to {total_dest:.2f} ML/yr "
+                f"but source ({req.from_bore_id}) only carries {source_rate:.2f} ML/yr",
+            )
+
+        # Build the change set: +rate at each destination, -total at the source.
+        # The source is taken out by the actual *destination total*, not the
+        # full source rate — so a partial trade (sum < source) leaves some
+        # extraction at the original location.
+        out: list[dict] = [
+            {"label": f"to[{i + 1}] {req.from_bore_id}", "x": d["x"], "y": d["y"],
+             "rate_ML_per_year": d["rate_ML_per_year"]}
+            for i, d in enumerate(dests)
         ]
+        out.append({"label": f"from {req.from_bore_id}", "x": from_x, "y": from_y,
+                    "rate_ML_per_year": -total_dest})
+        return out
 
     raise HTTPException(400, f"unknown scenario_type: {req.scenario_type}")
 
@@ -505,31 +534,12 @@ def existing_bores() -> ExistingBoresResponse:
 
 @app.get("/api/spring-series")
 def spring_series(complex_id: str | None = None):
-    """Per-complex drawdown time series across every model timestep.
-
-    Returns a JSON payload of the form
-
-      {
-        "complex_id": "...",
-        "n_springs": int,
-        "threshold_m": 0.4,
-        "times_years": [...],
-        "s_approved_m": [...],
-        "s_additional_m": [...] | null,
-        "s_total_m":     [...] | null
-      }
-
-    s_additional / s_total are present only if a Scenario C has been run
-    on the live server since startup. If `complex_id` is omitted, a list
-    of available complex IDs (sorted by peak s_total) is returned so the
-    frontend can populate a selector.
-    """
+    """Per-complex drawdown time series across every model timestep."""
     if state.baseline is None or state.baseline.complex_series_df is None:
         raise HTTPException(503, "Baseline not ready")
     base = state.baseline.complex_series_df
 
     if complex_id is None:
-        # Catalog mode: list complexes with peak (max over time) drawdown.
         live = state.last_c_series_df
         ranked = (base.groupby("complex_id")["drawdown_m"].max().rename("peak_s_approved_m"))
         out = ranked.reset_index().to_dict("records")
@@ -568,8 +578,6 @@ def spring_series(complex_id: str | None = None):
     if live is not None and len(live):
         live_c = live[live["complex_id"] == complex_id].sort_values("time_days")
         if not live_c.empty:
-            # The two runs share the same time grid (same cfg.time block).
-            # Inner-join on time_days to be defensive against length drift.
             merged = base_c.merge(
                 live_c, on="time_days", how="inner",
                 suffixes=("_a", "_c"),
@@ -621,29 +629,17 @@ def _gdf_to_geojson(gdf):
     return json.loads(gdf.to_json())
 
 
-# Custom 4-stop blue→red sequential colormap for drawdown maps.
-# Navy → blue → amber → red; perceptually monotonic on a satellite
-# basemap. Created once at import time.
 _BLUE_RED_CMAP = mcolors.LinearSegmentedColormap.from_list(
     "drawdown_blue_red",
     ["#1e3a8a", "#3b82f6", "#fbbf24", "#dc2626"],
 )
 _BLUE_RED_CMAP.set_bad(alpha=0.0)
 
-# Drawdown below this value is rendered transparent. Matches the
-# regulatory trigger threshold's lower bound where values become
-# decision-relevant.
 DRAWDOWN_DISPLAY_FLOOR_M = 0.2
 
 
 def _drawdown_to_png(arr: np.ndarray, idomain: np.ndarray, vmax: float | None = None) -> bytes:
-    """Render a (nrow, ncol) drawdown grid to a transparent PNG.
-
-    Cells outside the active domain or with drawdown below
-    DRAWDOWN_DISPLAY_FLOOR_M are fully transparent. Values are clipped
-    to vmax (default: 99th percentile of |arr| over the visible cells)
-    and mapped through a navy→amber→red sequential colormap.
-    """
+    """Render a (nrow, ncol) drawdown grid to a transparent PNG."""
     masked = np.where(idomain == 1, arr, np.nan)
     masked = np.where(masked >= DRAWDOWN_DISPLAY_FLOOR_M, masked, np.nan)
     valid = masked[~np.isnan(masked)]
@@ -664,7 +660,6 @@ def _drawdown_to_png(arr: np.ndarray, idomain: np.ndarray, vmax: float | None = 
 
 
 def _bbox_4326() -> dict:
-    """Project-CRS grid extent reprojected to EPSG:4326 (corners + bbox)."""
     g = state.grid
     transformer = pyproj.Transformer.from_crs(state.cfg.project.crs, "EPSG:4326", always_xy=True)
     x0, y0 = g.xorigin, g.yorigin
@@ -685,7 +680,6 @@ def _bbox_4326() -> dict:
 
 @app.get("/api/last-scenario/info")
 def last_scenario_info():
-    """Metadata for the drawdown-maps page: bore, available years, bounds."""
     if state.last_c_drawdown_by_year is None or state.last_proposed_bore is None:
         return JSONResponse({"available": False})
     transformer = pyproj.Transformer.from_crs(state.cfg.project.crs, "EPSG:4326", always_xy=True)
@@ -704,11 +698,9 @@ def last_scenario_info():
 
 @app.get("/api/last-scenario/drawdown.png")
 def last_scenario_drawdown_png(layer: str = "cumulative", year: float = 100.0):
-    """Drawdown raster as a transparent PNG, ready for a MapLibre image source."""
     if state.last_c_drawdown_by_year is None:
         raise HTTPException(404, "No scenario has been run yet")
     available_years = list(state.last_c_drawdown_by_year.keys())
-    # Tolerate small float mismatches (e.g. 100.0 vs 100.0000001).
     near = [y for y in available_years if abs(float(y) - float(year)) < 1e-6]
     if not near:
         raise HTTPException(400, f"Year {year} not available; choose from {available_years}")
@@ -722,7 +714,6 @@ def last_scenario_drawdown_png(layer: str = "cumulative", year: float = 100.0):
             raise HTTPException(503, "Baseline not ready")
         a_arr = state.baseline.drawdown_by_year.get(y_key)
         if a_arr is None:
-            # Find the nearest baseline year.
             keys = list(state.baseline.drawdown_by_year.keys())
             nearest = min(keys, key=lambda k: abs(float(k) - float(y_key)))
             a_arr = state.baseline.drawdown_by_year[nearest]
@@ -731,14 +722,13 @@ def last_scenario_drawdown_png(layer: str = "cumulative", year: float = 100.0):
         raise HTTPException(400, "layer must be 'cumulative' or 'additional'")
 
     png = _drawdown_to_png(arr, state.grid.idomain[0])
-    headers = {"Cache-Control": "no-store"}    # avoid stale image after re-runs
+    headers = {"Cache-Control": "no-store"}
     return Response(content=png, media_type="image/png", headers=headers)
 
 
 @app.get("/api/last-scenario/drawdown/sample")
 def last_scenario_drawdown_sample(lng: float, lat: float,
                                   layer: str = "cumulative", year: float = 100.0):
-    """Drawdown value at a clicked map point (EPSG:4326)."""
     if state.last_c_drawdown_by_year is None:
         raise HTTPException(404, "No scenario has been run yet")
     available_years = list(state.last_c_drawdown_by_year.keys())
@@ -784,8 +774,6 @@ def last_scenario_drawdown_sample(lng: float, lat: float,
 
 
 def _cells_to_geojson(mask: np.ndarray) -> dict:
-    """Convert a (nrow, ncol) bool mask to a GeoJSON FeatureCollection of cell-square
-    polygons in EPSG:4326. Vector polygons render crisply at any zoom (vs. PNG)."""
     g = state.grid
     rs, cs = np.where(mask)
     if rs.size == 0:
@@ -796,10 +784,9 @@ def _cells_to_geojson(mask: np.ndarray) -> dict:
     y_top = g.yorigin + float(g.delc.sum())
     x0s = g.xorigin + cs * dx
     x1s = x0s + dx
-    y1s = y_top - rs * dy            # row 0 is at the top of the grid
+    y1s = y_top - rs * dy
     y0s = y1s - dy
 
-    # Batch-reproject all four corners at once.
     transformer = pyproj.Transformer.from_crs(state.cfg.project.crs, "EPSG:4326", always_xy=True)
     all_xs = np.concatenate([x0s, x1s, x1s, x0s])
     all_ys = np.concatenate([y0s, y0s, y1s, y1s])
@@ -838,11 +825,6 @@ def _build_setup_geojson() -> dict:
 
 
 def _bool_mask_to_png(mask: np.ndarray, hex_color: str, alpha: float = 0.7) -> bytes:
-    """Render a (nrow, ncol) bool mask as a transparent PNG.
-
-    Cells where the mask is True get the chosen colour at the chosen
-    alpha; cells where the mask is False are fully transparent.
-    """
     nrow, ncol = mask.shape
     arr = np.where(mask, 1.0, np.nan)
     cmap = mcolors.ListedColormap([hex_color])
@@ -859,7 +841,6 @@ def _bool_mask_to_png(mask: np.ndarray, hex_color: str, alpha: float = 0.7) -> b
 
 
 def _chd_mask() -> np.ndarray:
-    """(nrow, ncol) bool mask of cells carrying CHD."""
     g = state.grid
     mask = np.zeros((g.nrow, g.ncol), dtype=bool)
     for (_l, r, c, _h) in (state.chd_cells or []):
@@ -868,7 +849,6 @@ def _chd_mask() -> np.ndarray:
 
 
 def _noflow_boundary_mask() -> np.ndarray:
-    """Active-boundary cells that aren't CHD = effective no-flow boundary."""
     g = state.grid
     active = g.idomain[0] == 1
     padded = np.pad(active, 1, constant_values=False)
@@ -882,7 +862,6 @@ def _noflow_boundary_mask() -> np.ndarray:
 
 @app.get("/api/model-setup/info")
 def model_setup_info():
-    """Metadata for the model-setup page."""
     if state.grid is None:
         raise HTTPException(503, "Grid not ready")
     g = state.grid
@@ -906,11 +885,6 @@ def model_setup_info():
 
 @app.get("/api/model-setup/{layer}.geojson")
 def model_setup_geojson(layer: str):
-    """Per-layer cell polygons (EPSG:4326) for the model setup map.
-
-    Crisper than rasterised PNGs at high zoom because each cell is a
-    proper polygon, not a stretched pixel.
-    """
     if state.setup_geojson is None:
         raise HTTPException(503, "Setup not ready")
     if layer not in state.setup_geojson:
