@@ -149,7 +149,8 @@ body.resizing, body.resizing * { cursor: row-resize !important; user-select: non
   color: var(--ink-2); font-size: 0.72rem;
   font-variant-numeric: tabular-nums; line-height: 1.2;
 }
-.multi-well-row .well-rate-input {
+.multi-well-row .well-rate-input,
+.multi-well-row .trade-rate-input {
   padding: 0.3rem 0.4rem; font-size: 0.8rem;
   border: 1px solid var(--line-strong); border-radius: 4px;
   background: white; font-variant-numeric: tabular-nums; width: 100%;
@@ -165,6 +166,20 @@ body.resizing, body.resizing * { cursor: row-resize !important; user-select: non
 }
 
 #trade-from-info { margin: 0.3rem 0 0.6rem; line-height: 1.5; }
+
+#trade-destinations-list { display: flex; flex-direction: column; gap: 0.3rem;
+  margin: 0.4rem 0 0.5rem; }
+
+.trade-balance {
+  font-size: 0.78rem; padding: 0.45rem 0.6rem; border-radius: 6px;
+  background: var(--surface-2); border: 1px solid var(--line);
+  display: flex; justify-content: space-between; align-items: center;
+  font-variant-numeric: tabular-nums;
+}
+.trade-balance.ok    { background: var(--ok-soft);  color: #065f46; border-color: rgba(5,150,105,0.25); }
+.trade-balance.under { background: #fef3c7;          color: #92400e; border-color: rgba(217,119,6,0.3); }
+.trade-balance.over  { background: var(--bad-soft); color: #991b1b; border-color: rgba(220,38,38,0.3); }
+.trade-balance.empty { color: var(--ink-3); font-style: italic; }
 
 #scenario-form label { display: block; margin-bottom: 0.7rem; font-size: 0.82rem;
   color: var(--ink-1); font-weight: 500; }
