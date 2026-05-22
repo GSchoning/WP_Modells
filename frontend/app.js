@@ -4,7 +4,8 @@
  * bores, and spring complex centroids. Three scenario flavours:
  *   - single: click map to place one new bore.
  *   - multi:  click map to add bores; per-row rate inputs.
- *   - trade:  pick an existing bore by ID, click map for destination.
+ *   - trade:  pick an existing bore by ID, click map for one or more
+ *             destinations; rates must sum to ≤ source rate.
  * POST /api/scenarios, render results as a stacked bar chart by
  * complex with a regulatory threshold line, plus an Approve/Reject
  * recommendation.
@@ -24,7 +25,7 @@ const STATE = {
   scenarioType: "single", // "single" | "multi" | "trade"
   multiWells: [],         // [{x, y, lng, lat, rate_ML_per_year}]
   tradeFrom: null,        // {bore_id, x, y, lng, lat, rate_ML_per_year}
-  tradeTo: null,          // {x, y, lng, lat}
+  tradeDestinations: [], // [{x, y, lng, lat, rate_ML_per_year}]
   existingBores: [],
 };
 
@@ -107,8 +108,6 @@ async function init() {
     runScenario(map);
   });
 
-  // Scenario-type radios swap which form pane is visible and re-target
-  // map clicks. State is preserved per mode.
   document.querySelectorAll('input[name="scenario-type"]').forEach((r) => {
     r.addEventListener("change", () => {
       STATE.scenarioType = r.value;
@@ -123,10 +122,12 @@ async function init() {
   });
 
   // Trade-mode: when the user picks a from_bore_id, look it up and
-  // mirror the selection onto the map.
+  // mirror the selection onto the map. Changing the source bore clears
+  // the destinations list — they were rated against the previous source.
   $("trade-from").addEventListener("input", () => {
     const id = $("trade-from").value.trim();
     const b = STATE.existingBores.find((x) => String(x.bore_id) === id);
+    const prevId = STATE.tradeFrom?.bore_id;
     if (b) {
       STATE.tradeFrom = b;
       $("trade-from-info").textContent =
@@ -135,10 +136,9 @@ async function init() {
       STATE.tradeFrom = null;
       $("trade-from-info").textContent = "";
     }
-    refreshScenarioMarkers(map);
+    if (b?.bore_id !== prevId) STATE.tradeDestinations = [];
+    renderTradeDestinationsList();
   });
-  $("trade-to-x").addEventListener("input", () => syncTradeToFromInputs(map));
-  $("trade-to-y").addEventListener("input", () => syncTradeToFromInputs(map));
 
   window.addEventListener("resize", () => {
     if (STATE.lastResult) renderBarChart(STATE.lastResult);
@@ -146,6 +146,7 @@ async function init() {
 
   setupSplitter(map);
   renderMultiWellsList();
+  renderTradeDestinationsList();
 }
 
 function setupSplitter(map) {
@@ -257,8 +258,6 @@ function buildLayers(map, mapData) {
   map.addLayer({ id: "proposed-circle", type: "circle", source: "proposed",
     paint: {
       "circle-radius": 9,
-      // gold for new extractions, dark slate for the "from" bore in a
-      // trade (the source being decommissioned by the transfer).
       "circle-color": [
         "case",
         ["==", ["get", "kind"], "from"], "#475569",
@@ -279,7 +278,6 @@ function buildLayers(map, mapData) {
 }
 
 async function placeProposed(map, lng, lat) {
-  // Dispatch the map click based on the active scenario mode.
   let xy;
   try {
     xy = await projForward(lng, lat);
@@ -299,10 +297,19 @@ async function placeProposed(map, lng, lat) {
     renderMultiWellsList();
     setStatus(`added bore #${STATE.multiWells.length} at (${x.toFixed(0)}, ${y.toFixed(0)})`, "ok");
   } else if (STATE.scenarioType === "trade") {
-    STATE.tradeTo = { x, y, lng, lat };
-    $("trade-to-x").value = x.toFixed(0);
-    $("trade-to-y").value = y.toFixed(0);
-    setStatus(`trade destination at (${x.toFixed(0)}, ${y.toFixed(0)})`, "ok");
+    if (!STATE.tradeFrom) {
+      setStatus("pick the source bore first", "error");
+      return;
+    }
+    // Default the new destination's rate to whatever's left of the source
+    // licence so the first add takes the full rate by default.
+    const sourceRate = STATE.tradeFrom.rate_ML_per_year;
+    const used = STATE.tradeDestinations.reduce((s, d) => s + d.rate_ML_per_year, 0);
+    const remaining = Math.max(0, sourceRate - used);
+    const rate = remaining > 0.01 ? Number(remaining.toFixed(2)) : 0;
+    STATE.tradeDestinations.push({ x, y, lng, lat, rate_ML_per_year: rate });
+    renderTradeDestinationsList();
+    setStatus(`added destination #${STATE.tradeDestinations.length} at (${x.toFixed(0)}, ${y.toFixed(0)})`, "ok");
   }
   refreshScenarioMarkers(map);
 }
@@ -339,22 +346,71 @@ function renderMultiWellsList() {
   });
 }
 
-async function syncTradeToFromInputs(map) {
-  const x = parseFloat($("trade-to-x").value);
-  const y = parseFloat($("trade-to-y").value);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) {
-    STATE.tradeTo = null;
-    refreshScenarioMarkers(map);
+function renderTradeDestinationsList() {
+  const list = $("trade-destinations-list");
+  if (!list) return;
+  if (!STATE.tradeDestinations.length) {
+    list.innerHTML = `<div class="multi-empty">No destinations yet — click map to add</div>`;
+  } else {
+    let html = "";
+    STATE.tradeDestinations.forEach((d, i) => {
+      html += `<div class="multi-well-row" data-i="${i}">
+        <div class="well-coords">#${i + 1} · (${d.x.toFixed(0)}, ${d.y.toFixed(0)})</div>
+        <input class="trade-rate-input" type="number" min="0" step="any" value="${d.rate_ML_per_year}" data-i="${i}" />
+        <button type="button" class="remove-btn" data-i="${i}" title="Remove">&times;</button>
+      </div>`;
+    });
+    list.innerHTML = html;
+    list.querySelectorAll(".trade-rate-input").forEach((inp) => {
+      inp.addEventListener("input", (e) => {
+        const i = Number(e.target.dataset.i);
+        const v = parseFloat(e.target.value);
+        if (Number.isFinite(v)) {
+          STATE.tradeDestinations[i].rate_ML_per_year = v;
+          renderTradeBalance();
+        }
+      });
+    });
+    list.querySelectorAll(".remove-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const i = Number(btn.dataset.i);
+        STATE.tradeDestinations.splice(i, 1);
+        renderTradeDestinationsList();
+        refreshScenarioMarkers(STATE.map);
+      });
+    });
+  }
+  renderTradeBalance();
+  refreshScenarioMarkers(STATE.map);
+}
+
+function renderTradeBalance() {
+  const el = $("trade-balance");
+  if (!el) return;
+  if (!STATE.tradeFrom) {
+    el.className = "trade-balance empty";
+    el.textContent = "Pick a source bore to see its rate";
     return;
   }
-  if (!window.proj4) await loadScript("https://unpkg.com/proj4@2.10.0/dist/proj4.js");
-  if (!proj4.defs(STATE.projectCRS)) {
-    proj4.defs(STATE.projectCRS, await fetchEpsgWkt(STATE.projectCRS));
-  }
-  const [lng, lat] = proj4(STATE.projectCRS, "EPSG:4326").forward([x, y]);
-  STATE.tradeTo = { x, y, lng, lat };
-  refreshScenarioMarkers(map);
+  const sourceRate = STATE.tradeFrom.rate_ML_per_year;
+  const used = STATE.tradeDestinations.reduce((s, d) => s + (d.rate_ML_per_year || 0), 0);
+  const delta = sourceRate - used;
+  let cls = "ok";
+  if (used === 0) cls = "empty";
+  else if (Math.abs(delta) <= sourceRate * 0.001) cls = "ok";
+  else if (delta > 0) cls = "under";   // partial trade — some rate stays at source
+  else cls = "over";                    // illegal — destinations exceed source
+  el.className = `trade-balance ${cls}`;
+  const sourceStr = sourceRate.toFixed(0);
+  const usedStr = used.toFixed(0);
+  let note;
+  if (cls === "over")       note = `over by ${(-delta).toFixed(0)} ML/yr`;
+  else if (cls === "under") note = `${delta.toFixed(0)} ML/yr stays at source`;
+  else if (cls === "ok")    note = "fully transferred";
+  else                       note = "no destinations yet";
+  el.innerHTML = `<span>source ${sourceStr} ML/yr · destinations ${usedStr}</span><strong>${note}</strong>`;
 }
+
 
 async function loadExistingBores() {
   try {
@@ -376,9 +432,6 @@ async function loadExistingBores() {
 }
 
 function refreshScenarioMarkers(map) {
-  // The "proposed" map source holds whatever markers the current scenario
-  // mode wants displayed: gold star for new extractions, slate for the
-  // trade source (which is being removed).
   if (!map || !map.getSource) return;
   const src = map.getSource("proposed");
   if (!src) return;
@@ -403,9 +456,9 @@ function refreshScenarioMarkers(map) {
       features.push({ type: "Feature", properties: { kind: "from" },
         geometry: { type: "Point", coordinates: [STATE.tradeFrom.lng, STATE.tradeFrom.lat] } });
     }
-    if (STATE.tradeTo) {
+    for (const d of STATE.tradeDestinations) {
       features.push({ type: "Feature", properties: { kind: "new" },
-        geometry: { type: "Point", coordinates: [STATE.tradeTo.lng, STATE.tradeTo.lat] } });
+        geometry: { type: "Point", coordinates: [d.lng, d.lat] } });
     }
   }
   src.setData({ type: "FeatureCollection", features });
@@ -420,7 +473,6 @@ function projInverseCached(x, y) {
 }
 
 async function runScenario(map) {
-  // Build the request body based on the active scenario mode.
   const rechargeMult = parseFloat($("recharge_mult").value);
   const mult = Number.isFinite(rechargeMult) && rechargeMult >= 0 ? rechargeMult : 1.0;
   let body;
@@ -459,15 +511,26 @@ async function runScenario(map) {
       setStatus("pick an existing bore to trade from", "error");
       return;
     }
-    if (!STATE.tradeTo || !Number.isFinite(STATE.tradeTo.x) || !Number.isFinite(STATE.tradeTo.y)) {
-      setStatus("set a trade destination (click map)", "error");
+    if (!STATE.tradeDestinations.length) {
+      setStatus("add at least one trade destination (click map)", "error");
+      return;
+    }
+    if (!STATE.tradeDestinations.every((d) => d.rate_ML_per_year > 0)) {
+      setStatus("every destination needs a rate > 0", "error");
+      return;
+    }
+    const sourceRate = STATE.tradeFrom.rate_ML_per_year;
+    const used = STATE.tradeDestinations.reduce((s, d) => s + d.rate_ML_per_year, 0);
+    if (used > sourceRate * 1.001) {
+      setStatus(`destinations sum to ${used.toFixed(0)} ML/yr but source only carries ${sourceRate.toFixed(0)}`, "error");
       return;
     }
     body = {
       scenario_type: "trade",
       from_bore_id: STATE.tradeFrom.bore_id,
-      to_x: STATE.tradeTo.x,
-      to_y: STATE.tradeTo.y,
+      to_wells: STATE.tradeDestinations.map((d) => ({
+        x: d.x, y: d.y, rate_ML_per_year: d.rate_ML_per_year,
+      })),
       recharge_multiplier: mult,
     };
   } else {
@@ -695,7 +758,6 @@ function renderSeriesChart(data) {
 }
 
 function renderDecision(result) {
-  // Decision is anchored to the last output year (the regulatory horizon).
   const lastYear = Math.max(...result.output_years);
   const yearBlock = result.by_year.find(y => y.time_years === lastYear);
   const triggered = yearBlock.complexes.filter(c => c.triggered_by_proposed).length;
@@ -719,16 +781,17 @@ function renderDecision(result) {
   if (already > 0) {
     mh += `<div class="advisory">⚠ Advisory: ${already} complex${already === 1 ? "" : "es"} ${already === 1 ? "is" : "are"} already predicted to exceed ${thresh} m from existing licences alone (not attributable to this proposal).</div>`;
   }
-  // The response may describe a single bore, several new bores (multi), or
-  // a trade change set. Render a one-line summary of whichever shape we got.
   const wellsRun = result.wells_run || [];
   const stype = result.scenario_type || "single";
   if (stype === "trade" && wellsRun.length >= 2) {
-    const toW = wellsRun.find((w) => w.rate_ML_per_year > 0);
+    const dests = wellsRun.filter((w) => w.rate_ML_per_year > 0);
     const fromW = wellsRun.find((w) => w.rate_ML_per_year < 0);
-    mh += `<div><strong>Trade</strong> · ${Math.abs(toW.rate_ML_per_year).toFixed(0)} ML/yr</div>`;
+    const totalOut = dests.reduce((s, d) => s + d.rate_ML_per_year, 0);
+    mh += `<div><strong>Trade</strong> · ${totalOut.toFixed(0)} ML/yr across ${dests.length} destination${dests.length === 1 ? "" : "s"}</div>`;
     if (fromW) mh += `<div>from (${fromW.x.toFixed(0)}, ${fromW.y.toFixed(0)})</div>`;
-    if (toW)   mh += `<div>to (${toW.x.toFixed(0)}, ${toW.y.toFixed(0)})</div>`;
+    for (const d of dests) {
+      mh += `<div>to (${d.x.toFixed(0)}, ${d.y.toFixed(0)}) · ${d.rate_ML_per_year.toFixed(0)} ML/yr</div>`;
+    }
     mh += `<div class="muted">runtime ${result.runtime_seconds.toFixed(1)}s</div>`;
   } else if (stype === "multi" && wellsRun.length > 1) {
     const total = wellsRun.reduce((s, w) => s + Math.max(0, w.rate_ML_per_year), 0);
