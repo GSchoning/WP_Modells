@@ -28,15 +28,29 @@ class WellSpec(BaseModel):
     rate_ML_per_year: float
 
 
+class TradeDestination(BaseModel):
+    """One destination in a multi-destination trade.
+
+    rate_ML_per_year is the (positive) share of the source licence's
+    rate that lands here. The sum of all destination rates is checked
+    against the source bore's full rate; oversubscription returns 400.
+    """
+    x: float
+    y: float
+    rate_ML_per_year: float = Field(..., gt=0)
+
+
 class ScenarioRequest(BaseModel):
     """Three scenario flavours, all reduce to a list of well changes on the backend:
 
     - single: a single new bore at (x, y) with positive rate.
     - multi:  several new bores; each entry in `new_wells` is a positive-rate WellSpec.
-    - trade:  transfer the full rate of `from_bore_id` to (to_x, to_y);
-              server constructs +rate at the new location and -rate at the
-              old so superposition yields the net effect (recovery at the
-              source, new drawdown at the destination).
+    - trade:  transfer the full rate of `from_bore_id` either to a single
+              (to_x, to_y) destination (back-compat) or split across many
+              entries in `to_wells`. Server constructs +rate at each
+              destination and -source_rate at the original so superposition
+              yields the net effect (recovery at the source, new drawdown
+              at each destination).
     """
     scenario_type: Literal["single", "multi", "trade"] = "single"
     # single mode (kept for back-compat with old clients).
@@ -47,6 +61,7 @@ class ScenarioRequest(BaseModel):
     from_bore_id: str | None = None
     to_x: float | None = None
     to_y: float | None = None
+    to_wells: list[TradeDestination] = []
     recharge_multiplier: float = Field(1.0, ge=0.0, le=10.0,
         description="Sensitivity-analysis scale on recharge (1.0 = calibrated).")
 
