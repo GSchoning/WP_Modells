@@ -514,6 +514,15 @@ def existing_bores() -> ExistingBoresResponse:
     if bores is None or len(bores) == 0:
         return ExistingBoresResponse(bores=[])
 
+    # Only show bores inside the formation extent — out-of-domain bores
+    # aren't tradeable through this tool.
+    extent = state.inputs.formation_extent
+    if extent is not None and len(extent):
+        domain = extent.unary_union
+        bores = bores[bores.within(domain)]
+        if len(bores) == 0:
+            return ExistingBoresResponse(bores=[])
+
     transformer = pyproj.Transformer.from_crs(state.cfg.project.crs, "EPSG:4326", always_xy=True)
     out: list[ExistingBore] = []
     has_id = "bore_id" in bores.columns
