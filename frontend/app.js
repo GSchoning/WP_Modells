@@ -669,7 +669,10 @@ function renderSeriesChart(data) {
     (data.n_springs ? ` <span class="muted">(${data.n_springs} spring${data.n_springs === 1 ? "" : "s"})</span>` : "");
 
   const W = svg.clientWidth || svg.parentElement.clientWidth;
-  const H = 180;
+  // Height comes from the CSS-laid-out SVG so it matches the table's
+  // height in the lower-split row. Floor at 140 px so the chart is still
+  // legible if the lower pane has been shrunk hard via the splitter.
+  const H = Math.max(140, svg.clientHeight || 200);
   const margin = { top: 14, right: 14, bottom: 28, left: 38 };
   const innerW = Math.max(40, W - margin.left - margin.right);
   const innerH = Math.max(30, H - margin.top - margin.bottom);
@@ -686,9 +689,12 @@ function renderSeriesChart(data) {
   const yScale = v => margin.top + innerH - (Math.max(0, v) / peak) * innerH;
 
   svg.innerHTML = "";
+  // viewBox sets the internal coordinate space; the SVG element's pixel
+  // size comes from CSS (flex sizing inside #series-pane) so the chart
+  // matches the table's height in the lower-split row.
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  svg.setAttribute("width", "100%");
-  svg.setAttribute("height", H);
+  svg.removeAttribute("width");
+  svg.removeAttribute("height");
   const ns = "http://www.w3.org/2000/svg";
   const make = (tag, attrs) => {
     const el = document.createElementNS(ns, tag);

@@ -244,11 +244,14 @@ body.resizing, body.resizing * { cursor: row-resize !important; user-select: non
 
 #series-pane { padding: 0.6rem 0.75rem 0.5rem;
   background: var(--surface-1); border: 1px solid var(--line);
-  border-radius: 8px; min-width: 0; }
+  border-radius: 8px; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column; }
 #series-pane h3 { font-size: 0.85rem; margin: 0 0 0.5rem;
-  color: var(--ink-1); font-weight: 600; }
+  color: var(--ink-1); font-weight: 600; flex: 0 0 auto; }
 #series-chart { background: #fafafa; border-radius: 6px;
-  border: 1px solid var(--line); display: block; width: 100%; }
+  border: 1px solid var(--line); display: block; width: 100%;
+  flex: 1 1 0; min-height: 0; }
+#series-pane .series-legend { flex: 0 0 auto; }
 .series-legend { font-size: 0.7rem; color: var(--ink-2);
   margin-top: 0.3rem; display: flex; gap: 0.7rem; flex-wrap: wrap; }
 .series-legend .swatch-line { display: inline-block; width: 14px;
@@ -300,10 +303,12 @@ body.resizing, body.resizing * { cursor: row-resize !important; user-select: non
 
 /* Lower split: table on the left, drawdown-over-time on the right.
    When the series pane is hidden, the table fills the row. When the
-   table is collapsed, the series pane still gets its full half. */
+   table is collapsed, the series pane still gets its full half.
+   `align-items: stretch` (grid default) makes the series card grow to
+   match the table's height when the table is open. */
 #lower-split { margin-top: 0.65rem; flex: 1 1 auto;
   display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem;
-  min-height: 0; align-items: start; }
+  min-height: 0; }
 #lower-split:has(#series-pane[hidden]) { grid-template-columns: 1fr; }
 
 #table-details { font-size: 0.85rem;
