@@ -46,13 +46,18 @@ from ..scenarios import ScenarioResult, run_scenario, run_steady_state
 from ..superposition import combine_receptor_tables
 from ..theis import _local_T_S, theis_at_springs
 from . import cache as cache_mod
+from . import decisions as decisions_mod
 from .schemas import (
     BaselineResponse,
     ComplexDrawdown,
+    Decision,
+    DecisionsResponse,
     ExistingBore,
     ExistingBoresResponse,
     HealthResponse,
     ProposedBore,
+    RecordDecisionRequest,
+    RollbackRequest,
     ScenarioRequest,
     ScenarioResponse,
     TheisDiagnostics,
@@ -77,6 +82,7 @@ class _State:
     last_c_series_df: pd.DataFrame | None = None     # per-complex time series
     last_wells_run: list[dict] | None = None          # full change set echoed back
     setup_geojson: dict | None = None                 # layer -> FeatureCollection
+    decisions_path: Path | None = None                # JSON store for the audit trail
 
 
 state = _State()
@@ -189,6 +195,7 @@ async def lifespan(app: FastAPI):
     )
     state.workspace_root = Path(state.cfg.run.workspace_root)
     state.workspace_root.mkdir(parents=True, exist_ok=True)
+    state.decisions_path = Path("outputs") / "decisions.json"
 
     _bootstrap_ic()
     state.baseline = _bootstrap_baseline()
@@ -539,6 +546,59 @@ def existing_bores() -> ExistingBoresResponse:
     # Largest rates first — typical trade interest.
     out.sort(key=lambda b: -b.rate_ML_per_year)
     return ExistingBoresResponse(bores=out)
+
+
+# --- Decision audit trail ------------------------------------------------
+
+def _decisions_path() -> Path:
+    if state.decisions_path is None:
+        raise HTTPException(503, "Decisions store not initialised")
+    return state.decisions_path
+
+
+def _active_head_id(decisions: list[dict]) -> str | None:
+    """Most-recent active approve in the list (already newest-first)."""
+    for d in decisions:
+        if d.get("decision") == "approve" and d.get("status") == "active":
+            return d.get("id")
+    return None
+
+
+@app.get("/api/decisions", response_model=DecisionsResponse)
+def list_decisions() -> DecisionsResponse:
+    items = decisions_mod.list_decisions(_decisions_path())
+    return DecisionsResponse(
+        decisions=[Decision(**d) for d in items],
+        active_head_id=_active_head_id(items),
+    )
+
+
+@app.post("/api/decisions", response_model=Decision)
+def record_decision(req: RecordDecisionRequest) -> Decision:
+    record = decisions_mod.record_decision(
+        _decisions_path(),
+        decision=req.decision,
+        regulator=req.regulator,
+        scenario=req.scenario.model_dump(),
+        summary=req.summary.model_dump(),
+        note=req.note,
+    )
+    return Decision(**record)
+
+
+@app.post("/api/decisions/{decision_id}/rollback", response_model=DecisionsResponse)
+def rollback_decision(decision_id: str, req: RollbackRequest) -> DecisionsResponse:
+    try:
+        decisions_mod.rollback_to(_decisions_path(), decision_id, req.regulator)
+    except KeyError:
+        raise HTTPException(404, f"unknown decision id: {decision_id}")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    items = decisions_mod.list_decisions(_decisions_path())
+    return DecisionsResponse(
+        decisions=[Decision(**d) for d in items],
+        active_head_id=_active_head_id(items),
+    )
 
 
 @app.get("/api/spring-series")

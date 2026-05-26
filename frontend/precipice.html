@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.css" />
-<link rel="stylesheet" href="style.css?v=5" />
+<link rel="stylesheet" href="style.css?v=6" />
 </head>
 <body>
 <div id="app">
@@ -23,9 +23,28 @@
     <div class="header-actions">
       <a href="index.html" class="header-link" title="Back to aquifer selection">← Aquifers</a>
       <a href="setup.html" target="_blank" rel="noopener" class="header-link" title="Show grid + boundaries">Model setup ↗</a>
+      <button type="button" id="history-btn" class="header-link" title="Show decision history">Decision history</button>
       <span id="status">loading…</span>
     </div>
   </header>
+
+  <!-- Decision history side panel -->
+  <aside id="history-panel" hidden>
+    <div class="history-header">
+      <h2>Decision history</h2>
+      <button type="button" id="history-close" title="Close">&times;</button>
+    </div>
+    <div class="history-meta">
+      <span id="history-count" class="muted"></span>
+      <span id="history-head" class="muted"></span>
+    </div>
+    <div id="history-list"></div>
+    <p class="muted history-footer">
+      Audit trail only — the calibrated baseline is not re-derived from active
+      approvals in this build. Rollback restores prior decision metadata.
+    </p>
+  </aside>
+  <div id="history-scrim" hidden></div>
 
   <div id="upper">
     <section id="map-pane">
@@ -100,6 +119,11 @@
       <div id="decision-badge" class="pending">PENDING</div>
       <div id="decision-detail">Run a scenario to see the recommendation.</div>
       <div id="decision-meta"></div>
+      <div id="decision-actions" hidden>
+        <button type="button" id="approve-btn" class="action-btn approve">Approve</button>
+        <button type="button" id="reject-btn"  class="action-btn reject">Reject</button>
+        <span id="decision-recorded" class="decision-recorded" hidden></span>
+      </div>
       <div id="series-pane" hidden>
         <h3 id="series-title">Drawdown over time</h3>
         <svg id="series-chart" width="100%" height="180" preserveAspectRatio="none"></svg>
@@ -128,6 +152,6 @@
 </div>
 
 <script src="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.js"></script>
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

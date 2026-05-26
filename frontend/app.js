@@ -147,6 +147,24 @@ async function init() {
   setupSplitter(map);
   renderMultiWellsList();
   renderTradeDestinationsList();
+
+  // Decision panel + history wiring
+  const approveBtn = document.getElementById("approve-btn");
+  const rejectBtn  = document.getElementById("reject-btn");
+  if (approveBtn) approveBtn.addEventListener("click", () => recordDecision("approve"));
+  if (rejectBtn)  rejectBtn.addEventListener("click", () => recordDecision("reject"));
+
+  const histBtn   = document.getElementById("history-btn");
+  const histClose = document.getElementById("history-close");
+  const histScrim = document.getElementById("history-scrim");
+  if (histBtn)   histBtn.addEventListener("click", openHistoryPanel);
+  if (histClose) histClose.addEventListener("click", closeHistoryPanel);
+  if (histScrim) histScrim.addEventListener("click", closeHistoryPanel);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !document.getElementById("history-panel").hidden) {
+      closeHistoryPanel();
+    }
+  });
 }
 
 function setupSplitter(map) {
@@ -802,6 +820,199 @@ function renderDecision(result) {
   }
   mh += `<div><a href="scenario.html" target="_blank" rel="noopener" class="detail-link">View drawdown maps →</a></div>`;
   meta.innerHTML = mh;
+
+  // Show the approve/reject controls now that a scenario is on screen.
+  const actions = $("decision-actions");
+  if (actions) {
+    actions.hidden = false;
+    $("approve-btn").disabled = false;
+    $("reject-btn").disabled = false;
+    const recorded = $("decision-recorded");
+    if (recorded) { recorded.hidden = true; recorded.textContent = ""; }
+  }
+}
+
+// --- Decision history --------------------------------------------------
+
+function regulatorName() {
+  return sessionStorage.getItem("gabora_session") || "unknown";
+}
+
+function buildScenarioSnapshot(result) {
+  const wellsRun = (result.wells_run || []).map((w) => ({
+    label: w.label || "well",
+    x: Number(w.x), y: Number(w.y),
+    rate_ML_per_year: Number(w.rate_ML_per_year),
+  }));
+  let bore_label = null;
+  if (result.proposed_bore?.bore_id) bore_label = result.proposed_bore.bore_id;
+  let from_bore_id = null;
+  if (result.scenario_type === "trade") {
+    const fromW = (result.wells_run || []).find((w) => Number(w.rate_ML_per_year) < 0);
+    if (fromW && typeof fromW.label === "string") {
+      const m = fromW.label.match(/^from\s+(.+)$/);
+      if (m) from_bore_id = m[1];
+    }
+  }
+  return {
+    scenario_type: result.scenario_type || "single",
+    wells_run: wellsRun,
+    from_bore_id,
+    bore_label,
+  };
+}
+
+function buildScenarioSummary(result) {
+  return {
+    n_exceedances_any_year: result.n_exceedances_any_year || 0,
+    n_triggered_any_year: result.n_triggered_any_year || 0,
+    n_already_exceeded_any_year: result.n_already_exceeded_any_year || 0,
+    regulatory_threshold_m: result.regulatory_threshold_m,
+    output_years: result.output_years || [],
+    runtime_seconds: result.runtime_seconds ?? null,
+  };
+}
+
+async function recordDecision(kind) {
+  if (!STATE.lastResult) {
+    setStatus("run a scenario before recording a decision", "error");
+    return;
+  }
+  $("approve-btn").disabled = true;
+  $("reject-btn").disabled = true;
+  try {
+    const body = {
+      decision: kind,
+      regulator: regulatorName(),
+      note: "",
+      scenario: buildScenarioSnapshot(STATE.lastResult),
+      summary: buildScenarioSummary(STATE.lastResult),
+    };
+    const r = await fetch("/api/decisions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const rec = await r.json();
+    const recorded = $("decision-recorded");
+    if (recorded) {
+      recorded.hidden = false;
+      recorded.textContent = `Recorded ${rec.decision} · ${rec.id}`;
+      recorded.className = `decision-recorded ${kind}`;
+    }
+    setStatus(`decision recorded (${kind})`, "ok");
+    // If the panel is open, refresh it.
+    if (!$("history-panel").hidden) loadHistory();
+  } catch (err) {
+    console.error(err);
+    setStatus(`failed to record decision: ${err.message}`, "error");
+    $("approve-btn").disabled = false;
+    $("reject-btn").disabled = false;
+  }
+}
+
+async function loadHistory() {
+  const list = $("history-list");
+  list.innerHTML = `<div class="muted history-empty">loading…</div>`;
+  try {
+    const r = await fetch("/api/decisions");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    renderHistory(data);
+  } catch (err) {
+    list.innerHTML = `<div class="muted history-empty">failed to load: ${err.message}</div>`;
+  }
+}
+
+function renderHistory(data) {
+  const list = $("history-list");
+  const decisions = data.decisions || [];
+  $("history-count").textContent = decisions.length
+    ? `${decisions.length} decision${decisions.length === 1 ? "" : "s"}`
+    : "no decisions yet";
+  $("history-head").textContent = data.active_head_id
+    ? `head · ${data.active_head_id}`
+    : "no active head";
+
+  if (!decisions.length) {
+    list.innerHTML = `<div class="muted history-empty">Approve a scenario to start the audit trail.</div>`;
+    return;
+  }
+  let html = "";
+  for (const d of decisions) {
+    const isHead = d.id === data.active_head_id;
+    const summary = d.summary || {};
+    const scen = d.scenario || {};
+    const wells = scen.wells_run || [];
+    const totalAdd = wells.filter((w) => w.rate_ML_per_year > 0).reduce((s, w) => s + w.rate_ML_per_year, 0);
+    let title = scen.bore_label || scen.from_bore_id || scen.scenario_type;
+    if (scen.scenario_type === "trade" && scen.from_bore_id) {
+      title = `Trade from ${scen.from_bore_id}`;
+    } else if (scen.scenario_type === "multi") {
+      title = `${wells.filter((w) => w.rate_ML_per_year > 0).length} bores`;
+    } else if (scen.bore_label) {
+      title = scen.bore_label;
+    } else {
+      title = scen.scenario_type;
+    }
+    const when = new Date(d.created_at).toLocaleString();
+    const statusClass = d.status;
+    const statusLabel = ({ active: "Active", rolled_back: "Rolled back", rejected: "Rejected" })[d.status] || d.status;
+    const canRollback = d.decision === "approve" && d.status !== "active";
+    const rollbackBtn = canRollback
+      ? `<button type="button" class="rollback-btn" data-id="${d.id}">Restore to here</button>`
+      : isHead
+        ? `<span class="head-chip">head</span>`
+        : "";
+    html += `<div class="history-row ${statusClass}${isHead ? " head" : ""}">
+      <div class="history-row-top">
+        <span class="hist-id">${d.id}</span>
+        <span class="hist-status ${statusClass}">${statusLabel}</span>
+      </div>
+      <div class="hist-title">${title}</div>
+      <div class="hist-meta">
+        ${totalAdd.toFixed(0)} ML/yr · ${summary.n_triggered_any_year || 0} triggered · ${summary.n_already_exceeded_any_year || 0} already-exceeded
+      </div>
+      <div class="hist-foot">
+        <span class="muted">${when} · ${d.regulator}</span>
+        ${rollbackBtn}
+      </div>
+    </div>`;
+  }
+  list.innerHTML = html;
+  list.querySelectorAll(".rollback-btn").forEach((btn) => {
+    btn.addEventListener("click", () => rollbackTo(btn.dataset.id));
+  });
+}
+
+async function rollbackTo(id) {
+  if (!confirm(`Restore the legislative state to ${id}? Any approvals after this point will be marked as rolled back.`)) {
+    return;
+  }
+  try {
+    const r = await fetch(`/api/decisions/${encodeURIComponent(id)}/rollback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ regulator: regulatorName() }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    renderHistory(data);
+    setStatus(`legislative state restored to ${id}`, "ok");
+  } catch (err) {
+    setStatus(`rollback failed: ${err.message}`, "error");
+  }
+}
+
+function openHistoryPanel() {
+  $("history-panel").hidden = false;
+  $("history-scrim").hidden = false;
+  loadHistory();
+}
+function closeHistoryPanel() {
+  $("history-panel").hidden = true;
+  $("history-scrim").hidden = true;
 }
 
 function renderBarChart(result) {

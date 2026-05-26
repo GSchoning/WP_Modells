@@ -139,3 +139,53 @@ class HealthResponse(BaseModel):
     n_spring_complexes: int
     regulatory_threshold_m: float
     baseline_cached: bool
+
+
+class DecisionScenario(BaseModel):
+    """Snapshot of the scenario being decided on, captured at decision time."""
+    scenario_type: Literal["single", "multi", "trade"]
+    wells_run: list[WellSpec] = []
+    from_bore_id: str | None = None
+    bore_label: str | None = None      # human-friendly label, e.g. proposed bore id
+
+
+class DecisionSummary(BaseModel):
+    """Headline numbers from the scenario result, copied into the decision."""
+    n_exceedances_any_year: int = 0
+    n_triggered_any_year: int = 0
+    n_already_exceeded_any_year: int = 0
+    regulatory_threshold_m: float
+    output_years: list[float] = []
+    runtime_seconds: float | None = None
+
+
+class RecordDecisionRequest(BaseModel):
+    decision: Literal["approve", "reject"]
+    regulator: str = "unknown"
+    note: str = ""
+    scenario: DecisionScenario
+    summary: DecisionSummary
+
+
+class Decision(BaseModel):
+    id: str
+    seq: int
+    decision: Literal["approve", "reject"]
+    status: Literal["active", "rolled_back", "rejected"]
+    regulator: str
+    created_at: str
+    note: str = ""
+    scenario: DecisionScenario
+    summary: DecisionSummary
+    rolled_back_at: str | None = None
+    rolled_back_by: str | None = None
+    rolled_back_to: str | None = None
+
+
+class DecisionsResponse(BaseModel):
+    decisions: list[Decision] = []
+    active_head_id: str | None = None
+
+
+class RollbackRequest(BaseModel):
+    regulator: str = "unknown"
