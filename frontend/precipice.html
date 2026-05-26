@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.css" />
-<link rel="stylesheet" href="style.css?v=4" />
+<link rel="stylesheet" href="style.css?v=5" />
 </head>
 <body>
 <div id="app">
@@ -86,10 +86,6 @@
           <div id="trade-balance" class="trade-balance"></div>
         </div>
 
-        <label>Recharge multiplier
-          <input type="number" id="recharge_mult" step="0.1" min="0" max="10" value="1.0" />
-          <span class="muted" style="font-size:0.7rem">1.0 = calibrated; changing this re-runs the baseline (~5 min)</span>
-        </label>
         <button type="submit" id="run-btn">Run scenario</button>
         <p class="muted">A scenario takes ~5 minutes. Existing-bores baseline is cached.</p>
       </form>
@@ -132,6 +128,6 @@
 </div>
 
 <script src="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.js"></script>
-<script src="app.js?v=4"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

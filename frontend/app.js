@@ -473,8 +473,6 @@ function projInverseCached(x, y) {
 }
 
 async function runScenario(map) {
-  const rechargeMult = parseFloat($("recharge_mult").value);
-  const mult = Number.isFinite(rechargeMult) && rechargeMult >= 0 ? rechargeMult : 1.0;
   let body;
   if (STATE.scenarioType === "single") {
     const x = parseFloat($("x").value);
@@ -488,7 +486,6 @@ async function runScenario(map) {
     body = {
       scenario_type: "single",
       proposed_bore: { bore_id, x, y, rate_ML_per_year: rate },
-      recharge_multiplier: mult,
     };
   } else if (STATE.scenarioType === "multi") {
     if (STATE.multiWells.length === 0) {
@@ -504,7 +501,6 @@ async function runScenario(map) {
       new_wells: STATE.multiWells.map((w, i) => ({
         label: `BORE_${i + 1}`, x: w.x, y: w.y, rate_ML_per_year: w.rate_ML_per_year,
       })),
-      recharge_multiplier: mult,
     };
   } else if (STATE.scenarioType === "trade") {
     if (!STATE.tradeFrom) {
@@ -531,7 +527,6 @@ async function runScenario(map) {
       to_wells: STATE.tradeDestinations.map((d) => ({
         x: d.x, y: d.y, rate_ML_per_year: d.rate_ML_per_year,
       })),
-      recharge_multiplier: mult,
     };
   } else {
     setStatus("unknown scenario type", "error");
