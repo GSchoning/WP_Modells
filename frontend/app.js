@@ -552,7 +552,7 @@ async function runScenario(map) {
   }
 
   $("run-btn").disabled = true;
-  $("run-btn").textContent = mult !== 1.0 ? "Running… (~10 min, re-baselining)" : "Running… (~5 min)";
+  $("run-btn").textContent = "Running… (~5 min)";
   setStatus("running scenario C…");
   const t0 = performance.now();
   let resp;
