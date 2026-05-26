@@ -171,6 +171,13 @@ header h1 { margin: 0; font-size: 1.25rem; font-weight: 600; letter-spacing: -0.
 .muted { color: var(--ink-3); font-size: 0.85rem; }
 
 /* ---- Login ---- */
+/* `#login-pane { display: flex }` has higher specificity than the
+   browser's `[hidden] { display: none }`, so re-assert at the same
+   specificity. Without this, toggling `hidden` from JS doesn't
+   actually hide the login card after sign-in. */
+#login-pane[hidden],
+#selector-pane[hidden] { display: none !important; }
+
 #login-pane {
   display: flex; justify-content: center;
   padding: 2rem 0;
