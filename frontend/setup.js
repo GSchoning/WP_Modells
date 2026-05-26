@@ -263,6 +263,7 @@ async function samplePropertiesAt(map, lngLat) {
     }
   }
   if (visible.length === 0) return;
+  console.debug("[setup] sampling properties at", lngLat, "visible:", visible);
 
   // Fetch the sample for every visible property in parallel.
   const results = await Promise.all(
@@ -271,27 +272,55 @@ async function samplePropertiesAt(map, lngLat) {
         const r = await fetch(
           `/api/model-setup/property/${name}/sample?lng=${lngLat.lng}&lat=${lngLat.lat}`,
         );
-        if (!r.ok) return null;
+        if (!r.ok) {
+          console.warn(`[setup] /sample ${name} returned HTTP ${r.status}`);
+          return { name, error: `HTTP ${r.status}` };
+        }
         return await r.json();
-      } catch { return null; }
+      } catch (err) {
+        console.warn(`[setup] /sample ${name} failed:`, err);
+        return { name, error: String(err) };
+      }
     }),
   );
 
-  // If every sample is null / outside the domain, show one popup.
-  if (results.every((d) => !d || d.in_domain === false)) {
+  const errored = results.filter((d) => d && d.error);
+  const usable  = results.filter((d) => d && !d.error);
+
+  // If every successful response says we're outside the domain (and
+  // nothing errored), tell the user.
+  if (usable.length && usable.every((d) => d.in_domain === false)) {
     new maplibregl.Popup({ closeButton: true })
       .setLngLat(lngLat)
       .setHTML(`<div><em>outside model domain</em></div>`)
       .addTo(map);
     return;
   }
+  // Backend unreachable / endpoint missing — surface it instead of
+  // silently doing nothing (this used to look like the click was dead).
+  if (errored.length && !usable.some((d) => d.in_domain)) {
+    new maplibregl.Popup({ closeButton: true })
+      .setLngLat(lngLat)
+      .setHTML(
+        `<div><strong>Sample request failed</strong></div>` +
+        `<div class="muted-pop" style="color:#94a3b8;font-size:0.72rem">
+          ${errored.map((d) => `${d.name}: ${d.error}`).join("<br/>")}
+        </div>` +
+        `<div class="muted-pop" style="color:#94a3b8;font-size:0.72rem;margin-top:0.3rem">
+          restart the API and hard-refresh
+        </div>`,
+      )
+      .addTo(map);
+    return;
+  }
 
   // Build a single popup with one row per visible property.
   let html = "";
-  let rcShown = false;
-  for (const d of results) {
+  let rc = null;
+  for (const d of usable) {
     if (!d || !d.in_domain) continue;
-    html += `<div>
+    rc = rc || [d.row, d.col];
+    html += `<div style="margin-bottom:0.45rem">
       <strong>${d.label}</strong>
       <div style="font-size:1rem;margin:0.15rem 0">
         ${fmtSci(d.value)} <span style="color:#94a3b8;font-size:0.78rem">${d.units}</span>
@@ -308,15 +337,11 @@ async function samplePropertiesAt(map, lngLat) {
       </div>`;
     }
     html += `</div>`;
-    if (!rcShown) {
-      html = html.replace(
-        /<\/div>$/,
-        `<div style="color:#94a3b8;font-size:0.7rem;margin-top:0.3rem">
-          cell (${d.row}, ${d.col})
-        </div></div>`,
-      );
-      rcShown = true;
-    }
+  }
+  if (rc) {
+    html += `<div style="color:#94a3b8;font-size:0.7rem;border-top:1px solid #1f2d4a;padding-top:0.3rem">
+      cell (${rc[0]}, ${rc[1]})
+    </div>`;
   }
   new maplibregl.Popup({ closeButton: true })
     .setLngLat(lngLat).setHTML(html).addTo(map);

@@ -754,24 +754,37 @@ def _property_to_png(
     vmax: float,
 ) -> bytes:
     """Render a (nrow, ncol) cell-property array to a transparent PNG on a
-    log10 colour scale. Used for K and Ss overlays on the model-setup page.
+    log10 colour scale, with one image pixel per grid cell — no resampling,
+    no anti-aliasing, exact half-pixel registration.
 
-    Inactive cells (idomain != 1) and non-positive values are masked out.
+    matplotlib's `savefig` was producing blurry edges and a slight
+    sub-pixel offset because `imshow` places the image extent at
+    `(-0.5, ncol-0.5)` and savefig anti-aliases on resize. Going via
+    PIL writes pixel (i, j) at the integer (i, j) corner of the image
+    so the four corners returned by `_bbox_4326()` line up exactly
+    with the four corners of the modelled domain.
     """
     pos = (idomain == 1) & (arr > 0)
-    masked = np.where(pos, arr, np.nan)
     nrow, ncol = arr.shape
-    fig = plt.figure(figsize=(ncol / 100, nrow / 100), dpi=100)
-    ax = fig.add_axes([0, 0, 1, 1])
-    ax.set_axis_off()
-    norm = mcolors.LogNorm(vmin=max(vmin, 1e-30), vmax=max(vmax, vmin * 10))
-    cmap = plt.get_cmap(cmap_name).copy()
-    cmap.set_bad(alpha=0.0)
-    ax.imshow(masked, cmap=cmap, norm=norm,
-              origin="upper", interpolation="nearest")
+
+    # log10 normalise into [0, 1] over the displayed range.
+    log_min = np.log10(max(vmin, 1e-30))
+    log_max = np.log10(max(vmax, vmin * 10))
+    log_arr = np.full(arr.shape, np.nan, dtype=np.float64)
+    log_arr[pos] = np.log10(arr[pos])
+    norm = (log_arr - log_min) / (log_max - log_min)
+    norm = np.clip(norm, 0.0, 1.0)
+
+    cmap = plt.get_cmap(cmap_name)
+    # cmap returns RGBA float in [0,1]; convert to uint8.
+    rgba = (cmap(norm) * 255.0).astype(np.uint8)        # (nrow, ncol, 4)
+    # Inactive / non-positive cells → fully transparent.
+    rgba[..., 3] = np.where(pos, rgba[..., 3], 0)
+
+    from PIL import Image
+    img = Image.fromarray(rgba, mode="RGBA")
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", transparent=True)
-    plt.close(fig)
+    img.save(buf, format="PNG", compress_level=3)
     return buf.getvalue()
 
 
