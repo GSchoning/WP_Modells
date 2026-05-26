@@ -41,6 +41,29 @@
 .swatch.noflow   { background: #1f2937; }
 .swatch.bores    { background: #ef4444; border-radius: 50%; }
 .swatch.complex  { background: #2563eb; border-radius: 50%; }
+/* Matplotlib viridis / plasma ramps (5 stops each) for the K & Ss swatches. */
+.swatch.ramp-viridis {
+  background: linear-gradient(to right, #440154, #3b528b, #21918c, #5ec962, #fde725);
+}
+.swatch.ramp-plasma {
+  background: linear-gradient(to right, #0d0887, #7e03a8, #cb4778, #f89540, #f0f921);
+}
+
+.group-title { font-size: 0.7rem; margin: 1rem 0 0.4rem;
+  text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2);
+  font-weight: 600; }
+
+.ramp-legend { display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.2rem 0.55rem 0.5rem 1.7rem; font-size: 0.7rem; color: var(--ink-2);
+  font-variant-numeric: tabular-nums; }
+.ramp-legend .ramp-bar { flex: 1; height: 8px; border-radius: 2px;
+  border: 1px solid var(--line); }
+.ramp-legend .ramp-bar.viridis {
+  background: linear-gradient(to right, #440154, #3b528b, #21918c, #5ec962, #fde725);
+}
+.ramp-legend .ramp-bar.plasma {
+  background: linear-gradient(to right, #0d0887, #7e03a8, #cb4778, #f89540, #f0f921);
+}
 
 #counts { margin-top: 0.8rem; padding-top: 0.6rem; border-top: 1px solid var(--line);
   line-height: 1.7; }

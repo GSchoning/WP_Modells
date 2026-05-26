@@ -744,6 +744,64 @@ def _drawdown_to_png(arr: np.ndarray, idomain: np.ndarray, vmax: float | None = 
     return buf.getvalue()
 
 
+def _property_to_png(
+    arr: np.ndarray,
+    idomain: np.ndarray,
+    cmap_name: str,
+    vmin: float,
+    vmax: float,
+) -> bytes:
+    """Render a (nrow, ncol) cell-property array to a transparent PNG on a
+    log10 colour scale. Used for K and Ss overlays on the model-setup page.
+
+    Inactive cells (idomain != 1) and non-positive values are masked out.
+    """
+    pos = (idomain == 1) & (arr > 0)
+    masked = np.where(pos, arr, np.nan)
+    nrow, ncol = arr.shape
+    fig = plt.figure(figsize=(ncol / 100, nrow / 100), dpi=100)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_axis_off()
+    norm = mcolors.LogNorm(vmin=max(vmin, 1e-30), vmax=max(vmax, vmin * 10))
+    cmap = plt.get_cmap(cmap_name).copy()
+    cmap.set_bad(alpha=0.0)
+    ax.imshow(masked, cmap=cmap, norm=norm,
+              origin="upper", interpolation="nearest")
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", transparent=True)
+    plt.close(fig)
+    return buf.getvalue()
+
+
+def _property_stats(arr: np.ndarray, idomain: np.ndarray) -> tuple[float, float, float]:
+    """Return (p2, p98, median) of positive values in active cells.
+
+    The 2nd / 98th percentiles clip the colour ramp without being thrown
+    off by a handful of extreme outliers from the calibrated field.
+    """
+    pos = arr[(idomain == 1) & (arr > 0)]
+    if pos.size == 0:
+        return 1e-6, 1.0, 1e-3
+    return (
+        float(np.percentile(pos, 2)),
+        float(np.percentile(pos, 98)),
+        float(np.median(pos)),
+    )
+
+
+# K (hydraulic conductivity)        → viridis on log scale.
+# Ss (specific storage)              → plasma  on log scale.
+_PROPERTY_CMAPS = {"k": "viridis", "ss": "plasma"}
+
+
+def _property_array(name: str) -> np.ndarray:
+    if name == "k":
+        return state.grid.k[0]
+    if name == "ss":
+        return state.grid.ss[0]
+    raise HTTPException(400, f"unknown property: {name!r}")
+
+
 def _bbox_4326() -> dict:
     g = state.grid
     transformer = pyproj.Transformer.from_crs(state.cfg.project.crs, "EPSG:4326", always_xy=True)
@@ -989,6 +1047,56 @@ def model_setup_geojson(layer: str):
     if layer not in state.setup_geojson:
         raise HTTPException(400, "layer must be one of: active, outcrop, chd, noflow")
     return JSONResponse(state.setup_geojson[layer])
+
+
+@app.get("/api/model-setup/property/{name}/info")
+def model_setup_property_info(name: str):
+    """Min/median/max + colour-ramp metadata for the K and Ss overlays.
+
+    The PNG endpoint uses the same percentile clamp, so the legend bounds
+    returned here match the colour-scale extremes shown on the map.
+    """
+    if state.grid is None:
+        raise HTTPException(503, "Grid not ready")
+    name = name.lower()
+    if name not in _PROPERTY_CMAPS:
+        raise HTTPException(400, "name must be 'k' or 'ss'")
+    arr = _property_array(name)
+    p2, p98, median = _property_stats(arr, state.grid.idomain[0])
+    units = "m/day" if name == "k" else "1/m"
+    label = "Hydraulic conductivity (K)" if name == "k" else "Specific storage (Ss)"
+    return JSONResponse({
+        "name": name,
+        "label": label,
+        "units": units,
+        "vmin": p2,
+        "vmax": p98,
+        "median": median,
+        "cmap": _PROPERTY_CMAPS[name],
+    })
+
+
+@app.get("/api/model-setup/property/{name}.png")
+def model_setup_property_png(name: str):
+    """Cell-property field rendered to a transparent PNG (log scale).
+
+    Returned on the same grid georeferencing as the drawdown PNGs, so the
+    frontend can drop it in as a maplibre `image` source with
+    `image_corners_4326` from /api/model-setup/info.
+    """
+    if state.grid is None:
+        raise HTTPException(503, "Grid not ready")
+    name = name.lower()
+    if name not in _PROPERTY_CMAPS:
+        raise HTTPException(400, "name must be 'k' or 'ss'")
+    arr = _property_array(name)
+    p2, p98, _ = _property_stats(arr, state.grid.idomain[0])
+    png = _property_to_png(
+        arr, state.grid.idomain[0],
+        cmap_name=_PROPERTY_CMAPS[name], vmin=p2, vmax=p98,
+    )
+    return Response(content=png, media_type="image/png",
+                    headers={"Cache-Control": "no-store"})
 
 
 _FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"

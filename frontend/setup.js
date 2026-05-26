@@ -142,6 +142,12 @@ async function init() {
     // Keep road and town labels above the grid/outcrop polygon fills.
     if (map.getLayer("roads"))  map.moveLayer("roads");
     if (map.getLayer("places")) map.moveLayer("places");
+
+    // Calibrated-field overlays (K and Ss): fetched lazily the first time
+    // the regulator toggles them on. PNG raster overlays on the same
+    // image_corners_4326 the drawdown maps use.
+    setupPropertyOverlay(map, info, "k",  "Hydraulic conductivity", "viridis", "m/d");
+    setupPropertyOverlay(map, info, "ss", "Specific storage",       "plasma",  "1/m");
   });
 
   // Wire layer toggles.
@@ -162,6 +168,61 @@ async function init() {
   toggle("toggle-noflow",    ["vec-noflow-fill",  "vec-noflow-line"]);
   toggle("toggle-bores",     ["pumping"]);
   toggle("toggle-complexes", ["complexes"]);
+}
+
+/**
+ * Wire a K- or Ss-field overlay. The PNG is added below the roads/labels
+ * layers so towns stay readable, and only fetched the first time the
+ * checkbox is toggled on (so it doesn't slow the initial page load).
+ */
+function setupPropertyOverlay(map, info, name, label, rampClass, units) {
+  const checkbox = document.getElementById(`toggle-${name}`);
+  const legend   = document.getElementById(`${name}-legend`);
+  if (!checkbox || !info?.image_corners_4326) return;
+
+  const sourceId = `prop-${name}`;
+  const layerId  = `prop-${name}-layer`;
+  const fmt = (v) =>
+    v == null ? "–" :
+    Math.abs(v) >= 0.01 && Math.abs(v) < 1000 ? Number(v).toPrecision(3) :
+    Number(v).toExponential(2);
+
+  let loaded = false;
+  const ensureLoaded = async () => {
+    if (loaded) return true;
+    try {
+      const meta = await (await fetch(`/api/model-setup/property/${name}/info`)).json();
+      legend.innerHTML =
+        `<span>${fmt(meta.vmin)}</span>` +
+        `<div class="ramp-bar ${rampClass}"></div>` +
+        `<span>${fmt(meta.vmax)}</span>` +
+        `<span class="muted">${meta.units}</span>`;
+    } catch (e) {
+      console.warn(`failed to fetch ${name} metadata`, e);
+    }
+    map.addSource(sourceId, {
+      type: "image",
+      url: `/api/model-setup/property/${name}.png`,
+      coordinates: info.image_corners_4326,
+    });
+    // Insert below the road layer so labels remain legible.
+    const beforeId = map.getLayer("roads") ? "roads" : undefined;
+    map.addLayer({
+      id: layerId, type: "raster", source: sourceId,
+      paint: { "raster-opacity": 0.78, "raster-fade-duration": 0 },
+    }, beforeId);
+    loaded = true;
+    return true;
+  };
+
+  checkbox.addEventListener("change", async () => {
+    const on = checkbox.checked;
+    legend.hidden = !on;
+    if (on) await ensureLoaded();
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, "visibility", on ? "visible" : "none");
+    }
+  });
 }
 
 window.addEventListener("DOMContentLoaded", init);
