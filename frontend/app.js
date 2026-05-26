@@ -101,7 +101,13 @@ async function init() {
   });
   STATE.map = map;
 
-  map.on("load", () => buildLayers(map, mapData));
+  map.on("load", () => {
+    buildLayers(map, mapData);
+    // Restore the previous scenario, if any, so navigating to the drawdown
+    // maps and back doesn't reset the recommendation, bar chart, table, or
+    // map markers. The result payload lives in sessionStorage.
+    restoreSessionState(map);
+  });
 
   $("scenario-form").addEventListener("submit", (e) => {
     e.preventDefault();
@@ -588,6 +594,8 @@ async function runScenario(map) {
   renderBarChart(result);
   renderTable(result);
   recolorComplexes(map, result);
+
+  saveSessionState();
 }
 
 function renderSummaryStats(result) {
@@ -1285,6 +1293,91 @@ function renderTable(result) {
   $("results-tables").querySelectorAll("tbody tr").forEach(tr => {
     tr.addEventListener("click", () => selectComplex(tr.getAttribute("data-id")));
   });
+}
+
+// --- Session persistence -------------------------------------------------
+// The regulator can navigate to the drawdown-maps page and back; we want
+// the recommendation, bar chart, table, and map markers to stay intact.
+// `sessionStorage` is scoped to the tab and is cleared when the tab closes.
+
+const SCENARIO_STATE_KEY = "gabora_scenario_state";
+
+function saveSessionState() {
+  if (!STATE.lastResult) return;
+  const payload = {
+    scenarioType: STATE.scenarioType,
+    single: STATE.scenarioType === "single" ? {
+      bore_id: $("bore_id").value,
+      x: $("x").value,
+      y: $("y").value,
+      rate: $("rate").value,
+    } : null,
+    multiWells: STATE.multiWells || [],
+    tradeFrom: STATE.tradeFrom ? { bore_id: STATE.tradeFrom.bore_id } : null,
+    tradeDestinations: STATE.tradeDestinations || [],
+    lastResult: STATE.lastResult,
+    selectedComplexId: STATE.selectedComplexId || null,
+  };
+  try {
+    sessionStorage.setItem(SCENARIO_STATE_KEY, JSON.stringify(payload));
+  } catch (e) {
+    // Quota / private mode — non-fatal.
+    console.warn("could not persist scenario state:", e);
+  }
+}
+
+async function restoreSessionState(map) {
+  let saved;
+  try {
+    const raw = sessionStorage.getItem(SCENARIO_STATE_KEY);
+    if (!raw) return;
+    saved = JSON.parse(raw);
+  } catch { return; }
+  if (!saved || !saved.lastResult) return;
+
+  // 1. Scenario type radio + visible pane.
+  const wantType = saved.scenarioType || "single";
+  STATE.scenarioType = wantType;
+  const radio = document.querySelector(`input[name="scenario-type"][value="${wantType}"]`);
+  if (radio) {
+    radio.checked = true;
+    radio.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  // 2. Mode-specific input restoration.
+  if (wantType === "single" && saved.single) {
+    if (saved.single.bore_id != null) $("bore_id").value = saved.single.bore_id;
+    if (saved.single.x != null)        $("x").value       = saved.single.x;
+    if (saved.single.y != null)        $("y").value       = saved.single.y;
+    if (saved.single.rate != null)     $("rate").value    = saved.single.rate;
+  } else if (wantType === "multi") {
+    STATE.multiWells = saved.multiWells || [];
+    renderMultiWellsList();
+  } else if (wantType === "trade") {
+    if (STATE.existingBores.length === 0) {
+      try { await loadExistingBores(); } catch { /* network blip */ }
+    }
+    if (saved.tradeFrom?.bore_id) {
+      const tradeFromInput = $("trade-from");
+      tradeFromInput.value = String(saved.tradeFrom.bore_id);
+      // Dispatch 'input' so the existing handler resolves STATE.tradeFrom
+      // from the existing-bores list and updates the info line.
+      tradeFromInput.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    STATE.tradeDestinations = saved.tradeDestinations || [];
+    renderTradeDestinationsList();
+  }
+  refreshScenarioMarkers(map);
+
+  // 3. Replay the result rendering.
+  STATE.lastResult = saved.lastResult;
+  STATE.selectedComplexId = saved.selectedComplexId || null;
+  renderDecision(STATE.lastResult);
+  renderSummaryStats(STATE.lastResult);
+  renderBarChart(STATE.lastResult);
+  renderTable(STATE.lastResult);
+  recolorComplexes(map, STATE.lastResult);
+  setStatus("restored last scenario", "ok");
 }
 
 function recolorComplexes(map, result) {
