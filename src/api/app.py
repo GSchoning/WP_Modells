@@ -293,9 +293,9 @@ def version_info():
     this endpoint won't exist at all (404 → restart needed).
     """
     return JSONResponse({
-        "property_renderer": "pil",
+        "property_renderer": "pil-upscale",
         "has_property_sample": True,
-        "build": "2026-05-26-pil-property",
+        "build": "2026-05-26-pil-upscale-8",
     })
 
 
@@ -795,6 +795,16 @@ def _property_to_png(
     rgba = (cmap(norm) * 255.0).astype(np.uint8)        # (nrow, ncol, 4)
     # Inactive / non-positive cells → fully transparent.
     rgba[..., 3] = np.where(pos, rgba[..., 3], 0)
+
+    # MapLibre's `raster-resampling: nearest` paint property is not
+    # honoured for image sources (only for raster tiles) — so even with
+    # a 1-pixel-per-cell PNG, the GPU bilinear-filters between cells and
+    # isolated high-value cells bloom radially. Replicate each cell to
+    # an N×N block here; the bilinear bleed is then confined to the
+    # 1-pixel boundary between adjacent blocks (i.e. 1/N of a cell
+    # width), which is visually invisible at any sensible zoom.
+    UPSCALE = 8
+    rgba = np.repeat(np.repeat(rgba, UPSCALE, axis=0), UPSCALE, axis=1)
 
     from PIL import Image
     img = Image.fromarray(rgba, mode="RGBA")
