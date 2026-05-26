@@ -204,8 +204,15 @@ function setupPropertyOverlay(map, info, name, label, rampClass, units) {
   let loaded = false;
   const ensureLoaded = async () => {
     if (loaded) return true;
+    // Property /info now also carries the WGS84-axis-aligned image
+    // corners of the warped raster — they're different from the grid's
+    // trapezoidal MGA corners returned by /model-setup/info, and using
+    // them is what makes the K / Ss raster align with the active-cells
+    // GeoJSON instead of drifting in the interior.
+    let corners = info.image_corners_4326;
     try {
       const meta = await (await fetch(`/api/model-setup/property/${name}/info`)).json();
+      if (Array.isArray(meta.image_corners_4326)) corners = meta.image_corners_4326;
       legend.innerHTML =
         `<span>${fmt(meta.vmin)}</span>` +
         `<div class="ramp-bar ${rampClass}"></div>` +
@@ -216,11 +223,10 @@ function setupPropertyOverlay(map, info, name, label, rampClass, units) {
     }
     map.addSource(sourceId, {
       type: "image",
-      // Cache-buster: forces a fresh fetch each page load so a stale
-      // matplotlib-rendered PNG can't be served from disk cache after
-      // the backend has been switched to the PIL pipeline.
+      // Cache-buster: forces a fresh fetch each page load so stale
+      // server-rendered PNGs can't be served from disk cache.
       url: `/api/model-setup/property/${name}.png?t=${Date.now()}`,
-      coordinates: info.image_corners_4326,
+      coordinates: corners,
     });
     // Insert below the road layer so labels remain legible.
     const beforeId = map.getLayer("roads") ? "roads" : undefined;

@@ -293,9 +293,9 @@ def version_info():
     this endpoint won't exist at all (404 → restart needed).
     """
     return JSONResponse({
-        "property_renderer": "pil-upscale",
+        "property_renderer": "pil-warped",
         "has_property_sample": True,
-        "build": "2026-05-26-pil-upscale-8",
+        "build": "2026-05-26-rasterio-warp",
     })
 
 
@@ -761,6 +761,56 @@ def _drawdown_to_png(arr: np.ndarray, idomain: np.ndarray, vmax: float | None = 
     return buf.getvalue()
 
 
+def _property_warp_meta():
+    """Cached warp parameters for reprojecting K / Ss from project CRS to
+    EPSG:4326. Computed once because they only depend on the grid extent.
+
+    Returns a dict with the source/destination affine transforms, the
+    destination raster size, and the four axis-aligned image corners in
+    `[tl, tr, br, bl]` order — used both by `_property_to_png` to warp
+    the raster and by `/info` to position the image source in MapLibre.
+    """
+    cached = getattr(state, "_property_warp_cache", None)
+    if cached is not None:
+        return cached
+
+    from rasterio.transform import from_origin
+    from rasterio.warp import calculate_default_transform
+
+    g = state.grid
+    src_crs = state.cfg.project.crs
+    src_transform = from_origin(
+        g.xorigin, g.yorigin + float(g.delc.sum()),
+        float(g.delr[0]), float(g.delc[0]),
+    )
+    dst_transform, dst_width, dst_height = calculate_default_transform(
+        src_crs, "EPSG:4326", g.ncol, g.nrow,
+        g.xorigin, g.yorigin,
+        g.xorigin + float(g.delr.sum()),
+        g.yorigin + float(g.delc.sum()),
+    )
+    west  = dst_transform.c
+    north = dst_transform.f
+    east  = west  + dst_transform.a * dst_width
+    south = north + dst_transform.e * dst_height
+    image_corners = [
+        [west, north],   # tl
+        [east, north],   # tr
+        [east, south],   # br
+        [west, south],   # bl
+    ]
+    cached = {
+        "src_transform": src_transform,
+        "src_crs": src_crs,
+        "dst_transform": dst_transform,
+        "dst_width": int(dst_width),
+        "dst_height": int(dst_height),
+        "image_corners_4326": image_corners,
+    }
+    state._property_warp_cache = cached
+    return cached
+
+
 def _property_to_png(
     arr: np.ndarray,
     idomain: np.ndarray,
@@ -768,46 +818,53 @@ def _property_to_png(
     vmin: float,
     vmax: float,
 ) -> bytes:
-    """Render a (nrow, ncol) cell-property array to a transparent PNG on a
-    log10 colour scale, with one image pixel per grid cell — no resampling,
-    no anti-aliasing, exact half-pixel registration.
+    """Render the K / Ss field to a transparent PNG, with the heavy lifting
+    being rasterio.warp's reprojection from the project CRS to EPSG:4326.
 
-    matplotlib's `savefig` was producing blurry edges and a slight
-    sub-pixel offset because `imshow` places the image extent at
-    `(-0.5, ncol-0.5)` and savefig anti-aliases on resize. Going via
-    PIL writes pixel (i, j) at the integer (i, j) corner of the image
-    so the four corners returned by `_bbox_4326()` line up exactly
-    with the four corners of the modelled domain.
+    Why warp instead of just supplying four corners to MapLibre? An image
+    source is rubber-sheeted as a bilinear quadrilateral between its four
+    corners, but the MGA → WGS84 transformation is non-linear. The four
+    corners are exact; interior pixels drift by up to a few hundred metres
+    against a per-cell GeoJSON reference. Warping with rasterio produces
+    an axis-aligned WGS84 raster whose pixel positions match the
+    per-cell polygons exactly, so the K / Ss overlay sits perfectly on
+    top of the active-cells / outcrop / CHD layers.
     """
-    pos = (idomain == 1) & (arr > 0)
-    nrow, ncol = arr.shape
+    from rasterio.warp import reproject, Resampling
 
-    # log10 normalise into [0, 1] over the displayed range.
+    pos = (idomain == 1) & (arr > 0)
     log_min = np.log10(max(vmin, 1e-30))
     log_max = np.log10(max(vmax, vmin * 10))
     log_arr = np.full(arr.shape, np.nan, dtype=np.float64)
     log_arr[pos] = np.log10(arr[pos])
     norm = (log_arr - log_min) / (log_max - log_min)
-    norm = np.clip(norm, 0.0, 1.0)
+    norm = np.where(np.isnan(norm), 0.0, np.clip(norm, 0.0, 1.0))
 
     cmap = plt.get_cmap(cmap_name)
-    # cmap returns RGBA float in [0,1]; convert to uint8.
     rgba = (cmap(norm) * 255.0).astype(np.uint8)        # (nrow, ncol, 4)
-    # Inactive / non-positive cells → fully transparent.
-    rgba[..., 3] = np.where(pos, rgba[..., 3], 0)
+    rgba[..., 3] = np.where(pos, 255, 0).astype(np.uint8)
 
-    # MapLibre's `raster-resampling: nearest` paint property is not
-    # honoured for image sources (only for raster tiles) — so even with
-    # a 1-pixel-per-cell PNG, the GPU bilinear-filters between cells and
-    # isolated high-value cells bloom radially. Replicate each cell to
-    # an N×N block here; the bilinear bleed is then confined to the
-    # 1-pixel boundary between adjacent blocks (i.e. 1/N of a cell
-    # width), which is visually invisible at any sensible zoom.
+    # Warp each channel separately into the cached EPSG:4326 destination.
+    meta = _property_warp_meta()
+    dst_rgba = np.zeros((meta["dst_height"], meta["dst_width"], 4), dtype=np.uint8)
+    for band in range(4):
+        reproject(
+            source=np.ascontiguousarray(rgba[..., band]),
+            destination=dst_rgba[..., band],
+            src_transform=meta["src_transform"],
+            src_crs=meta["src_crs"],
+            dst_transform=meta["dst_transform"],
+            dst_crs="EPSG:4326",
+            resampling=Resampling.nearest,
+        )
+
+    # Upscale 8× so MapLibre's image-source bilinear filter only blurs
+    # across 1/8 of a cell boundary, i.e. invisible at any sensible zoom.
     UPSCALE = 8
-    rgba = np.repeat(np.repeat(rgba, UPSCALE, axis=0), UPSCALE, axis=1)
+    dst_rgba = np.repeat(np.repeat(dst_rgba, UPSCALE, axis=0), UPSCALE, axis=1)
 
     from PIL import Image
-    img = Image.fromarray(rgba, mode="RGBA")
+    img = Image.fromarray(dst_rgba, mode="RGBA")
     buf = io.BytesIO()
     img.save(buf, format="PNG", compress_level=3)
     return buf.getvalue()
@@ -1182,6 +1239,11 @@ def model_setup_property_info(name: str):
         "vmax": p98,
         "median": median,
         "cmap": _PROPERTY_CMAPS[name],
+        # Image corners specific to the warped (EPSG:4326-axis-aligned)
+        # property raster. Different from /api/model-setup/info's
+        # image_corners_4326 (which traces the MGA grid's four corners
+        # after individual reprojection — a slight trapezoid).
+        "image_corners_4326": _property_warp_meta()["image_corners_4326"],
     })
 
 
