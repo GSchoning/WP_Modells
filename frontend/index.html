@@ -7,9 +7,29 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
-<link rel="stylesheet" href="landing.css?v=1" />
+<link rel="stylesheet" href="landing.css?v=2" />
 </head>
 <body>
+<!-- Animated water background -->
+<div class="water-bg" aria-hidden="true">
+  <div class="bubbles">
+    <span></span><span></span><span></span><span></span><span></span>
+    <span></span><span></span><span></span><span></span><span></span>
+    <span></span><span></span>
+  </div>
+  <svg class="waves" viewBox="0 24 150 28" preserveAspectRatio="none">
+    <defs>
+      <path id="wave-path" d="M-160 44c30 0 58-18 88-18s58 18 88 18 58-18 88-18 58 18 88 18v44h-352z" />
+    </defs>
+    <g class="wave-group">
+      <use href="#wave-path" x="48"  y="0"  fill="rgba(56,189,248,0.18)" />
+      <use href="#wave-path" x="48"  y="3"  fill="rgba(37,99,235,0.22)" />
+      <use href="#wave-path" x="48"  y="5"  fill="rgba(14,165,233,0.30)" />
+      <use href="#wave-path" x="48"  y="7"  fill="rgba(8,47,73,0.55)" />
+    </g>
+  </svg>
+</div>
+
 <div id="page">
   <header>
     <div class="brand">
