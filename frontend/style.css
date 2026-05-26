@@ -358,12 +358,19 @@ tr.row-selected  { box-shadow: inset 3px 0 0 var(--accent); }
 .decision-recorded.reject  { color: #991b1b; background: #fee2e2; border-color: #fca5a5; }
 
 /* --- Decision history side panel --------------------------------------- */
+/* The `[hidden]` attribute defaults to `display: none`, but ID rules below
+   (e.g. `#history-panel { display: flex }`) have higher specificity and
+   override it. Re-assert visibility with the same specificity + !important. */
+#history-btn[hidden],
+#history-panel[hidden],
+#history-scrim[hidden] { display: none !important; }
+
 #history-btn {
-  background: transparent; border: 1px solid var(--line);
-  color: var(--ink-1); cursor: pointer;
-  font: 500 0.78rem "Inter", sans-serif;
+  /* Match the .header-link pill exactly — button user-agent styles
+     (different font, background, border) need to be reset. */
+  font-family: inherit;
+  cursor: pointer;
 }
-#history-btn:hover { background: var(--surface-2); }
 
 #history-scrim {
   position: fixed; inset: 0;
