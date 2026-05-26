@@ -1170,6 +1170,45 @@ def model_setup_property_png(name: str):
                     headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/model-setup/property/{name}/sample")
+def model_setup_property_sample(name: str, lng: float, lat: float):
+    """Cell value of the K / Ss field at the clicked lng/lat.
+
+    Reprojects (lng, lat) into the project CRS, finds the grid cell, and
+    returns the raw cell value, the aquifer thickness at that cell, and
+    the row/col index. `in_domain` is false when the click lands outside
+    the modelled extent.
+    """
+    if state.grid is None:
+        raise HTTPException(503, "Grid not ready")
+    name = name.lower()
+    if name not in _PROPERTY_CMAPS:
+        raise HTTPException(400, "name must be 'k' or 'ss'")
+
+    transformer = pyproj.Transformer.from_crs("EPSG:4326", state.cfg.project.crs, always_xy=True)
+    x, y_proj = transformer.transform(lng, lat)
+    rc = cell_of(state.grid, x, y_proj)
+    if rc is None or state.grid.idomain[0, rc[0], rc[1]] != 1:
+        return JSONResponse({
+            "in_domain": False, "name": name,
+            "x": float(x), "y": float(y_proj),
+        })
+
+    r, c = rc
+    arr = _property_array(name)
+    value = float(arr[r, c])
+    thickness = float(state.grid.top[r, c] - state.grid.botm[0, r, c])
+    units = "m/day" if name == "k" else "1/m"
+    label = "Hydraulic conductivity (K)" if name == "k" else "Specific storage (Ss)"
+    return JSONResponse({
+        "in_domain": True,
+        "name": name, "label": label, "units": units,
+        "value": value, "thickness_m": thickness,
+        "row": int(r), "col": int(c),
+        "x": float(x), "y": float(y_proj),
+    })
+
+
 _FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 if _FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=str(_FRONTEND_DIR), html=True), name="frontend")

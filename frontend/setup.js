@@ -148,6 +148,20 @@ async function init() {
     // image_corners_4326 the drawdown maps use.
     setupPropertyOverlay(map, info, "k",  "Hydraulic conductivity", "viridis", "m/d");
     setupPropertyOverlay(map, info, "ss", "Specific storage",       "plasma",  "1/m");
+
+    // Click-to-sample: when either property layer is visible, look up
+    // the underlying cell value(s) at the clicked location and show a
+    // popup. Works for K and Ss together if both are toggled on.
+    map.on("click", (e) => samplePropertiesAt(map, e.lngLat));
+    // Crosshair cursor whenever a property layer is visible, hand cursor
+    // over interactive geojson layers (handled by maplibre's defaults).
+    const updateCursor = () => {
+      const propVisible = ["prop-k-layer", "prop-ss-layer"].some((l) =>
+        map.getLayer(l) && map.getLayoutProperty(l, "visibility") !== "none",
+      );
+      map.getCanvas().style.cursor = propVisible ? "crosshair" : "";
+    };
+    map.on("idle", updateCursor);
   });
 
   // Wire layer toggles.
@@ -231,6 +245,81 @@ function setupPropertyOverlay(map, info, name, label, rampClass, units) {
       map.setLayoutProperty(layerId, "visibility", on ? "visible" : "none");
     }
   });
+}
+
+function fmtSci(v) {
+  if (v == null || !Number.isFinite(v)) return "–";
+  const a = Math.abs(v);
+  if (a >= 0.01 && a < 1000) return Number(v).toPrecision(3);
+  return Number(v).toExponential(2);
+}
+
+async function samplePropertiesAt(map, lngLat) {
+  const visible = [];
+  for (const name of ["k", "ss"]) {
+    const id = `prop-${name}-layer`;
+    if (map.getLayer(id) && map.getLayoutProperty(id, "visibility") !== "none") {
+      visible.push(name);
+    }
+  }
+  if (visible.length === 0) return;
+
+  // Fetch the sample for every visible property in parallel.
+  const results = await Promise.all(
+    visible.map(async (name) => {
+      try {
+        const r = await fetch(
+          `/api/model-setup/property/${name}/sample?lng=${lngLat.lng}&lat=${lngLat.lat}`,
+        );
+        if (!r.ok) return null;
+        return await r.json();
+      } catch { return null; }
+    }),
+  );
+
+  // If every sample is null / outside the domain, show one popup.
+  if (results.every((d) => !d || d.in_domain === false)) {
+    new maplibregl.Popup({ closeButton: true })
+      .setLngLat(lngLat)
+      .setHTML(`<div><em>outside model domain</em></div>`)
+      .addTo(map);
+    return;
+  }
+
+  // Build a single popup with one row per visible property.
+  let html = "";
+  let rcShown = false;
+  for (const d of results) {
+    if (!d || !d.in_domain) continue;
+    html += `<div>
+      <strong>${d.label}</strong>
+      <div style="font-size:1rem;margin:0.15rem 0">
+        ${fmtSci(d.value)} <span style="color:#94a3b8;font-size:0.78rem">${d.units}</span>
+      </div>`;
+    if (d.name === "k") {
+      const T = d.value * d.thickness_m;
+      html += `<div style="color:#94a3b8;font-size:0.72rem">
+        thickness ${d.thickness_m.toFixed(1)} m · T = ${fmtSci(T)} m²/d
+      </div>`;
+    } else if (d.name === "ss") {
+      const S = d.value * d.thickness_m;
+      html += `<div style="color:#94a3b8;font-size:0.72rem">
+        thickness ${d.thickness_m.toFixed(1)} m · S = ${fmtSci(S)}
+      </div>`;
+    }
+    html += `</div>`;
+    if (!rcShown) {
+      html = html.replace(
+        /<\/div>$/,
+        `<div style="color:#94a3b8;font-size:0.7rem;margin-top:0.3rem">
+          cell (${d.row}, ${d.col})
+        </div></div>`,
+      );
+      rcShown = true;
+    }
+  }
+  new maplibregl.Popup({ closeButton: true })
+    .setLngLat(lngLat).setHTML(html).addTo(map);
 }
 
 window.addEventListener("DOMContentLoaded", init);
