@@ -27,18 +27,24 @@ from .grid import Grid, cell_of
 YEAR_DAYS = 365.25
 
 
-def theis_drawdown(Q: float, T: float, S: float, r: np.ndarray | float, t: float) -> np.ndarray | float:
+def theis_drawdown(
+    Q: float, T: float, S: float, r: np.ndarray | float, t: float,
+    *, r_min: float = 1.0,
+) -> np.ndarray | float:
     """Drawdown s(r, t) for a confined aquifer with transmissivity T and storativity S.
 
     Q: extraction rate (m³/day; positive number).
     T: transmissivity (m²/day) = K × thickness.
     S: storativity (dimensionless) = Ss × thickness.
-    r: distance(s) from the well (m). Floored at a small positive number
-       so r=0 doesn't blow up.
+    r: distance(s) from the well (m). Floored at `r_min` so the
+       singularity at r=0 doesn't blow up and so values near the well
+       cell remain comparable to a finite-difference model. For
+       comparison against MODFLOW, pass `r_min = 0.208 · Δx` (the
+       Peaceman equivalent radius for a square cell).
     t: time since pumping started (days).
     """
     r_arr = np.asarray(r, dtype=float)
-    r_safe = np.maximum(r_arr, 1.0)              # 1 m floor — Theis is singular at r=0
+    r_safe = np.maximum(r_arr, max(r_min, 1e-6))
     u = r_safe * r_safe * S / (4.0 * T * t)
     return Q / (4.0 * math.pi * T) * exp1(u)
 
@@ -80,6 +86,18 @@ def theis_at_springs(
     sp_y = springs.geometry.y.to_numpy()
     r = np.hypot(sp_x - well_x, sp_y - well_y)
 
+    # Peaceman equivalent radius for a square FD cell:
+    #   r_eq = 0.208 · Δx
+    # is the radius at which point-source Theis drawdown equals the
+    # cell-averaged drawdown a finite-difference model would report.
+    # Flooring r here is what makes the Theis column in the receptor
+    # table directly comparable to the MODFLOW result; without it,
+    # receptors close to the bore get the near-singular point-source
+    # value and the comparison column looks anomalously high.
+    dx = float(np.mean(grid.delr)) if grid.delr.size else 1500.0
+    dy = float(np.mean(grid.delc)) if grid.delc.size else dx
+    r_eq = 0.208 * 0.5 * (dx + dy)
+
     rows = []
     Q = abs(float(well_rate_m3_per_day))
     spring_ids = springs[spring_id_col].to_numpy()
@@ -88,7 +106,7 @@ def theis_at_springs(
     )
     for y in output_years:
         t_days = y * YEAR_DAYS
-        s = theis_drawdown(Q, T, S, r, t_days)
+        s = theis_drawdown(Q, T, S, r, t_days, r_min=r_eq)
         for i, (sid, ri, di) in enumerate(zip(spring_ids, r, s)):
             rows.append({
                 "receptor_id": str(complex_names[i]) if complex_names is not None else sid,
