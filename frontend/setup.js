@@ -209,7 +209,15 @@ function setupPropertyOverlay(map, info, name, label, rampClass, units) {
     const beforeId = map.getLayer("roads") ? "roads" : undefined;
     map.addLayer({
       id: layerId, type: "raster", source: sourceId,
-      paint: { "raster-opacity": 0.78, "raster-fade-duration": 0 },
+      paint: {
+        "raster-opacity": 0.78,
+        "raster-fade-duration": 0,
+        // Nearest-neighbour resampling so each grid cell renders as a
+        // crisp square; without this MapLibre's default bilinear filter
+        // smears values between neighbouring cells, which is misleading
+        // for piecewise-constant calibrated K / Ss fields.
+        "raster-resampling": "nearest",
+      },
     }, beforeId);
     loaded = true;
     return true;
