@@ -284,6 +284,21 @@ def healthz() -> HealthResponse:
     )
 
 
+@app.get("/api/version")
+def version_info():
+    """Quick way to verify which build the API process is actually running.
+
+    `property_renderer` is "pil" if the new pixel-perfect PIL pipeline
+    is in use; if the process is still on the old matplotlib renderer
+    this endpoint won't exist at all (404 → restart needed).
+    """
+    return JSONResponse({
+        "property_renderer": "pil",
+        "has_property_sample": True,
+        "build": "2026-05-26-pil-property",
+    })
+
+
 @app.get("/api/baseline", response_model=BaselineResponse)
 def baseline() -> BaselineResponse:
     if state.baseline is None:

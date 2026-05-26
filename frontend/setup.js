@@ -216,7 +216,10 @@ function setupPropertyOverlay(map, info, name, label, rampClass, units) {
     }
     map.addSource(sourceId, {
       type: "image",
-      url: `/api/model-setup/property/${name}.png`,
+      // Cache-buster: forces a fresh fetch each page load so a stale
+      // matplotlib-rendered PNG can't be served from disk cache after
+      // the backend has been switched to the PIL pipeline.
+      url: `/api/model-setup/property/${name}.png?t=${Date.now()}`,
       coordinates: info.image_corners_4326,
     });
     // Insert below the road layer so labels remain legible.
