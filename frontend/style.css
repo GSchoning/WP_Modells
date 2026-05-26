@@ -242,12 +242,13 @@ body.resizing, body.resizing * { cursor: row-resize !important; user-select: non
   padding: 0.55rem 0.7rem; border-radius: 6px; font-size: 0.77rem;
   border-left: 3px solid var(--already); line-height: 1.5; }
 
-#series-pane { margin-top: 0.5rem; padding-top: 0.6rem;
-  border-top: 1px solid var(--line); }
-#series-pane h3 { font-size: 0.78rem; margin: 0 0 0.4rem;
+#series-pane { padding: 0.6rem 0.75rem 0.5rem;
+  background: var(--surface-1); border: 1px solid var(--line);
+  border-radius: 8px; min-width: 0; }
+#series-pane h3 { font-size: 0.85rem; margin: 0 0 0.5rem;
   color: var(--ink-1); font-weight: 600; }
 #series-chart { background: #fafafa; border-radius: 6px;
-  border: 1px solid var(--line); display: block; }
+  border: 1px solid var(--line); display: block; width: 100%; }
 .series-legend { font-size: 0.7rem; color: var(--ink-2);
   margin-top: 0.3rem; display: flex; gap: 0.7rem; flex-wrap: wrap; }
 .series-legend .swatch-line { display: inline-block; width: 14px;
@@ -297,8 +298,16 @@ body.resizing, body.resizing * { cursor: row-resize !important; user-select: non
 #bars text { user-select: none; font-family: inherit; }
 #bars text.selected { font-weight: 700; }
 
-#table-details { margin-top: 0.65rem; font-size: 0.85rem; flex: 1 1 auto;
-  overflow-y: auto; min-height: 0; }
+/* Lower split: table on the left, drawdown-over-time on the right.
+   When the series pane is hidden, the table fills the row. When the
+   table is collapsed, the series pane still gets its full half. */
+#lower-split { margin-top: 0.65rem; flex: 1 1 auto;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem;
+  min-height: 0; align-items: start; }
+#lower-split:has(#series-pane[hidden]) { grid-template-columns: 1fr; }
+
+#table-details { font-size: 0.85rem;
+  overflow-y: auto; min-height: 0; min-width: 0; }
 #table-details summary { cursor: pointer; padding: 0.45rem 0.6rem;
   color: var(--ink-1); font-weight: 500; border-radius: 6px;
   background: var(--surface-2); border: 1px solid var(--line);

@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.css" />
-<link rel="stylesheet" href="style.css?v=8" />
+<link rel="stylesheet" href="style.css?v=9" />
 </head>
 <body>
 <div id="app">
@@ -124,11 +124,6 @@
         <button type="button" id="reject-btn"  class="action-btn reject">Reject</button>
         <span id="decision-recorded" class="decision-recorded" hidden></span>
       </div>
-      <div id="series-pane" hidden>
-        <h3 id="series-title">Drawdown over time</h3>
-        <svg id="series-chart" width="100%" height="180" preserveAspectRatio="none"></svg>
-        <div id="series-legend" class="series-legend"></div>
-      </div>
     </div>
 
     <div id="chart-pane">
@@ -143,15 +138,22 @@
         <span class="muted">stacked: existing (Scenario A) + proposed (Scenario C). Threshold dashed. Click a bar to focus on the map.</span>
       </div>
       <svg id="bars" width="100%" height="260" preserveAspectRatio="none"></svg>
-      <details id="table-details">
-        <summary>Show full table</summary>
-        <div id="results-tables"></div>
-      </details>
+      <div id="lower-split">
+        <details id="table-details">
+          <summary>Show full table</summary>
+          <div id="results-tables"></div>
+        </details>
+        <div id="series-pane" hidden>
+          <h3 id="series-title">Drawdown over time</h3>
+          <svg id="series-chart" width="100%" height="220" preserveAspectRatio="none"></svg>
+          <div id="series-legend" class="series-legend"></div>
+        </div>
+      </div>
     </div>
   </section>
 </div>
 
 <script src="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.js"></script>
-<script src="app.js?v=8"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>

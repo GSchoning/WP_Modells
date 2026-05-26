@@ -142,6 +142,7 @@ async function init() {
 
   window.addEventListener("resize", () => {
     if (STATE.lastResult) renderBarChart(STATE.lastResult);
+    if (STATE.lastSeries) renderSeriesChart(STATE.lastSeries);
   });
 
   setupSplitter(map);
@@ -650,6 +651,7 @@ async function loadAndRenderSeries(complexId) {
   } catch (err) {
     return;
   }
+  STATE.lastSeries = data;
   renderSeriesChart(data);
 }
 
