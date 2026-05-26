@@ -1,4 +1,4 @@
-# GAB Regulatory Advisor Tool — Precipice Sandstone POC
+# GAB Regulatory Advisor Tool 
 
 Interactive water-licence impact tool for the Precipice Sandstone aquifer
 (Surat Basin / GAB, Queensland). MODFLOW 6 driven from Python via FloPy,
