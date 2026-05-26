@@ -27,7 +27,12 @@ function showSelector(username) {
   $("user-chip").textContent = username;
   $("user-chip").hidden = false;
   $("logout-btn").hidden = false;
+  // Fullscreen picker layout once logged in (handled in landing.css).
+  document.body.classList.add("logged-in");
   if (!STATE.map) loadAquifers();
+  // Map sizes itself off the container's clientHeight; nudge it after
+  // the layout swap so the height is recomputed for fullscreen.
+  if (STATE.map) setTimeout(() => STATE.map.resize(), 0);
 }
 
 function showLogin() {
@@ -38,6 +43,7 @@ function showLogin() {
   $("username").value = "";
   $("password").value = "";
   $("login-error").hidden = true;
+  document.body.classList.remove("logged-in");
 }
 
 async function loadAquifers() {

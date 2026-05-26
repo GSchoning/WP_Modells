@@ -319,4 +319,65 @@ header h1 { margin: 0; font-size: 1.25rem; font-weight: 600; letter-spacing: -0.
   #aquifer-list-panel { max-height: 40vh; }
 }
 
+/* ---- Fullscreen picker layout (after login) ---------------------------- */
+/* The login view is centred and feels like a card; the picker is the
+   regulator's working surface, so once logged in we drop the max-width
+   container and let the map + sidebar fill the whole viewport. */
+body.logged-in #page {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  gap: 0;
+}
+body.logged-in header {
+  padding: 0.55rem 1.2rem;
+  border-bottom: 1px solid var(--line);
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+  flex-shrink: 0;
+}
+body.logged-in header h1     { font-size: 1.05rem; }
+body.logged-in header .subtitle { font-size: 0.72rem; }
+body.logged-in #selector-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+body.logged-in .intro,
+body.logged-in .footer-note { display: none; }
+body.logged-in #aquifer-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  grid-template-columns: 1fr 320px;
+  gap: 0;
+  padding: 0;
+}
+body.logged-in #aquifer-map,
+body.logged-in #aquifer-list-panel {
+  border: 0;
+  border-radius: 0;
+}
+body.logged-in #aquifer-list-panel { border-left: 1px solid var(--line); }
+body.logged-in #aquifer-map        { border-right: 1px solid var(--line); }
+
+/* Keep the bubbles + caustics shimmer running, but suppress the bottom
+   wave SVG — it overlaps the bottom of the picker and looks busy. */
+body.logged-in .waves { display: none; }
+
+@media (max-width: 900px) {
+  body.logged-in #aquifer-pane {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr auto;
+  }
+  body.logged-in #aquifer-map { height: auto; min-height: 0; }
+  body.logged-in #aquifer-list-panel {
+    border-left: 0; border-top: 1px solid var(--line);
+    max-height: 40vh;
+  }
+}
+
 .footer-note { margin-top: 1rem; font-size: 0.75rem; text-align: center; }
