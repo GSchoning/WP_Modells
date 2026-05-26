@@ -699,8 +699,10 @@ def _gdf_to_geojson(gdf):
 
 
 _BLUE_RED_CMAP = mcolors.LinearSegmentedColormap.from_list(
-    "drawdown_blue_red",
-    ["#1e3a8a", "#3b82f6", "#fbbf24", "#dc2626"],
+    "drawdown_jet",
+    # Matplotlib-jet-style ramp: deep blue → blue → cyan → green → yellow → orange → red.
+    ["#00007f", "#0000ff", "#007fff", "#00ffff",
+     "#7fff7f", "#ffff00", "#ff7f00", "#ff0000", "#7f0000"],
 )
 _BLUE_RED_CMAP.set_bad(alpha=0.0)
 
@@ -754,10 +756,24 @@ def last_scenario_info():
     transformer = pyproj.Transformer.from_crs(state.cfg.project.crs, "EPSG:4326", always_xy=True)
     bore = dict(state.last_proposed_bore)
     bore_lng, bore_lat = transformer.transform(float(bore["x"]), float(bore["y"]))
+
+    # Echo every well in the change-set so the map can plot multi-bore
+    # and trade scenarios in full (not just the first bore).
+    wells_out: list[dict] = []
+    for w in (state.last_wells_run or []):
+        wx, wy = float(w["x"]), float(w["y"])
+        wlng, wlat = transformer.transform(wx, wy)
+        wells_out.append({
+            "label": str(w.get("label", "")),
+            "x": wx, "y": wy, "lng": float(wlng), "lat": float(wlat),
+            "rate_ML_per_year": float(w.get("rate_ML_per_year", 0.0)),
+        })
+
     bbox = _bbox_4326()
     return JSONResponse({
         "available": True,
         "bore": {**bore, "lng": bore_lng, "lat": bore_lat},
+        "wells": wells_out,
         "years": sorted(state.last_c_drawdown_by_year.keys()),
         "image_corners_4326": bbox["tl_tr_br_bl"],
         "bbox_4326": bbox["bbox"],

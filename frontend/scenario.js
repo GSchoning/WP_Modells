@@ -19,14 +19,18 @@ const SAT_STYLE = {
 
 const STATE = {
   info: null,
+  mapData: null,             // /api/map-data payload (formation, outcrop, bores, springs)
   maps: {},                  // layer -> map
   opacity: 0.7,
 };
 
 async function init() {
-  let info;
+  let info, mapData;
   try {
-    info = await (await fetch("/api/last-scenario/info")).json();
+    [info, mapData] = await Promise.all([
+      fetch("/api/last-scenario/info").then((r) => r.json()),
+      fetch("/api/map-data").then((r) => r.json()),
+    ]);
   } catch (e) {
     showEmpty("Backend unreachable.");
     return;
@@ -36,11 +40,22 @@ async function init() {
     return;
   }
   STATE.info = info;
+  STATE.mapData = mapData;
 
   const meta = $("scenario-meta");
-  meta.textContent =
-    `${info.bore.bore_id} · ${info.bore.rate_ML_per_year} ML/yr · ` +
-    `(${info.bore.x.toFixed(0)}, ${info.bore.y.toFixed(0)})`;
+  const wells = info.wells || [];
+  const proposed = wells.filter((w) => w.rate_ML_per_year > 0);
+  const fromW = wells.find((w) => w.rate_ML_per_year < 0);
+  if (proposed.length > 1) {
+    const totalRate = proposed.reduce((s, w) => s + w.rate_ML_per_year, 0);
+    meta.textContent = fromW
+      ? `Trade · ${proposed.length} destinations · ${totalRate.toFixed(0)} ML/yr from ${fromW.label.replace(/^from\s+/, "")}`
+      : `${proposed.length} bores · ${totalRate.toFixed(0)} ML/yr total`;
+  } else {
+    meta.textContent =
+      `${info.bore.bore_id} · ${info.bore.rate_ML_per_year} ML/yr · ` +
+      `(${info.bore.x.toFixed(0)}, ${info.bore.y.toFixed(0)})`;
+  }
 
   // Year selector — default to the latest year
   const sel = $("year-select");
@@ -91,12 +106,9 @@ function createMap(elementId, layer, year) {
       id: "dd", type: "raster", source: "dd",
       paint: { "raster-opacity": STATE.opacity, "raster-fade-duration": 0 },
     });
-    new maplibregl.Marker({ color: "#f59e0b" })
-      .setLngLat([STATE.info.bore.lng, STATE.info.bore.lat])
-      .setPopup(new maplibregl.Popup().setHTML(
-        `<strong>${STATE.info.bore.bore_id}</strong><br/>${STATE.info.bore.rate_ML_per_year} ML/yr`
-      ))
-      .addTo(map);
+
+    addContextLayers(map);
+    addWellMarkers(map);
 
     // Click-to-sample: query the underlying grid value at the clicked
     // point. Server reprojects EPSG:4326 to project CRS and looks up
@@ -129,6 +141,107 @@ function createMap(elementId, layer, year) {
     map.getCanvas().style.cursor = "crosshair";
   });
   return map;
+}
+
+function addContextLayers(map) {
+  const md = STATE.mapData;
+  if (!md) return;
+
+  // Outcrop polygon — orange tint, drawn first so it sits below points.
+  if (md.outcrop && md.outcrop.features && md.outcrop.features.length) {
+    map.addSource("outcrop", { type: "geojson", data: md.outcrop });
+    map.addLayer({
+      id: "outcrop-fill", type: "fill", source: "outcrop",
+      paint: { "fill-color": "#f59e0b", "fill-opacity": 0.18 },
+    });
+    map.addLayer({
+      id: "outcrop-line", type: "line", source: "outcrop",
+      paint: { "line-color": "#b45309", "line-width": 1.2, "line-opacity": 0.7 },
+    });
+  }
+
+  // Spring complexes — cyan circles, sized by member count if available.
+  if (md.spring_complexes && md.spring_complexes.features) {
+    map.addSource("springs", { type: "geojson", data: md.spring_complexes });
+    map.addLayer({
+      id: "springs-pt", type: "circle", source: "springs",
+      paint: {
+        "circle-radius": [
+          "interpolate", ["linear"],
+          ["coalesce", ["get", "n_springs"], 1],
+          1, 4, 10, 7, 50, 10,
+        ],
+        "circle-color": "#22d3ee",
+        "circle-stroke-color": "#0e7490",
+        "circle-stroke-width": 1.2,
+        "circle-opacity": 0.92,
+      },
+    });
+    map.on("click", "springs-pt", (e) => {
+      const f = e.features && e.features[0];
+      if (!f) return;
+      const p = f.properties || {};
+      const name = p.complex_id || p.name || "spring complex";
+      const n = p.n_springs ? `<div class="muted-pop">${p.n_springs} member spring${p.n_springs === 1 ? "" : "s"}</div>` : "";
+      new maplibregl.Popup({ closeButton: true })
+        .setLngLat(e.lngLat)
+        .setHTML(`<div><strong>${name}</strong></div>${n}`)
+        .addTo(map);
+    });
+  }
+
+  // Existing licensed (pumping) bores — small grey dots.
+  if (md.pumping_bores && md.pumping_bores.features) {
+    map.addSource("pumping", { type: "geojson", data: md.pumping_bores });
+    map.addLayer({
+      id: "pumping-pt", type: "circle", source: "pumping",
+      paint: {
+        "circle-radius": 4,
+        "circle-color": "#1f2937",
+        "circle-stroke-color": "#f8fafc",
+        "circle-stroke-width": 1.1,
+        "circle-opacity": 0.88,
+      },
+    });
+    map.on("click", "pumping-pt", (e) => {
+      const f = e.features && e.features[0];
+      if (!f) return;
+      const p = f.properties || {};
+      const id = p.bore_id ? `<strong>${p.bore_id}</strong>` : "existing bore";
+      const rate = p.rate_m3_per_day != null
+        ? `<div class="muted-pop">${(p.rate_m3_per_day * 365 / 1000).toFixed(0)} ML/yr</div>`
+        : "";
+      new maplibregl.Popup({ closeButton: true })
+        .setLngLat(e.lngLat).setHTML(`<div>${id}</div>${rate}`)
+        .addTo(map);
+    });
+  }
+}
+
+function addWellMarkers(map) {
+  const wells = (STATE.info && STATE.info.wells) || [];
+  if (!wells.length && STATE.info && STATE.info.bore) {
+    // Legacy single-bore fallback.
+    new maplibregl.Marker({ color: "#f59e0b" })
+      .setLngLat([STATE.info.bore.lng, STATE.info.bore.lat])
+      .setPopup(new maplibregl.Popup().setHTML(
+        `<strong>${STATE.info.bore.bore_id}</strong><br/>${STATE.info.bore.rate_ML_per_year} ML/yr`
+      )).addTo(map);
+    return;
+  }
+  for (const w of wells) {
+    const isFrom = w.rate_ML_per_year < 0;
+    // Orange = new proposed extraction, sky-blue = trade source (reduction).
+    const colour = isFrom ? "#0284c7" : "#f59e0b";
+    const role   = isFrom ? "trade source" : "proposed extraction";
+    const label  = w.label || "bore";
+    const rate   = `${Math.abs(w.rate_ML_per_year).toFixed(0)} ML/yr`;
+    new maplibregl.Marker({ color: colour })
+      .setLngLat([w.lng, w.lat])
+      .setPopup(new maplibregl.Popup().setHTML(
+        `<strong>${label}</strong><br/>${role} · ${rate}`
+      )).addTo(map);
+  }
 }
 
 function updateOverlay(layer, year) {
