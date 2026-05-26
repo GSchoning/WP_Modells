@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GABORA Regulatory Advisor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.css" />
+<link rel="stylesheet" href="style.css?v=4" />
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">
+      <div class="logo">GABORA</div>
+      <div>
+        <h1>Regulatory Advisor</h1>
+        <div class="subtitle">Precipice Sandstone — water licence impact assessment</div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <a href="index.html" class="header-link" title="Back to aquifer selection">← Aquifers</a>
+      <a href="setup.html" target="_blank" rel="noopener" class="header-link" title="Show grid + boundaries">Model setup ↗</a>
+      <span id="status">loading…</span>
+    </div>
+  </header>
+
+  <div id="upper">
+    <section id="map-pane">
+      <div id="map"></div>
+      <div id="map-legend">
+        <div><span class="dot pumping"></span> existing licensed bore</div>
+        <div><span class="dot complex"></span> spring complex (sized by member count)</div>
+        <div><span class="dot exceed"></span> complex exceeding threshold</div>
+        <div><span class="dot proposed"></span> proposed bore (click map to place)</div>
+        <div class="muted">Threshold: <span id="threshold-display">0.40</span> m</div>
+      </div>
+    </section>
+
+    <aside id="controls">
+      <form id="scenario-form">
+        <fieldset id="scenario-type-fieldset">
+          <legend>Scenario type</legend>
+          <label class="seg"><input type="radio" name="scenario-type" value="single" checked /><span>Single bore</span></label>
+          <label class="seg"><input type="radio" name="scenario-type" value="multi" /><span>Multi bore</span></label>
+          <label class="seg"><input type="radio" name="scenario-type" value="trade" /><span>Trade</span></label>
+        </fieldset>
+
+        <div id="mode-single" class="mode-pane">
+          <h2>Proposed bore</h2>
+          <label>Bore ID
+            <input type="text" id="bore_id" value="PROPOSED_001" />
+          </label>
+          <label>Easting (m, project CRS)
+            <input type="number" id="x" step="any" />
+          </label>
+          <label>Northing (m, project CRS)
+            <input type="number" id="y" step="any" />
+          </label>
+          <label>Extraction rate (ML/year)
+            <input type="number" id="rate" step="any" min="0" value="1000" />
+          </label>
+          <p class="muted">Click anywhere on the map to set easting/northing.</p>
+        </div>
+
+        <div id="mode-multi" class="mode-pane" hidden>
+          <h2>Multiple bores</h2>
+          <p class="muted" style="margin-top:0">Click map to add a bore. Edit rate per row; ✕ removes.</p>
+          <div id="multi-wells-list"></div>
+          <label>Default rate (ML/year)
+            <input type="number" id="multi-default-rate" step="any" min="0" value="1000" />
+          </label>
+        </div>
+
+        <div id="mode-trade" class="mode-pane" hidden>
+          <h2>Trade an existing licence</h2>
+          <label>From bore (entitlement / ID)
+            <input type="text" id="trade-from" list="existing-bores-list" placeholder="search by ID" autocomplete="off" />
+            <datalist id="existing-bores-list"></datalist>
+          </label>
+          <div id="trade-from-info" class="muted" style="font-size:0.78rem"></div>
+          <p class="muted" style="margin-top:0">Click map to add a destination. Distribute the source rate across one or more destinations.</p>
+          <div id="trade-destinations-list"></div>
+          <div id="trade-balance" class="trade-balance"></div>
+        </div>
+
+        <label>Recharge multiplier
+          <input type="number" id="recharge_mult" step="0.1" min="0" max="10" value="1.0" />
+          <span class="muted" style="font-size:0.7rem">1.0 = calibrated; changing this re-runs the baseline (~5 min)</span>
+        </label>
+        <button type="submit" id="run-btn">Run scenario</button>
+        <p class="muted">A scenario takes ~5 minutes. Existing-bores baseline is cached.</p>
+      </form>
+    </aside>
+  </div>
+
+  <div id="splitter" title="Drag to resize"></div>
+
+  <section id="lower">
+    <div id="decision-panel">
+      <h2>Recommendation</h2>
+      <div id="decision-badge" class="pending">PENDING</div>
+      <div id="decision-detail">Run a scenario to see the recommendation.</div>
+      <div id="decision-meta"></div>
+      <div id="series-pane" hidden>
+        <h3 id="series-title">Drawdown over time</h3>
+        <svg id="series-chart" width="100%" height="180" preserveAspectRatio="none"></svg>
+        <div id="series-legend" class="series-legend"></div>
+      </div>
+    </div>
+
+    <div id="chart-pane">
+      <div id="summary-stats" class="empty">
+        <div class="stat ok"><div class="stat-num" id="stat-ok">—</div><div class="stat-label">under threshold</div></div>
+        <div class="stat triggered"><div class="stat-num" id="stat-triggered">—</div><div class="stat-label">triggered by proposal</div></div>
+        <div class="stat already"><div class="stat-num" id="stat-already">—</div><div class="stat-label">already exceeded</div></div>
+        <div class="stat total"><div class="stat-num" id="stat-total">—</div><div class="stat-label">total complexes</div></div>
+      </div>
+      <div id="chart-header">
+        <h2>Impact by spring complex</h2>
+        <span class="muted">stacked: existing (Scenario A) + proposed (Scenario C). Threshold dashed. Click a bar to focus on the map.</span>
+      </div>
+      <svg id="bars" width="100%" height="260" preserveAspectRatio="none"></svg>
+      <details id="table-details">
+        <summary>Show full table</summary>
+        <div id="results-tables"></div>
+      </details>
+    </div>
+  </section>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.js"></script>
+<script src="app.js?v=4"></script>
+</body>
+</html>

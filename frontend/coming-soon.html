@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GABORA — Coming soon</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
+<link rel="stylesheet" href="landing.css?v=1" />
+<style>
+  .empty-state {
+    background: var(--surface-1);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 2.4rem 2rem;
+    text-align: center;
+    max-width: 540px;
+    margin: 2rem auto;
+  }
+  .empty-state h2 { margin: 0 0 0.5rem; font-size: 1.3rem; }
+  .empty-state p { margin: 0.4rem 0; color: var(--ink-2); }
+  .empty-state a.back {
+    display: inline-block;
+    margin-top: 1.2rem;
+    padding: 0.55rem 1rem;
+    background: linear-gradient(135deg, #38bdf8, #2563eb);
+    color: #0b1220;
+    border-radius: 6px;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 0.85rem;
+  }
+  .empty-state .icon {
+    width: 64px; height: 64px; margin: 0 auto 0.8rem;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #38bdf833, #2563eb33);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.8rem;
+  }
+</style>
+</head>
+<body>
+<div id="page">
+  <header>
+    <div class="brand">
+      <div class="logo">GABORA</div>
+      <div>
+        <h1>Regulatory Advisor</h1>
+        <div class="subtitle">Great Artesian Basin — Water Plan aquifer assessment suite</div>
+      </div>
+    </div>
+  </header>
+
+  <section class="empty-state">
+    <div class="icon">🚧</div>
+    <h2 id="aquifer-name">This aquifer module</h2>
+    <p>is under development.</p>
+    <p class="muted">Calibration, receptor inventory, and superposition workflows for this aquifer are being built. The Precipice Sandstone module is operational and can be used as a reference.</p>
+    <a href="index.html" class="back">← Back to aquifer selection</a>
+  </section>
+</div>
+
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const aquifer = params.get("aquifer");
+  if (aquifer) {
+    document.getElementById("aquifer-name").textContent = `The ${aquifer} module`;
+    document.title = `GABORA — ${aquifer} (coming soon)`;
+  }
+</script>
+</body>
+</html>
