@@ -661,7 +661,10 @@ function renderSeriesChart(data) {
   const title = $("series-title");
   const legend = $("series-legend");
   if (!data || !data.times_years || !data.times_years.length) {
-    pane.hidden = true; return;
+    pane.hidden = true;
+    const tip = document.getElementById("series-tooltip");
+    if (tip) tip.style.display = "none";
+    return;
   }
   pane.hidden = false;
   const hasC = data.s_total_m != null;
@@ -776,6 +779,100 @@ function renderSeriesChart(data) {
   }
   legendHtml += `<span><span class="swatch-line" style="background:#dc2626"></span>threshold</span>`;
   legend.innerHTML = legendHtml;
+
+  // --- Interactivity: crosshair + tooltip ----------------------------------
+  const cross = make("g", {});
+  cross.style.pointerEvents = "none";
+  cross.style.display = "none";
+  const crossLine = make("line", {
+    x1: 0, x2: 0, y1: margin.top, y2: margin.top + innerH,
+    stroke: "#0f172a", "stroke-width": 1, "stroke-dasharray": "3,3",
+    opacity: 0.55,
+  });
+  cross.appendChild(crossLine);
+  const dotA = make("circle", { r: 3.5, fill: "#475569", stroke: "#fff", "stroke-width": 1.2, cx: -10, cy: -10 });
+  cross.appendChild(dotA);
+  let dotT = null;
+  if (hasC) {
+    dotT = make("circle", { r: 3.5, fill: totColor, stroke: "#fff", "stroke-width": 1.2, cx: -10, cy: -10 });
+    cross.appendChild(dotT);
+  }
+  svg.appendChild(cross);
+
+  // Invisible rect that captures mouse events over the plot area.
+  const overlay = make("rect", {
+    x: margin.left, y: margin.top, width: innerW, height: innerH,
+    fill: "transparent",
+  });
+  overlay.style.cursor = "crosshair";
+  svg.appendChild(overlay);
+
+  // Tooltip is an HTML element so we can use crisp un-stretched text.
+  // Reuse a single tooltip across renders.
+  let tip = document.getElementById("series-tooltip");
+  if (!tip) {
+    tip = document.createElement("div");
+    tip.id = "series-tooltip";
+    pane.appendChild(tip);
+  }
+  tip.style.display = "none";
+
+  const fmtYear = (t) =>
+    t < 1 ? `${(t * 365).toFixed(0)} days` :
+    t < 5 ? `${t.toFixed(2)} yr` :
+            `${Math.round(t)} yr`;
+
+  overlay.addEventListener("mousemove", (e) => {
+    const r = svg.getBoundingClientRect();
+    if (!r.width) return;
+    // viewBox-x at the cursor (W is the viewBox width).
+    const xv = (e.clientX - r.left) * (W / r.width);
+    const tFrac = Math.max(0, Math.min(1, (xv - margin.left) / innerW));
+    const tHover = tMin + tFrac * (tMax - tMin);
+    // Nearest sample.
+    let idx = 0, best = Infinity;
+    for (let i = 0; i < times.length; i++) {
+      const d = Math.abs(times[i] - tHover);
+      if (d < best) { best = d; idx = i; }
+    }
+    const cx = xScale(times[idx]);
+    crossLine.setAttribute("x1", cx);
+    crossLine.setAttribute("x2", cx);
+    dotA.setAttribute("cx", cx);
+    dotA.setAttribute("cy", yScale(seriesA[idx]));
+    if (dotT) {
+      dotT.setAttribute("cx", cx);
+      dotT.setAttribute("cy", yScale(seriesT[idx]));
+    }
+    cross.style.display = "";
+
+    // Tooltip position, in pane-relative pixels. Flip to the left of the
+    // crosshair if it would otherwise overflow the right edge of the pane.
+    const paneRect = pane.getBoundingClientRect();
+    const cxScreenX = r.left + (cx / W) * r.width;
+    const tipW = 160;
+    let tx = cxScreenX - paneRect.left + 12;
+    if (tx + tipW > paneRect.width) tx = cxScreenX - paneRect.left - tipW - 8;
+    if (tx < 4) tx = 4;
+    const ty = Math.max(4, e.clientY - paneRect.top - 18);
+    tip.style.left = `${tx}px`;
+    tip.style.top  = `${ty}px`;
+    let html = `<div class="tip-year">${fmtYear(times[idx])}</div>`;
+    html += `<div class="tip-row"><span class="swatch-line" style="background:#475569"></span>existing: <strong>${seriesA[idx].toFixed(3)} m</strong></div>`;
+    if (hasC) {
+      html += `<div class="tip-row"><span class="swatch-line" style="background:${totColor}"></span>total: <strong>${seriesT[idx].toFixed(3)} m</strong></div>`;
+      const delta = seriesT[idx] - seriesA[idx];
+      html += `<div class="tip-row tip-delta">proposal adds: <strong>${delta.toFixed(3)} m</strong></div>`;
+    }
+    const exceed = (hasC ? seriesT[idx] : seriesA[idx]) >= threshold;
+    html += `<div class="tip-thresh ${exceed ? "over" : ""}">threshold ${threshold.toFixed(2)} m${exceed ? " — exceeded" : ""}</div>`;
+    tip.innerHTML = html;
+    tip.style.display = "";
+  });
+  overlay.addEventListener("mouseleave", () => {
+    cross.style.display = "none";
+    tip.style.display = "none";
+  });
 }
 
 function renderDecision(result) {

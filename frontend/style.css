@@ -245,7 +245,28 @@ body.resizing, body.resizing * { cursor: row-resize !important; user-select: non
 #series-pane { padding: 0.6rem 0.75rem 0.5rem;
   background: var(--surface-1); border: 1px solid var(--line);
   border-radius: 8px; min-width: 0; min-height: 0;
-  display: flex; flex-direction: column; }
+  display: flex; flex-direction: column;
+  position: relative; /* anchor for the interactive tooltip */ }
+
+#series-tooltip {
+  position: absolute; z-index: 5; pointer-events: none;
+  background: rgba(15, 23, 42, 0.94); color: #f1f5f9;
+  padding: 0.4rem 0.55rem; border-radius: 6px;
+  font-size: 0.72rem; line-height: 1.45;
+  box-shadow: 0 4px 14px rgba(8,12,24,0.35);
+  border: 1px solid rgba(255,255,255,0.08);
+  min-width: 140px; max-width: 220px;
+}
+#series-tooltip .tip-year { font-weight: 700; margin-bottom: 0.2rem;
+  padding-bottom: 0.2rem; border-bottom: 1px solid rgba(255,255,255,0.12);
+  font-variant-numeric: tabular-nums; }
+#series-tooltip .tip-row { font-variant-numeric: tabular-nums; }
+#series-tooltip .tip-row .swatch-line { display: inline-block;
+  width: 12px; height: 2px; vertical-align: middle; margin-right: 4px; }
+#series-tooltip .tip-delta { color: #fcd34d; margin-top: 0.15rem; }
+#series-tooltip .tip-thresh { margin-top: 0.2rem; color: #94a3b8;
+  font-size: 0.66rem; letter-spacing: 0.02em; }
+#series-tooltip .tip-thresh.over { color: #fca5a5; font-weight: 600; }
 #series-pane h3 { font-size: 0.85rem; margin: 0 0 0.5rem;
   color: var(--ink-1); font-weight: 600; flex: 0 0 auto; }
 #series-chart { background: #fafafa; border-radius: 6px;
