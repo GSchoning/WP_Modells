@@ -13,8 +13,26 @@ const SAT_STYLE = {
       tileSize: 256,
       attribution: "Imagery © Esri, Maxar, Earthstar Geographics, USDA, USGS, IGN",
     },
+    // Transparent reference overlays: roads + town labels above the imagery.
+    roads: {
+      type: "raster",
+      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}"],
+      tileSize: 256,
+      attribution: "Reference © Esri",
+    },
+    places: {
+      type: "raster",
+      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
+      tileSize: 256,
+    },
   },
-  layers: [{ id: "sat", type: "raster", source: "sat" }],
+  layers: [
+    { id: "sat",    type: "raster", source: "sat" },
+    { id: "roads",  type: "raster", source: "roads",
+      paint: { "raster-opacity": 0.85 } },
+    { id: "places", type: "raster", source: "places",
+      paint: { "raster-opacity": 0.9 } },
+  ],
 };
 
 // Per-layer vector polygon configuration. Colours match the legend swatches
@@ -120,6 +138,10 @@ async function init() {
           .addTo(map);
       });
     }
+
+    // Keep road and town labels above the grid/outcrop polygon fills.
+    if (map.getLayer("roads"))  map.moveLayer("roads");
+    if (map.getLayer("places")) map.moveLayer("places");
   });
 
   // Wire layer toggles.

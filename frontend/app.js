@@ -90,8 +90,26 @@ async function init() {
         tileSize: 256,
         attribution: "Imagery © Esri, Maxar, Earthstar Geographics, USDA, USGS, IGN",
       },
+      // Transparent reference overlays: roads + town labels above the imagery.
+      roads: {
+        type: "raster",
+        tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}"],
+        tileSize: 256,
+        attribution: "Reference © Esri",
+      },
+      places: {
+        type: "raster",
+        tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
+        tileSize: 256,
+      },
     },
-    layers: [{ id: "sat", type: "raster", source: "sat" }],
+    layers: [
+      { id: "sat",    type: "raster", source: "sat" },
+      { id: "roads",  type: "raster", source: "roads",
+        paint: { "raster-opacity": 0.85 } },
+      { id: "places", type: "raster", source: "places",
+        paint: { "raster-opacity": 0.9 } },
+    ],
   };
   const map = new maplibregl.Map({
     container: "map",
@@ -298,6 +316,12 @@ function buildLayers(map, mapData) {
     if (features.length) return;
     placeProposed(map, e.lngLat.lng, e.lngLat.lat);
   });
+
+  // Pull road and town-label overlays back to the top so they stay
+  // legible above the formation / outcrop fills and the recoloured
+  // spring complexes.
+  if (map.getLayer("roads"))  map.moveLayer("roads");
+  if (map.getLayer("places")) map.moveLayer("places");
 
   setStatus(`ready — ${STATE.complexCount} spring complexes, click to place a bore`, "ok");
 }

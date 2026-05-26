@@ -13,8 +13,26 @@ const SAT_STYLE = {
       tileSize: 256,
       attribution: "Imagery © Esri, Maxar, Earthstar Geographics, USDA, USGS, IGN",
     },
+    // Transparent reference overlays: roads + town labels above the imagery.
+    roads: {
+      type: "raster",
+      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}"],
+      tileSize: 256,
+      attribution: "Reference © Esri",
+    },
+    places: {
+      type: "raster",
+      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
+      tileSize: 256,
+    },
   },
-  layers: [{ id: "sat", type: "raster", source: "sat" }],
+  layers: [
+    { id: "sat",    type: "raster", source: "sat" },
+    { id: "roads",  type: "raster", source: "roads",
+      paint: { "raster-opacity": 0.85 } },
+    { id: "places", type: "raster", source: "places",
+      paint: { "raster-opacity": 0.9 } },
+  ],
 };
 
 const STATE = {
@@ -102,10 +120,12 @@ function createMap(elementId, layer, year) {
       url: `/api/last-scenario/drawdown.png?layer=${layer}&year=${year}`,
       coordinates: STATE.info.image_corners_4326,
     });
+    // Insert the drawdown raster BELOW the roads/places labels so towns
+    // and major roads remain legible through the overlay.
     map.addLayer({
       id: "dd", type: "raster", source: "dd",
       paint: { "raster-opacity": STATE.opacity, "raster-fade-duration": 0 },
-    });
+    }, "roads");
 
     addContextLayers(map);
     addWellMarkers(map);
@@ -216,6 +236,11 @@ function addContextLayers(map) {
         .addTo(map);
     });
   }
+
+  // Pull roads + town labels above the context fills so they stay
+  // readable on top of the outcrop polygon.
+  if (map.getLayer("roads"))  map.moveLayer("roads");
+  if (map.getLayer("places")) map.moveLayer("places");
 }
 
 function addWellMarkers(map) {
