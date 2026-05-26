@@ -929,7 +929,7 @@ function renderDecision(result) {
     mh += `<div>(${pb.x.toFixed(0)}, ${pb.y.toFixed(0)}) · ${result.runtime_seconds.toFixed(1)}s</div>`;
   }
   if (result.theis) {
-    mh += `<div>Theis local T = ${result.theis.T_m2_per_day.toFixed(2)} m²/d, S = ${result.theis.S_dimensionless.toExponential(1)}</div>`;
+    mh += `<div>Theis (formation-avg) T = ${result.theis.T_m2_per_day.toFixed(2)} m²/d, S = ${result.theis.S_dimensionless.toExponential(1)}</div>`;
   }
   mh += `<div><a href="scenario.html" target="_blank" rel="noopener" class="detail-link">View drawdown maps →</a></div>`;
   meta.innerHTML = mh;
@@ -1272,7 +1272,7 @@ function renderTable(result) {
   html += "<th>complex</th>";
   html += "<th class=\"num\">existing (m)</th>";
   html += "<th class=\"num\">proposed (m)</th>";
-  if (hasTheis) html += "<th class=\"num\" title=\"Theis analytical estimate of proposed-bore drawdown\">Theis (m)</th>";
+  if (hasTheis) html += "<th class=\"num\" title=\"Theis analytical estimate of proposed-bore drawdown, using formation-averaged T (geometric mean) and S (arithmetic mean) over active cells\">Theis (m)</th>";
   html += "<th class=\"num\">total (m)</th>";
   html += "</tr></thead><tbody>";
 

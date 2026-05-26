@@ -44,7 +44,7 @@ from ..io_layer import Inputs, ML_PER_YEAR_TO_M3_PER_DAY, load_inputs
 from ..model_builder import active_boundary_chd_cells
 from ..scenarios import ScenarioResult, run_scenario, run_steady_state
 from ..superposition import combine_receptor_tables
-from ..theis import _local_T_S, theis_at_springs
+from ..theis import _local_T_S, formation_avg_T_S, theis_at_springs
 from . import cache as cache_mod
 from . import decisions as decisions_mod
 from .schemas import (
@@ -432,6 +432,16 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
         if spring_id_col not in state.inputs.springs.columns:
             spring_id_col = state.inputs.springs.columns[0]
         output_years_sorted = sorted(combined["time_years"].unique())
+        # Formation-averaged T/S: representative homogeneous-equivalent
+        # values across active cells. Using these (rather than the T/S
+        # at whichever cell the proposed bore lands on) keeps the Theis
+        # column comparable across scenarios and avoids the outlier
+        # behaviour when a bore happens to sit in a low-K cell.
+        try:
+            T_form, S_form = formation_avg_T_S(state.grid)
+        except ValueError:
+            T_form = S_form = None
+
         theis_merged = None
         for w in wells_dicts:
             rate_m3d = float(w["rate_ML_per_year"]) * ML_PER_YEAR_TO_M3_PER_DAY
@@ -441,6 +451,7 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
                     float(w["x"]), float(w["y"]), rate_m3d,
                     output_years=output_years_sorted,
                     complex_col=complex_col if complex_col in state.inputs.springs.columns else None,
+                    T=T_form, S=S_form,
                 )
             except ValueError:
                 continue
@@ -466,12 +477,15 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
                 theis_merged.rename(columns={"r_m_first": "r_m"}),
                 on=["receptor_id", "time_years"], how="left",
             )
-        # Local T/S at the first positive-rate well for the diagnostics line.
-        if positive:
+        # Diagnostic T/S = formation-averaged values used for the Theis
+        # column. `well_cell` still reports the first positive-rate well's
+        # grid cell for traceability.
+        if positive and T_form is not None and S_form is not None:
             rc = cell_of(state.grid, float(positive[0]["x"]), float(positive[0]["y"]))
-            if rc is not None:
-                T, S = _local_T_S(state.grid, rc[0], rc[1])
-                theis_diag = TheisDiagnostics(T_m2_per_day=T, S_dimensionless=S, well_cell=[rc[0], rc[1]])
+            well_cell = [rc[0], rc[1]] if rc is not None else [-1, -1]
+            theis_diag = TheisDiagnostics(
+                T_m2_per_day=T_form, S_dimensionless=S_form, well_cell=well_cell,
+            )
 
     threshold = state.cfg.assessment.regulatory_threshold_m
     year_results = _df_to_year_results(combined, threshold)
