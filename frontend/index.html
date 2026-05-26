@@ -7,7 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
-<link rel="stylesheet" href="landing.css?v=2" />
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.css" />
+<link rel="stylesheet" href="landing.css?v=3" />
 </head>
 <body>
 <!-- Animated water background -->
@@ -67,13 +68,27 @@
   <section id="selector-pane" hidden>
     <div class="intro">
       <h2>Select an aquifer to assess</h2>
-      <p class="muted">Each aquifer has its own calibrated groundwater model. Choose the formation whose licence application you're assessing.</p>
+      <p class="muted">Each polygon below is a GABORA water-plan aquifer subarea. Click one to open its assessment module. Currently only the Precipice Sandstone (Surat) has a calibrated model — every other polygon takes you to the coming-soon page.</p>
     </div>
-    <div class="aquifer-grid" id="aquifer-grid"></div>
-    <p class="footer-note muted">GABORA v0.1 — proof of concept. Only the Precipice Sandstone module is currently operational.</p>
+    <div id="aquifer-pane">
+      <div id="aquifer-map"></div>
+      <aside id="aquifer-list-panel">
+        <div class="list-header">
+          <h3>Aquifers</h3>
+          <input type="search" id="aquifer-search" placeholder="search by label or basin…" autocomplete="off" />
+        </div>
+        <div id="aquifer-list"></div>
+        <div class="legend">
+          <span><span class="dot ready"></span>ready</span>
+          <span><span class="dot soon"></span>coming soon</span>
+        </div>
+      </aside>
+    </div>
+    <p class="footer-note muted">GABORA v0.1 — proof of concept. Only the Precipice Sandstone (Surat) module is currently operational.</p>
   </section>
 </div>
 
-<script src="landing.js?v=1"></script>
+<script src="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.js"></script>
+<script src="landing.js?v=2"></script>
 </body>
 </html>

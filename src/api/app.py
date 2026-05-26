@@ -83,6 +83,7 @@ class _State:
     last_wells_run: list[dict] | None = None          # full change set echoed back
     setup_geojson: dict | None = None                 # layer -> FeatureCollection
     decisions_path: Path | None = None                # JSON store for the audit trail
+    aquifers_geojson: dict | None = None              # GeoJSON FC of GABORA units/subareas
 
 
 state = _State()
@@ -203,6 +204,7 @@ async def lifespan(app: FastAPI):
         state.inputs.springs, state.cfg.assessment.spring_complex_col,
     )
     state.setup_geojson = _build_setup_geojson()
+    state.aquifers_geojson = _build_aquifers_geojson()
     yield
 
 
@@ -972,6 +974,62 @@ def _cells_to_geojson(mask: np.ndarray) -> dict:
     return {"type": "FeatureCollection", "features": features}
 
 
+# GAB aquifer subareas (53 polygons in Data/Aquifers/GABORA_units_subareas.shp).
+# Currently only this label routes to a runnable assessment; everything else
+# falls back to coming-soon.html with the LABEL as a query string.
+AQUIFER_SHAPEFILE = Path("Data/Aquifers/GABORA_units_subareas.shp")
+READY_AQUIFER_LABELS: set[str] = {"Surat Precipice"}
+
+
+def _build_aquifers_geojson() -> dict | None:
+    """Read the GABORA units/subareas shapefile and return it as a GeoJSON
+    FeatureCollection in EPSG:4326. Polygons are simplified to ~100 m so the
+    landing-page payload is small while still rendering well at QLD scale.
+
+    Returns None if the file is missing — the landing page falls back to
+    the static aquifer list it used to show.
+    """
+    if not AQUIFER_SHAPEFILE.exists():
+        import sys
+        print(f"[aquifers] shapefile not found at {AQUIFER_SHAPEFILE}", file=sys.stderr)
+        return None
+    try:
+        import geopandas as gpd
+        from shapely.geometry import mapping as shapely_mapping
+        gdf = gpd.read_file(AQUIFER_SHAPEFILE)
+    except Exception as e:
+        import sys
+        print(f"[aquifers] failed to read shapefile: {e}", file=sys.stderr)
+        return None
+
+    gdf = gdf.to_crs("EPSG:4326")
+    # Simplify in degrees: ~0.001° ≈ 100 m. Preserves topology at this zoom.
+    gdf["geometry"] = gdf.geometry.simplify(0.001, preserve_topology=True)
+
+    from urllib.parse import quote as urlquote
+    features = []
+    for _, row in gdf.iterrows():
+        label = str(row.get("LABEL", "")).strip()
+        ready = label in READY_AQUIFER_LABELS
+        # Precipice (ready) routes into the runnable module; everything
+        # else goes to the coming-soon page with the label preserved.
+        href = "precipice.html" if ready else f"coming-soon.html?aquifer={urlquote(label)}"
+        features.append({
+            "type": "Feature",
+            "geometry": shapely_mapping(row.geometry),
+            "properties": {
+                "label": label,
+                "unit": str(row.get("UNIT", "")).strip(),
+                "subarea": str(row.get("SUBAREA", "")).strip(),
+                "basin": str(row.get("BASIN", "")).strip(),
+                "status_zone": str(row.get("STATUS", "")).strip(),
+                "ready": ready,
+                "href": href,
+            },
+        })
+    return {"type": "FeatureCollection", "features": features}
+
+
 def _build_setup_geojson() -> dict:
     return {
         "active":  _cells_to_geojson(state.grid.idomain[0] == 1),
@@ -1038,6 +1096,19 @@ def model_setup_info():
         },
         "recharge_multiplier": state.cfg.assessment.recharge_multiplier,
     })
+
+
+@app.get("/api/aquifers")
+def aquifers_geojson():
+    """GABORA units/subareas as a GeoJSON FeatureCollection in EPSG:4326.
+
+    Powers the clickable aquifer map on the landing page. Each feature
+    carries `label`, `unit`, `subarea`, `basin`, `status_zone`, `ready`
+    (bool) and `href` (where a click should navigate).
+    """
+    if state.aquifers_geojson is None:
+        raise HTTPException(503, "Aquifers data not available")
+    return JSONResponse(state.aquifers_geojson)
 
 
 @app.get("/api/model-setup/{layer}.geojson")
