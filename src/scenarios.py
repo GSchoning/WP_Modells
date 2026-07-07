@@ -30,6 +30,16 @@ class ScenarioResult:
     drawdown_at_output_years: dict[float, np.ndarray]  # year -> (nrow, ncol)
     receptors_df: pd.DataFrame        # tidy (receptor_id, time_years, drawdown_m)
     complex_series_df: pd.DataFrame   # (complex_id, time_days, drawdown_m) — every timestep
+    heads_nopump: np.ndarray | None = None   # twin-run heads, reusable across scenarios
+    # QA metrics ----------------------------------------------------------
+    # Worst volumetric-budget percent discrepancy across both MF6 runs.
+    max_pct_discrepancy: float = 0.0
+    # Max final-time drawdown at boundary cells. CHD cells absorb drawdown
+    # (under-predicts impact near the boundary); no-flow edges reflect it
+    # (over-predicts). Either being non-trivial means the boundary is
+    # influencing the answer and the result needs a caveat.
+    chd_max_drawdown_m: float = 0.0
+    noflow_max_drawdown_m: float = 0.0
 
 
 def _bores_to_wells(
@@ -74,6 +84,91 @@ def _times_to_output_years(times_days: np.ndarray, output_years: list[float]) ->
     """Map each requested output year to the index of the closest sim time."""
     targets = np.array(output_years) * YEAR_DAYS
     return {float(y): int(np.argmin(np.abs(times_days - t))) for y, t in zip(output_years, targets)}
+
+
+def build_perioddata(cfg: Config) -> list[tuple[float, int, float]]:
+    """Stress periods whose ends land exactly on every output year.
+
+    MF6 always ends a timestep at a stress-period boundary, so making each
+    output year a period boundary guarantees the sampled heads are at
+    exactly t = 10/50/100 yr — not at whichever geometric step happens to
+    fall nearest (with tsmult=1.2 late steps are 9–15 yr wide, so nearest
+    could be several years off the labelled time).
+
+    Layout: [0, fine] in annual steps (if fine_period_years > 0), then one
+    geometric block per inter-output-year interval, with cfg.time.nstp
+    steps distributed across the blocks proportionally to their duration.
+    """
+    total = float(cfg.time.total_years)
+    fine = float(int(cfg.time.fine_period_years or 0))
+    fine = min(max(fine, 0.0), total)
+
+    bounds = sorted({float(y) for y in cfg.time.output_years if 0 < y <= total} | {total})
+    if fine > 0:
+        bounds = sorted(set(bounds) | {fine})
+
+    perioddata: list[tuple[float, int, float]] = []
+    t0 = 0.0
+    coarse_total = total - fine
+    for t1 in bounds:
+        length_yr = t1 - t0
+        if length_yr <= 0:
+            continue
+        if t1 <= fine:
+            # Annual steps through the fine period.
+            perioddata.append((length_yr * YEAR_DAYS, max(1, int(round(length_yr))), 1.0))
+        else:
+            share = length_yr / coarse_total if coarse_total > 0 else 1.0
+            nstp = max(4, int(round(cfg.time.nstp * share)))
+            perioddata.append((length_yr * YEAR_DAYS, nstp, cfg.time.tsmult))
+        t0 = t1
+    return perioddata
+
+
+def _max_percent_discrepancy(workspace: Path, name: str) -> float:
+    """Worst |PERCENT DISCREPANCY| from the MF6 listing file's budgets.
+
+    Returns 0.0 if the listing file is missing or contains no budget block
+    (never blocks a result on a parsing problem — this is a QA metric).
+    """
+    import re
+
+    lst = Path(workspace) / f"{name}.lst"
+    if not lst.exists():
+        return 0.0
+    worst = 0.0
+    pattern = re.compile(r"PERCENT DISCREPANCY\s*=\s*(-?\d+(?:\.\d+)?)")
+    try:
+        with open(lst, errors="ignore") as f:
+            for line in f:
+                m = pattern.search(line)
+                if m:
+                    worst = max(worst, abs(float(m.group(1))))
+    except OSError:
+        return 0.0
+    return worst
+
+
+def _boundary_drawdown_stats(
+    drawdown_final: np.ndarray, grid: Grid, chd_cells
+) -> tuple[float, float]:
+    """(max drawdown at CHD cells, max at no-flow active-boundary cells)."""
+    active = grid.idomain[0] == 1
+    padded = np.pad(active, 1, constant_values=False)
+    has_inactive_neighbour = (
+        ~padded[:-2, 1:-1] | ~padded[2:, 1:-1]
+        | ~padded[1:-1, :-2] | ~padded[1:-1, 2:]
+    )
+    boundary = active & has_inactive_neighbour
+
+    chd_mask = np.zeros_like(boundary)
+    for (_l, r, c, _h) in (chd_cells or []):
+        chd_mask[r, c] = True
+    noflow_mask = boundary & ~chd_mask
+
+    chd_max = float(np.max(drawdown_final[chd_mask])) if chd_mask.any() else 0.0
+    noflow_max = float(np.max(drawdown_final[noflow_mask])) if noflow_mask.any() else 0.0
+    return chd_max, noflow_max
 
 
 def _pick_id_column(gdf: gpd.GeoDataFrame, candidates: tuple[str, ...]) -> str:
@@ -135,6 +230,7 @@ def run_scenario(
     *,
     chd_cells=None,
     proposed_wells: list[tuple[float, float, float]] | None = None,
+    nopump_twin: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> ScenarioResult:
     """Run Scenario A (existing) or C (change set vs baseline) and sample receptors.
 
@@ -145,6 +241,11 @@ def run_scenario(
     to MF6 as WEL records with the sign flipped (MF6 takes extraction as
     negative q). If `proposed_wells` is None, falls back to the single
     cfg.inputs.proposed_bore for backward compat.
+
+    `nopump_twin`: optional precomputed (times_days, heads) from a previous
+    scenario's no-pump run. The twin is identical for every scenario (same
+    IC, recharge, CHD, and time discretisation), so passing it here skips
+    one of the two MF6 runs — halving the wall-clock of a request.
     """
     if scenario == "A":
         wells, _accepted, _rejected = _bores_to_wells(inputs.pumping_bores, grid)
@@ -169,17 +270,8 @@ def run_scenario(
     else:
         raise ValueError(f"unknown scenario: {scenario}")
 
-    # Stress periods: optional yearly-step fine period + geometric remainder.
-    fine_years = int(cfg.time.fine_period_years or 0)
-    if 0 < fine_years < cfg.time.total_years:
-        perioddata = [
-            (fine_years * YEAR_DAYS, fine_years, 1.0),
-            ((cfg.time.total_years - fine_years) * YEAR_DAYS,
-             cfg.time.nstp, cfg.time.tsmult),
-        ]
-    else:
-        perioddata = [(cfg.time.total_years * YEAR_DAYS,
-                       cfg.time.nstp, cfg.time.tsmult)]
+    # Stress periods end exactly on every output year (see build_perioddata).
+    perioddata = build_perioddata(cfg)
 
     name = f"scen_{scenario}"
     # Twin-run drawdown: run the same model with and without wells, and
@@ -205,28 +297,35 @@ def run_scenario(
     if not success:
         raise RuntimeError(f"scenario {scenario} pump run failed; check listing file in workspace")
 
-    sim_nopump = build_transient(
-        grid,
-        workspace / "nopump",
-        name=name,
-        wells=[],
-        initial_head=initial_head,
-        perioddata=perioddata,
-        chd_cells=chd_cells,
-        recharge=True,
-        complexity=cfg.solver.complexity,
-        recharge_multiplier=cfg.assessment.recharge_multiplier,
-    )
-    sim_nopump.write_simulation(silent=True)
-    success, _ = sim_nopump.run_simulation(silent=False)
-    if not success:
-        raise RuntimeError(f"scenario {scenario} no-pump twin failed; check listing file in workspace")
-
     times_days, heads = _read_heads(workspace / "pump", name)
-    _, heads_nopump = _read_heads(workspace / "nopump", name)
+    pct_disc = _max_percent_discrepancy(workspace / "pump", name)
+
+    if nopump_twin is not None and len(nopump_twin[0]) == len(times_days):
+        heads_nopump = nopump_twin[1]
+    else:
+        sim_nopump = build_transient(
+            grid,
+            workspace / "nopump",
+            name=name,
+            wells=[],
+            initial_head=initial_head,
+            perioddata=perioddata,
+            chd_cells=chd_cells,
+            recharge=True,
+            complexity=cfg.solver.complexity,
+            recharge_multiplier=cfg.assessment.recharge_multiplier,
+        )
+        sim_nopump.write_simulation(silent=True)
+        success, _ = sim_nopump.run_simulation(silent=False)
+        if not success:
+            raise RuntimeError(f"scenario {scenario} no-pump twin failed; check listing file in workspace")
+        _, heads_nopump = _read_heads(workspace / "nopump", name)
+        pct_disc = max(pct_disc, _max_percent_discrepancy(workspace / "nopump", name))
+
     drawdown = heads_nopump - heads                           # (nt, nrow, ncol)
     year_idx = _times_to_output_years(times_days, cfg.time.output_years)
     drawdown_by_year = {y: drawdown[i] for y, i in year_idx.items()}
+    chd_max_dd, noflow_max_dd = _boundary_drawdown_stats(drawdown[-1], grid, chd_cells)
 
     # Sample drawdown at every member spring, then aggregate to complex
     # taking the max — the regulatory unit of analysis is the complex,
@@ -282,6 +381,10 @@ def run_scenario(
         drawdown_at_output_years=drawdown_by_year,
         receptors_df=receptors_df,
         complex_series_df=complex_series_df,
+        heads_nopump=heads_nopump,
+        max_pct_discrepancy=pct_disc,
+        chd_max_drawdown_m=chd_max_dd,
+        noflow_max_drawdown_m=noflow_max_dd,
     )
 
 

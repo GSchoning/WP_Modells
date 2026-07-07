@@ -29,6 +29,8 @@ services:
       - "8000:8000"
     volumes:
       - ./frontend:/app/frontend
+      # Decision audit trail — durable runtime data, survives redeploys.
+      - ./var:/app/var
 
   notebook:
     extends:

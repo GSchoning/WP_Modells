@@ -93,6 +93,21 @@ class TheisDiagnostics(BaseModel):
     well_cell: list[int]                 # [row, col]
 
 
+class ScenarioQA(BaseModel):
+    """Model-quality metrics for the run, surfaced for regulatory defensibility.
+
+    boundary_warning is set when the proposed change produces non-trivial
+    drawdown at the model boundary — CHD cells absorb drawdown (impact is
+    then under-predicted near them), no-flow edges reflect it (over-
+    predicted). Either way the number needs a caveat.
+    """
+    max_pct_discrepancy: float = 0.0                  # worst MF6 budget imbalance (%)
+    chd_max_drawdown_m: float = 0.0
+    noflow_max_drawdown_m: float = 0.0
+    boundary_warning: bool = False
+    mass_balance_warning: bool = False
+
+
 class ScenarioResponse(BaseModel):
     scenario_type: Literal["single", "multi", "trade"] = "single"
     # The well change set actually run (echoed back so the UI can label markers).
@@ -108,6 +123,20 @@ class ScenarioResponse(BaseModel):
     n_already_exceeded_any_year: int = 0              # was already over without proposal
     runtime_seconds: float
     theis: TheisDiagnostics | None = None
+    qa: ScenarioQA | None = None
+    # Traceability: config/input hashes, baseline cache key, mf6 version.
+    provenance: dict[str, str] | None = None
+    job_id: str | None = None
+
+
+class ScenarioJobStatus(BaseModel):
+    """Envelope returned by POST /api/scenarios and the job-polling endpoint."""
+    job_id: str
+    status: Literal["queued", "running", "done", "error"]
+    progress: str = ""
+    created_at: str
+    result: ScenarioResponse | None = None            # populated when status == done
+    error: str | None = None                          # populated when status == error
 
 
 class BaselineResponse(BaseModel):

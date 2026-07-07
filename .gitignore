@@ -33,3 +33,8 @@ mf6_workspaces/
 # OS
 .DS_Store
 Thumbs.db
+
+# Runtime data — decision audit trail lives here. Not committed, but
+# unlike outputs/ it must be treated as durable: mount it as a volume
+# in Docker and include it in backups.
+var/

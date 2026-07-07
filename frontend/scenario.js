@@ -4,36 +4,12 @@
 
 const $ = (id) => document.getElementById(id);
 
-const SAT_STYLE = {
-  version: 8,
-  sources: {
-    sat: {
-      type: "raster",
-      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-      tileSize: 256,
-      attribution: "Imagery © Esri, Maxar, Earthstar Geographics, USDA, USGS, IGN",
-    },
-    // Transparent reference overlays: roads + town labels above the imagery.
-    roads: {
-      type: "raster",
-      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}"],
-      tileSize: 256,
-      attribution: "Reference © Esri",
-    },
-    places: {
-      type: "raster",
-      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
-      tileSize: 256,
-    },
-  },
-  layers: [
-    { id: "sat",    type: "raster", source: "sat" },
-    { id: "roads",  type: "raster", source: "roads",
-      paint: { "raster-opacity": 0.85 } },
-    { id: "places", type: "raster", source: "places",
-      paint: { "raster-opacity": 0.9 } },
-  ],
-};
+const SAT_STYLE = GABORA.makeSatStyle({ roads: true, places: true });
+
+// Optional ?job=<id> pins this page to a specific scenario run, so two
+// regulators viewing maps concurrently each see their own result.
+const JOB_ID = new URLSearchParams(window.location.search).get("job");
+const jobQS = () => (JOB_ID ? `&job=${encodeURIComponent(JOB_ID)}` : "");
 
 const STATE = {
   info: null,
@@ -46,7 +22,7 @@ async function init() {
   let info, mapData;
   try {
     [info, mapData] = await Promise.all([
-      fetch("/api/last-scenario/info").then((r) => r.json()),
+      fetch(`/api/last-scenario/info${JOB_ID ? `?job=${encodeURIComponent(JOB_ID)}` : ""}`).then((r) => r.json()),
       fetch("/api/map-data").then((r) => r.json()),
     ]);
   } catch (e) {
@@ -71,7 +47,7 @@ async function init() {
       : `${proposed.length} bores · ${totalRate.toFixed(0)} ML/yr total`;
   } else {
     meta.textContent =
-      `${info.bore.bore_id} · ${info.bore.rate_ML_per_year} ML/yr · ` +
+      `${info.bore.bore_id} · ${info.bore.rate_ML_per_year} ML/yr · ` +   // textContent — no escaping needed
       `(${info.bore.x.toFixed(0)}, ${info.bore.y.toFixed(0)})`;
   }
 
@@ -117,7 +93,7 @@ function createMap(elementId, layer, year) {
   map.on("load", () => {
     map.addSource("dd", {
       type: "image",
-      url: `/api/last-scenario/drawdown.png?layer=${layer}&year=${year}`,
+      url: `/api/last-scenario/drawdown.png?layer=${layer}&year=${year}${jobQS()}`,
       coordinates: STATE.info.image_corners_4326,
     });
     // Insert the drawdown raster BELOW the roads/places labels so towns
@@ -135,7 +111,7 @@ function createMap(elementId, layer, year) {
     // the cell drawdown.
     map.on("click", async (e) => {
       const yr = $("year-select").value;
-      const url = `/api/last-scenario/drawdown/sample?lng=${e.lngLat.lng}&lat=${e.lngLat.lat}&layer=${layer}&year=${yr}`;
+      const url = `/api/last-scenario/drawdown/sample?lng=${e.lngLat.lng}&lat=${e.lngLat.lat}&layer=${layer}&year=${yr}${jobQS()}`;
       let resp;
       try { resp = await fetch(url); } catch { return; }
       if (!resp.ok) return;
@@ -201,7 +177,7 @@ function addContextLayers(map) {
       const f = e.features && e.features[0];
       if (!f) return;
       const p = f.properties || {};
-      const name = p.complex_id || p.name || "spring complex";
+      const name = GABORA.escapeHtml(p.complex_id || p.name || "spring complex");
       const n = p.n_springs ? `<div class="muted-pop">${p.n_springs} member spring${p.n_springs === 1 ? "" : "s"}</div>` : "";
       new maplibregl.Popup({ closeButton: true })
         .setLngLat(e.lngLat)
@@ -227,7 +203,7 @@ function addContextLayers(map) {
       const f = e.features && e.features[0];
       if (!f) return;
       const p = f.properties || {};
-      const id = p.bore_id ? `<strong>${p.bore_id}</strong>` : "existing bore";
+      const id = p.bore_id ? `<strong>${GABORA.escapeHtml(p.bore_id)}</strong>` : "existing bore";
       const rate = p.rate_m3_per_day != null
         ? `<div class="muted-pop">${(p.rate_m3_per_day * 365 / 1000).toFixed(0)} ML/yr</div>`
         : "";
@@ -239,8 +215,7 @@ function addContextLayers(map) {
 
   // Pull roads + town labels above the context fills so they stay
   // readable on top of the outcrop polygon.
-  if (map.getLayer("roads"))  map.moveLayer("roads");
-  if (map.getLayer("places")) map.moveLayer("places");
+  GABORA.raiseReferenceLayers(map);
 }
 
 function addWellMarkers(map) {
@@ -250,7 +225,7 @@ function addWellMarkers(map) {
     new maplibregl.Marker({ color: "#f59e0b" })
       .setLngLat([STATE.info.bore.lng, STATE.info.bore.lat])
       .setPopup(new maplibregl.Popup().setHTML(
-        `<strong>${STATE.info.bore.bore_id}</strong><br/>${STATE.info.bore.rate_ML_per_year} ML/yr`
+        `<strong>${GABORA.escapeHtml(STATE.info.bore.bore_id)}</strong><br/>${STATE.info.bore.rate_ML_per_year} ML/yr`
       )).addTo(map);
     return;
   }
@@ -259,7 +234,7 @@ function addWellMarkers(map) {
     // Orange = new proposed extraction, sky-blue = trade source (reduction).
     const colour = isFrom ? "#0284c7" : "#f59e0b";
     const role   = isFrom ? "trade source" : "proposed extraction";
-    const label  = w.label || "bore";
+    const label  = GABORA.escapeHtml(w.label || "bore");
     const rate   = `${Math.abs(w.rate_ML_per_year).toFixed(0)} ML/yr`;
     new maplibregl.Marker({ color: colour })
       .setLngLat([w.lng, w.lat])
@@ -273,7 +248,7 @@ function updateOverlay(layer, year) {
   const map = STATE.maps[layer];
   if (!map || !map.getSource("dd")) return;
   map.getSource("dd").updateImage({
-    url: `/api/last-scenario/drawdown.png?layer=${layer}&year=${year}`,
+    url: `/api/last-scenario/drawdown.png?layer=${layer}&year=${year}${jobQS()}`,
     coordinates: STATE.info.image_corners_4326,
   });
 }

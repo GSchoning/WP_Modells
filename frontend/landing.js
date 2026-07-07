@@ -84,28 +84,7 @@ function renderFallback() {
 }
 
 function buildMap(geojson) {
-  const style = {
-    version: 8,
-    sources: {
-      sat: {
-        type: "raster",
-        tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-        tileSize: 256,
-        attribution: "Imagery © Esri, Maxar, Earthstar Geographics",
-      },
-      places: {
-        type: "raster",
-        tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
-        tileSize: 256,
-        attribution: "Reference © Esri",
-      },
-    },
-    layers: [
-      { id: "sat",    type: "raster", source: "sat" },
-      { id: "places", type: "raster", source: "places",
-        paint: { "raster-opacity": 0.85 } },
-    ],
-  };
+  const style = GABORA.makeSatStyle({ roads: false, places: true });
 
   const map = new maplibregl.Map({
     container: "aquifer-map",
@@ -173,9 +152,9 @@ function buildMap(geojson) {
         ? `<a href="${p.href}" style="color:#86efac;font-weight:600;text-decoration:none">Open Precipice module →</a>`
         : `<a href="${p.href}" style="color:#cbd5e1;text-decoration:none">View status →</a>`;
       const html =
-        `<div><strong>${p.label}</strong></div>` +
+        `<div><strong>${GABORA.escapeHtml(p.label)}</strong></div>` +
         `<div style="color:#cbd5e1;font-size:0.72rem;margin-top:2px">
-           ${p.unit || ""}${p.unit && p.basin ? " · " : ""}${p.basin || ""}
+           ${GABORA.escapeHtml(p.unit || "")}${p.unit && p.basin ? " · " : ""}${GABORA.escapeHtml(p.basin || "")}
          </div>` +
         `<div style="margin-top:0.45rem">${cta}</div>`;
       new maplibregl.Popup({ closeButton: true })
@@ -236,7 +215,7 @@ function renderList(filterText) {
       const status = p.ready ? "ready" : "soon";
       html += `<div class="aquifer-item ${cls}" data-label="${escapeAttr(p.label)}" data-href="${escapeAttr(p.href)}">
         <span class="dot ${cls}"></span>
-        <span class="label-text">${p.label}</span>
+        <span class="label-text">${GABORA.escapeHtml(p.label)}</span>
         <span class="badge-mini ${cls}">${status}</span>
       </div>`;
     }
@@ -285,8 +264,8 @@ function flyToLabel(label) {
     new maplibregl.Popup({ closeButton: true })
       .setLngLat(center)
       .setHTML(
-        `<div><strong>${p.label}</strong></div>` +
-        `<div style="color:#cbd5e1;font-size:0.72rem;margin-top:2px">${p.unit || ""}${p.unit && p.basin ? " · " : ""}${p.basin || ""}</div>` +
+        `<div><strong>${GABORA.escapeHtml(p.label)}</strong></div>` +
+        `<div style="color:#cbd5e1;font-size:0.72rem;margin-top:2px">${GABORA.escapeHtml(p.unit || "")}${p.unit && p.basin ? " · " : ""}${GABORA.escapeHtml(p.basin || "")}</div>` +
         `<div style="margin-top:0.45rem">${cta}</div>`)
       .addTo(STATE.map);
   }

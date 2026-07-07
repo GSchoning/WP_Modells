@@ -26,8 +26,9 @@ CACHE_DIR = Path("outputs/cache")
 # etc.). v2 = per-complex aggregation with n_springs column. v3 =
 # boundary CHD excludes outcrop cells. v4 = chd_quadrants. v5 = yearly
 # fine-period stress block (fine_period_years). v6 = per-complex time
-# series persisted alongside output-year aggregates.
-CACHE_SCHEMA_VERSION = "v6"
+# series persisted alongside output-year aggregates. v7 = stress periods
+# aligned to output years + cached no-pump twin heads.
+CACHE_SCHEMA_VERSION = "v7"
 
 
 @dataclass
@@ -36,6 +37,10 @@ class BaselineCache:
     receptors_df: pd.DataFrame                          # tidy springs table
     drawdown_by_year: dict[float, np.ndarray]           # for raster overlays
     complex_series_df: pd.DataFrame                      # long-form per-complex series
+    # No-pump twin run, identical for every scenario with this config.
+    # Persisting it means Scenario C requests only run MF6 once.
+    nopump_times_days: np.ndarray | None = None
+    nopump_heads: np.ndarray | None = None              # (nt, nrow, ncol)
 
 
 def _file_sha256(path: Path) -> str:
@@ -63,32 +68,38 @@ def baseline_key(cfg: Config, config_path: Path) -> str:
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 
-def cache_paths(key: str) -> tuple[Path, Path, Path, Path]:
+def cache_paths(key: str) -> tuple[Path, Path, Path, Path, Path]:
     base = CACHE_DIR / key
     return (
         base / "receptors.parquet",
         base / "drawdown_by_year.npz",
         base / "manifest.json",
         base / "complex_series.parquet",
+        base / "nopump.npz",
     )
 
 
 def load(key: str) -> BaselineCache | None:
-    receptors_p, drawdown_p, manifest_p, series_p = cache_paths(key)
+    receptors_p, drawdown_p, manifest_p, series_p, nopump_p = cache_paths(key)
     if not (receptors_p.exists() and drawdown_p.exists() and manifest_p.exists() and series_p.exists()):
         return None
     receptors = pd.read_parquet(receptors_p)
     npz = np.load(drawdown_p)
     drawdown = {float(name.removeprefix("y")): npz[name] for name in npz.files}
     series = pd.read_parquet(series_p)
+    nopump_times = nopump_heads = None
+    if nopump_p.exists():
+        nz = np.load(nopump_p)
+        nopump_times, nopump_heads = nz["times_days"], nz["heads"]
     return BaselineCache(
         key=key, receptors_df=receptors, drawdown_by_year=drawdown,
         complex_series_df=series,
+        nopump_times_days=nopump_times, nopump_heads=nopump_heads,
     )
 
 
 def save(cache: BaselineCache, cfg: Config, config_path: Path) -> None:
-    receptors_p, drawdown_p, manifest_p, series_p = cache_paths(cache.key)
+    receptors_p, drawdown_p, manifest_p, series_p, nopump_p = cache_paths(cache.key)
     receptors_p.parent.mkdir(parents=True, exist_ok=True)
     cache.receptors_df.to_parquet(receptors_p)
     cache.complex_series_df.to_parquet(series_p)
@@ -96,6 +107,14 @@ def save(cache: BaselineCache, cfg: Config, config_path: Path) -> None:
         drawdown_p,
         **{f"y{y}": arr for y, arr in cache.drawdown_by_year.items()},
     )
+    if cache.nopump_times_days is not None and cache.nopump_heads is not None:
+        # float32 halves the file; drawdown differences at receptor scale
+        # are well above float32 resolution (~1e-7 of head magnitude).
+        np.savez_compressed(
+            nopump_p,
+            times_days=cache.nopump_times_days,
+            heads=cache.nopump_heads.astype(np.float32),
+        )
     manifest = {
         "key": cache.key,
         "config_path": str(config_path),

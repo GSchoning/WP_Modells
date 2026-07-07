@@ -4,36 +4,7 @@
 
 const $ = (id) => document.getElementById(id);
 
-const SAT_STYLE = {
-  version: 8,
-  sources: {
-    sat: {
-      type: "raster",
-      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-      tileSize: 256,
-      attribution: "Imagery © Esri, Maxar, Earthstar Geographics, USDA, USGS, IGN",
-    },
-    // Transparent reference overlays: roads + town labels above the imagery.
-    roads: {
-      type: "raster",
-      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}"],
-      tileSize: 256,
-      attribution: "Reference © Esri",
-    },
-    places: {
-      type: "raster",
-      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
-      tileSize: 256,
-    },
-  },
-  layers: [
-    { id: "sat",    type: "raster", source: "sat" },
-    { id: "roads",  type: "raster", source: "roads",
-      paint: { "raster-opacity": 0.85 } },
-    { id: "places", type: "raster", source: "places",
-      paint: { "raster-opacity": 0.9 } },
-  ],
-};
+const SAT_STYLE = GABORA.makeSatStyle({ roads: true, places: true });
 
 // Per-layer vector polygon configuration. Colours match the legend swatches
 // in setup.css. Each layer renders the cell-square polygons fetched from
@@ -134,14 +105,13 @@ async function init() {
       map.on("click", "complexes", (e) => {
         const p = e.features[0].properties || {};
         new maplibregl.Popup().setLngLat(e.lngLat)
-          .setHTML(`<strong>${p.complex_id}</strong><br/>${p.n_springs} member springs`)
+          .setHTML(`<strong>${GABORA.escapeHtml(p.complex_id)}</strong><br/>${Number(p.n_springs) || 1} member springs`)
           .addTo(map);
       });
     }
 
     // Keep road and town labels above the grid/outcrop polygon fills.
-    if (map.getLayer("roads"))  map.moveLayer("roads");
-    if (map.getLayer("places")) map.moveLayer("places");
+    GABORA.raiseReferenceLayers(map);
 
     // Calibrated-field overlays (K and Ss): fetched lazily the first time
     // the regulator toggles them on. PNG raster overlays on the same

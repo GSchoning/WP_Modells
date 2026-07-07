@@ -145,14 +145,22 @@ def run(
         ic_head = np.full_like(grid.top, mean_top)
 
     results = {}
+    nopump_twin = None
     for scen in cfg.run.scenarios:
         typer.echo(f"\nRunning Scenario {scen}…")
         try:
             results[scen] = run_scenario(
                 cfg, grid, inputs, scen, ic_head, workspace_root / f"scen_{scen}",
                 chd_cells=chd_cells,
+                nopump_twin=nopump_twin,
             )
+            # The no-pump twin is scenario-independent — reuse it so the
+            # remaining scenarios only run MF6 once each.
+            if nopump_twin is None and results[scen].heads_nopump is not None:
+                nopump_twin = (results[scen].times_days, results[scen].heads_nopump)
             typer.echo(f"  done; {len(results[scen].times_days)} time steps saved.")
+            if results[scen].max_pct_discrepancy >= 1.0:
+                typer.echo(f"  WARNING: mass-balance discrepancy {results[scen].max_pct_discrepancy:.2f}%")
             recv_csv = out_dir / f"scenario_{scen}_springs.csv"
             results[scen].receptors_df.to_csv(recv_csv, index=False)
             n_springs = results[scen].receptors_df["receptor_id"].nunique() if len(results[scen].receptors_df) else 0

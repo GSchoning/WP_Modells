@@ -20,6 +20,7 @@ const STATE = {
   complexCount: 0,
   map: null,
   lastResult: null,
+  lastJobId: null,        // job id of the last completed scenario run
   complexLngLat: {},      // complex_id -> [lng, lat] for fly-to
   selectedComplexId: null,
   scenarioType: "single", // "single" | "multi" | "trade"
@@ -81,39 +82,9 @@ async function init() {
   STATE.complexCount = mapData.spring_complexes?.features?.length ?? 0;
   $("threshold-display").textContent = STATE.threshold.toFixed(2);
 
-  const satelliteStyle = {
-    version: 8,
-    sources: {
-      sat: {
-        type: "raster",
-        tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-        tileSize: 256,
-        attribution: "Imagery © Esri, Maxar, Earthstar Geographics, USDA, USGS, IGN",
-      },
-      // Transparent reference overlays: roads + town labels above the imagery.
-      roads: {
-        type: "raster",
-        tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}"],
-        tileSize: 256,
-        attribution: "Reference © Esri",
-      },
-      places: {
-        type: "raster",
-        tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
-        tileSize: 256,
-      },
-    },
-    layers: [
-      { id: "sat",    type: "raster", source: "sat" },
-      { id: "roads",  type: "raster", source: "roads",
-        paint: { "raster-opacity": 0.85 } },
-      { id: "places", type: "raster", source: "places",
-        paint: { "raster-opacity": 0.9 } },
-    ],
-  };
   const map = new maplibregl.Map({
     container: "map",
-    style: satelliteStyle,
+    style: GABORA.makeSatStyle({ roads: true, places: true }),
     bounds: mapData.bbox_4326,
     fitBoundsOptions: { padding: 30 },
   });
@@ -290,8 +261,8 @@ function buildLayers(map, mapData) {
       const flag = exceed ? `<div style="color:#dc2626;font-weight:600">⚠ exceeds ${STATE.threshold} m</div>` : "";
       new maplibregl.Popup()
         .setLngLat(e.lngLat)
-        .setHTML(`<strong>${p.complex_id}</strong><br/>
-          ${p.n_springs} spring${p.n_springs == 1 ? "" : "s"}<br/>
+        .setHTML(`<strong>${GABORA.escapeHtml(p.complex_id)}</strong><br/>
+          ${Number(p.n_springs) || 1} spring${p.n_springs == 1 ? "" : "s"}<br/>
           s_total = ${fmt(Number(p.s_total) || 0)} m
           ${flag}`)
         .addTo(map);
@@ -583,32 +554,61 @@ async function runScenario(map) {
   }
 
   $("run-btn").disabled = true;
-  $("run-btn").textContent = "Running… (~5 min)";
-  setStatus("running scenario C…");
+  $("run-btn").textContent = "Submitting…";
+  setStatus("submitting scenario…");
   const t0 = performance.now();
-  let resp;
+
+  const fail = (msg) => {
+    setStatus(msg, "error");
+    $("run-btn").disabled = false;
+    $("run-btn").textContent = "Run scenario";
+  };
+
+  // Submit as a background job, then poll. The server serialises MF6 runs,
+  // so a busy model shows as "queued" rather than a hung request.
+  let job;
   try {
-    resp = await fetch("/api/scenarios", {
+    const resp = await fetch("/api/scenarios", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+    if (!resp.ok) return fail(`scenario rejected: ${await resp.text()}`);
+    job = await resp.json();
   } catch (err) {
-    setStatus("network error", "error");
-    $("run-btn").disabled = false;
-    $("run-btn").textContent = "Run scenario";
-    return;
+    return fail("network error");
   }
-  if (!resp.ok) {
-    const msg = await resp.text();
-    setStatus(`scenario failed: ${msg}`, "error");
-    $("run-btn").disabled = false;
-    $("run-btn").textContent = "Run scenario";
-    return;
+
+  const POLL_MS = 4000;
+  let result = null;
+  while (true) {
+    await new Promise((r) => setTimeout(r, POLL_MS));
+    let status;
+    try {
+      const resp = await fetch(`/api/scenarios/jobs/${encodeURIComponent(job.job_id)}`);
+      if (!resp.ok) return fail(`job lookup failed: HTTP ${resp.status}`);
+      status = await resp.json();
+    } catch (err) {
+      continue;                       // transient network blip — keep polling
+    }
+    const mins = ((performance.now() - t0) / 60000).toFixed(1);
+    if (status.status === "queued") {
+      $("run-btn").textContent = `Queued… (${mins} min)`;
+      setStatus("queued behind another scenario run");
+    } else if (status.status === "running") {
+      $("run-btn").textContent = `Running… (${mins} min)`;
+      setStatus(`running: ${status.progress || "MODFLOW 6"}`);
+    } else if (status.status === "error") {
+      return fail(`scenario failed: ${status.error}`);
+    } else if (status.status === "done") {
+      result = status.result;
+      break;
+    }
   }
-  const result = await resp.json();
+
   const dt = ((performance.now() - t0) / 1000).toFixed(1);
   STATE.lastResult = result;
+  STATE.lastJobId = result.job_id || job.job_id;
   setStatus(`done in ${dt}s`, result.n_exceedances_any_year > 0 ? "error" : "ok");
   $("run-btn").disabled = false;
   $("run-btn").textContent = "Run scenario";
@@ -641,7 +641,7 @@ function selectComplex(id) {
   const lngLat = STATE.complexLngLat[id];
   if (lngLat && STATE.map) {
     STATE.map.flyTo({ center: lngLat, zoom: Math.max(STATE.map.getZoom(), 9), speed: 1.4 });
-    let popupHtml = `<strong>${id}</strong>`;
+    let popupHtml = `<strong>${GABORA.escapeHtml(id)}</strong>`;
     if (STATE.lastResult) {
       const lastYear = Math.max(...STATE.lastResult.output_years);
       const yr = STATE.lastResult.by_year.find(y => y.time_years === lastYear);
@@ -677,7 +677,8 @@ function selectComplex(id) {
 async function loadAndRenderSeries(complexId) {
   let data;
   try {
-    const resp = await fetch(`/api/spring-series?complex_id=${encodeURIComponent(complexId)}`);
+    const jobParam = STATE.lastJobId ? `&job=${encodeURIComponent(STATE.lastJobId)}` : "";
+    const resp = await fetch(`/api/spring-series?complex_id=${encodeURIComponent(complexId)}${jobParam}`);
     if (!resp.ok) return;
     data = await resp.json();
   } catch (err) {
@@ -700,8 +701,27 @@ function renderSeriesChart(data) {
   }
   pane.hidden = false;
   const hasC = data.s_total_m != null;
-  title.innerHTML = `Drawdown over time · <strong>${data.complex_id}</strong>` +
-    (data.n_springs ? ` <span class="muted">(${data.n_springs} spring${data.n_springs === 1 ? "" : "s"})</span>` : "");
+
+  // First time the total series crosses the threshold — linearly
+  // interpolated between the bracketing timesteps for a readable year.
+  const thresholdForCross = data.threshold_m ?? 0.4;
+  const crossSeries = hasC ? data.s_total_m : data.s_approved_m;
+  let crossingText = "";
+  const iCross = crossSeries.findIndex((v) => v >= thresholdForCross);
+  if (iCross === 0) {
+    crossingText = `<span class="crossing over">exceeds ${thresholdForCross.toFixed(2)} m from the first timestep</span>`;
+  } else if (iCross > 0) {
+    const t0c = data.times_years[iCross - 1], t1c = data.times_years[iCross];
+    const v0 = crossSeries[iCross - 1], v1 = crossSeries[iCross];
+    const tX = t0c + (thresholdForCross - v0) / (v1 - v0 || 1) * (t1c - t0c);
+    crossingText = `<span class="crossing over">crosses ${thresholdForCross.toFixed(2)} m at ~${tX < 3 ? tX.toFixed(1) : Math.round(tX)} yr</span>`;
+  } else {
+    crossingText = `<span class="crossing under">stays under ${thresholdForCross.toFixed(2)} m</span>`;
+  }
+
+  title.innerHTML = `Drawdown over time · <strong>${GABORA.escapeHtml(data.complex_id)}</strong>` +
+    (data.n_springs ? ` <span class="muted">(${data.n_springs} spring${data.n_springs === 1 ? "" : "s"})</span>` : "") +
+    ` · ${crossingText}`;
 
   const W = svg.clientWidth || svg.parentElement.clientWidth;
   // Height comes from the CSS-laid-out SVG so it matches the table's
@@ -949,13 +969,32 @@ function renderDecision(result) {
     mh += `<div class="muted">runtime ${result.runtime_seconds.toFixed(1)}s</div>`;
   } else if (result.proposed_bore) {
     const pb = result.proposed_bore;
-    mh += `<div><strong>${pb.bore_id}</strong> · ${pb.rate_ML_per_year} ML/yr</div>`;
+    mh += `<div><strong>${GABORA.escapeHtml(pb.bore_id)}</strong> · ${pb.rate_ML_per_year} ML/yr</div>`;
     mh += `<div>(${pb.x.toFixed(0)}, ${pb.y.toFixed(0)}) · ${result.runtime_seconds.toFixed(1)}s</div>`;
   }
   if (result.theis) {
     mh += `<div>Theis (formation-avg) T = ${result.theis.T_m2_per_day.toFixed(2)} m²/d, S = ${result.theis.S_dimensionless.toExponential(1)}</div>`;
   }
-  mh += `<div><a href="scenario.html" target="_blank" rel="noopener" class="detail-link">View drawdown maps →</a></div>`;
+
+  // QA flags from the solver — surfaced so a questionable run can't
+  // silently look authoritative.
+  if (result.qa) {
+    if (result.qa.boundary_warning) {
+      const worst = Math.max(result.qa.chd_max_drawdown_m, result.qa.noflow_max_drawdown_m);
+      mh += `<div class="advisory">⚠ Boundary effect: the proposal produces up to ${worst.toFixed(2)} m of drawdown at the model boundary. Impacts near the domain edge may be under- or over-stated — treat results with caution.</div>`;
+    }
+    if (result.qa.mass_balance_warning) {
+      mh += `<div class="advisory">⚠ Mass balance: MF6 budget discrepancy ${result.qa.max_pct_discrepancy.toFixed(2)}% exceeds 1% — solver convergence is questionable for this run.</div>`;
+    }
+  }
+  // Provenance line: which config/data/binary produced this number.
+  if (result.provenance) {
+    const p = result.provenance;
+    mh += `<div class="muted" style="font-size:0.68rem;margin-top:0.3rem" title="config ${GABORA.escapeHtml(p.config_sha256)} · properties ${GABORA.escapeHtml(p.properties_sha256)} · water use ${GABORA.escapeHtml(p.water_use_sha256)}">` +
+      `run ${GABORA.escapeHtml(result.job_id || "")} · baseline ${GABORA.escapeHtml(p.baseline_cache_key || "")} · ${GABORA.escapeHtml(p.mf6_version || "")}</div>`;
+  }
+  const jobParam = result.job_id ? `?job=${encodeURIComponent(result.job_id)}` : "";
+  mh += `<div><a href="scenario.html${jobParam}" target="_blank" rel="noopener" class="detail-link">View drawdown maps →</a></div>`;
   meta.innerHTML = mh;
 
   // Show the approve/reject controls now that a scenario is on screen.
@@ -1104,15 +1143,15 @@ function renderHistory(data) {
         : "";
     html += `<div class="history-row ${statusClass}${isHead ? " head" : ""}">
       <div class="history-row-top">
-        <span class="hist-id">${d.id}</span>
+        <span class="hist-id">${GABORA.escapeHtml(d.id)}</span>
         <span class="hist-status ${statusClass}">${statusLabel}</span>
       </div>
-      <div class="hist-title">${title}</div>
+      <div class="hist-title">${GABORA.escapeHtml(title)}</div>
       <div class="hist-meta">
         ${totalAdd.toFixed(0)} ML/yr · ${summary.n_triggered_any_year || 0} triggered · ${summary.n_already_exceeded_any_year || 0} already-exceeded
       </div>
       <div class="hist-foot">
-        <span class="muted">${when} · ${d.regulator}</span>
+        <span class="muted">${when} · ${GABORA.escapeHtml(d.regulator)}</span>
         ${rollbackBtn}
       </div>
     </div>`;
@@ -1304,8 +1343,9 @@ function renderTable(result) {
     const rowClass = c.triggered_by_proposed ? "triggered-row"
                     : c.already_exceeded ? "already-row" : "";
     const cls = rowClass ? ` class="${rowClass}"` : "";
-    html += `<tr${cls} data-id="${c.complex_id}">`;
-    html += `<td>${c.complex_id}</td>`;
+    const safeId = GABORA.escapeHtml(c.complex_id);
+    html += `<tr${cls} data-id="${safeId}">`;
+    html += `<td>${safeId}</td>`;
     html += `<td class="num">${fmt(c.s_approved_m)}</td>`;
     html += `<td class="num">${fmt(c.s_additional_m)}</td>`;
     if (hasTheis) html += `<td class="num">${fmt(c.s_additional_theis_m)}</td>`;
@@ -1313,10 +1353,47 @@ function renderTable(result) {
     html += `</tr>`;
   }
   html += "</tbody></table>";
-  $("results-tables").innerHTML = html;
+  $("results-tables").innerHTML =
+    `<button type="button" id="csv-export-btn" class="csv-btn">Download CSV (all years)</button>` + html;
   $("results-tables").querySelectorAll("tbody tr").forEach(tr => {
     tr.addEventListener("click", () => selectComplex(tr.getAttribute("data-id")));
   });
+  $("csv-export-btn").addEventListener("click", () => exportResultCsv(result));
+}
+
+function exportResultCsv(result) {
+  // Every complex × output year, all three reporting layers + flags —
+  // the machine-readable version of what the regulator signs off on.
+  const rows = [[
+    "complex_id", "n_springs", "time_years",
+    "s_approved_m", "s_additional_m", "s_total_m", "s_additional_theis_m",
+    "exceeds_threshold", "already_exceeded", "triggered_by_proposed",
+  ]];
+  for (const yr of result.by_year) {
+    for (const c of yr.complexes) {
+      rows.push([
+        c.complex_id, c.n_springs, yr.time_years,
+        c.s_approved_m, c.s_additional_m, c.s_total_m,
+        c.s_additional_theis_m ?? "",
+        c.exceeds_threshold, c.already_exceeded, c.triggered_by_proposed,
+      ]);
+    }
+  }
+  const csv = rows.map((r) =>
+    r.map((v) => {
+      const s = String(v ?? "");
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }).join(","),
+  ).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  const jobPart = result.job_id ? `_${result.job_id}` : "";
+  a.download = `impact_assessment${jobPart}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
 }
 
 // --- Session persistence -------------------------------------------------
@@ -1340,6 +1417,7 @@ function saveSessionState() {
     tradeFrom: STATE.tradeFrom ? { bore_id: STATE.tradeFrom.bore_id } : null,
     tradeDestinations: STATE.tradeDestinations || [],
     lastResult: STATE.lastResult,
+    lastJobId: STATE.lastJobId || null,
     selectedComplexId: STATE.selectedComplexId || null,
   };
   try {
@@ -1395,6 +1473,7 @@ async function restoreSessionState(map) {
 
   // 3. Replay the result rendering.
   STATE.lastResult = saved.lastResult;
+  STATE.lastJobId = saved.lastJobId || saved.lastResult.job_id || null;
   STATE.selectedComplexId = saved.selectedComplexId || null;
   renderDecision(STATE.lastResult);
   renderSummaryStats(STATE.lastResult);

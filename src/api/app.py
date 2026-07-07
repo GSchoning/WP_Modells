@@ -22,8 +22,13 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
+import threading
 import time
+import uuid
+from collections import OrderedDict
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 import geopandas as gpd
@@ -44,7 +49,7 @@ from ..io_layer import Inputs, ML_PER_YEAR_TO_M3_PER_DAY, load_inputs
 from ..model_builder import active_boundary_chd_cells
 from ..scenarios import ScenarioResult, run_scenario, run_steady_state
 from ..superposition import combine_receptor_tables
-from ..theis import _local_T_S, formation_avg_T_S, theis_at_springs
+from ..theis import formation_avg_T_S, theis_at_springs
 from . import cache as cache_mod
 from . import decisions as decisions_mod
 from .schemas import (
@@ -58,12 +63,42 @@ from .schemas import (
     ProposedBore,
     RecordDecisionRequest,
     RollbackRequest,
+    ScenarioJobStatus,
+    ScenarioQA,
     ScenarioRequest,
     ScenarioResponse,
     TheisDiagnostics,
     WellSpec,
     YearResults,
 )
+
+# QA thresholds. Budget imbalance above 1% or boundary drawdown above 5 cm
+# flags the result; these are warnings, not blocks — the regulator sees them.
+MASS_BALANCE_WARN_PCT = 1.0
+BOUNDARY_WARN_M = 0.05
+
+# How many completed scenario runs to keep in memory for the drawdown-maps
+# page. Two regulators iterating concurrently stay well within this.
+SCENARIO_STORE_MAX = 8
+
+
+class _ScenarioJob:
+    """In-memory job record for a background scenario run."""
+
+    def __init__(self, job_id: str, req: ScenarioRequest):
+        self.id = job_id
+        self.req = req
+        self.status: str = "queued"
+        self.progress: str = "waiting for a model slot"
+        self.created_at: str = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        self.result: ScenarioResponse | None = None
+        self.error: str | None = None
+
+    def to_status(self) -> ScenarioJobStatus:
+        return ScenarioJobStatus(
+            job_id=self.id, status=self.status, progress=self.progress,
+            created_at=self.created_at, result=self.result, error=self.error,
+        )
 
 
 class _State:
@@ -76,17 +111,40 @@ class _State:
     workspace_root: Path | None = None
     baseline: cache_mod.BaselineCache | None = None
     complex_centroids_4326: dict | None = None      # GeoJSON FeatureCollection
-    # Last Scenario C run, retained for the drawdown-maps page.
-    last_proposed_bore: dict | None = None
-    last_c_drawdown_by_year: dict | None = None      # year -> (nrow, ncol)
-    last_c_series_df: pd.DataFrame | None = None     # per-complex time series
-    last_wells_run: list[dict] | None = None          # full change set echoed back
     setup_geojson: dict | None = None                 # layer -> FeatureCollection
-    decisions_path: Path | None = None                # JSON store for the audit trail
+    decisions_path: Path | None = None                # append-only audit-trail store
     aquifers_geojson: dict | None = None              # GeoJSON FC of GABORA units/subareas
+    provenance: dict | None = None                    # config/input hashes + mf6 version
+
+    def __init__(self):
+        # Job registry for background scenario runs. run_lock serialises
+        # MF6 executions (one at a time); jobs queue behind it.
+        self.jobs: dict[str, _ScenarioJob] = {}
+        self.jobs_lock = threading.Lock()
+        self.run_lock = threading.Lock()
+        # Completed runs keyed by job id, for the drawdown-maps page.
+        # OrderedDict as LRU: oldest evicted past SCENARIO_STORE_MAX.
+        self.scenario_store: OrderedDict[str, dict] = OrderedDict()
 
 
 state = _State()
+
+
+def _store_scenario(job_id: str, entry: dict) -> None:
+    with state.jobs_lock:
+        state.scenario_store[job_id] = entry
+        while len(state.scenario_store) > SCENARIO_STORE_MAX:
+            state.scenario_store.popitem(last=False)
+
+
+def _get_scenario(job_id: str | None) -> dict | None:
+    """Entry for `job_id`, or the most recently completed run if None."""
+    with state.jobs_lock:
+        if job_id is not None:
+            return state.scenario_store.get(job_id)
+        if state.scenario_store:
+            return next(reversed(state.scenario_store.values()))
+    return None
 
 
 def _build_complex_centroids(springs: gpd.GeoDataFrame, complex_col: str) -> dict:
@@ -132,6 +190,8 @@ def _bootstrap_baseline(force: bool = False) -> cache_mod.BaselineCache:
         receptors_df=result.receptors_df.copy(),
         drawdown_by_year=result.drawdown_at_output_years,
         complex_series_df=result.complex_series_df.copy(),
+        nopump_times_days=result.times_days,
+        nopump_heads=result.heads_nopump,
     )
     cache_mod.save(cache, state.cfg, state.config_path)
     return cache
@@ -184,6 +244,32 @@ def _bootstrap_ic() -> None:
     state.chd_cells = chd_unfiltered
 
 
+def _mf6_version() -> str:
+    try:
+        out = subprocess.run(
+            ["mf6", "--version"], capture_output=True, text=True, timeout=15,
+        ).stdout
+        for line in out.splitlines():
+            if "mf6" in line.lower() or "version" in line.lower():
+                return line.strip()
+        return out.strip().splitlines()[0] if out.strip() else "unknown"
+    except (OSError, subprocess.TimeoutExpired, IndexError):
+        return "unknown"
+
+
+def _build_provenance() -> dict:
+    """Traceability bundle: what code/config/data produced these numbers."""
+    cfg = state.cfg
+    return {
+        "config_sha256": cache_mod._file_sha256(state.config_path)[:16],
+        "properties_sha256": cache_mod._file_sha256(Path(cfg.inputs.properties_csv))[:16],
+        "water_use_sha256": cache_mod._file_sha256(Path(cfg.inputs.water_use.path))[:16],
+        "baseline_cache_key": cache_mod.baseline_key(cfg, state.config_path),
+        "cache_schema": cache_mod.CACHE_SCHEMA_VERSION,
+        "mf6_version": _mf6_version(),
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config_path = Path(os.environ.get("PRECIPICE_CONFIG", "config.yaml"))
@@ -196,7 +282,10 @@ async def lifespan(app: FastAPI):
     )
     state.workspace_root = Path(state.cfg.run.workspace_root)
     state.workspace_root.mkdir(parents=True, exist_ok=True)
-    state.decisions_path = Path("outputs") / "decisions.json"
+    # Audit trail lives under var/ — a dedicated runtime-data directory,
+    # NOT outputs/ (which is treated as disposable by cleanups/redeploys).
+    state.decisions_path = Path("var") / "decision_events.jsonl"
+    state.provenance = _build_provenance()
 
     _bootstrap_ic()
     state.baseline = _bootstrap_baseline()
@@ -388,11 +477,15 @@ def _build_wells_from_request(req: ScenarioRequest) -> list[dict]:
     raise HTTPException(400, f"unknown scenario_type: {req.scenario_type}")
 
 
-@app.post("/api/scenarios", response_model=ScenarioResponse)
-def scenarios(req: ScenarioRequest) -> ScenarioResponse:
-    if state.baseline is None:
-        raise HTTPException(503, "Baseline not ready")
+def _execute_scenario(
+    req: ScenarioRequest, job_id: str, progress=lambda msg: None,
+) -> ScenarioResponse:
+    """Run Scenario C for `req` and assemble the full response.
 
+    Called from a job worker thread (holding state.run_lock). Raises
+    ValueError for bad requests and RuntimeError for solver failures —
+    the job wrapper maps those onto the job's error state.
+    """
     wells_dicts = _build_wells_from_request(req)
     proposed_wells_xy_rate = [(w["x"], w["y"], w["rate_ML_per_year"]) for w in wells_dicts]
 
@@ -401,6 +494,7 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
     # cached A baseline are tied to the multiplier, so the cache key
     # automatically picks the right slot or computes fresh if missing.
     if req.recharge_multiplier != state.cfg.assessment.recharge_multiplier:
+        progress("re-baselining for recharge multiplier")
         state.cfg.assessment.recharge_multiplier = req.recharge_multiplier
         _bootstrap_ic()
         state.baseline = _bootstrap_baseline()
@@ -408,32 +502,40 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
     t0 = time.time()
     label_safe = "".join(c if c.isalnum() else "_" for c in (wells_dicts[0]["label"] or "scen_C"))[:40]
     workspace = state.workspace_root / f"scen_C_{label_safe}"
-    try:
-        c_result = run_scenario(
-            state.cfg, state.grid, state.inputs, "C",
-            state.ic_head, workspace, chd_cells=state.chd_cells,
-            proposed_wells=proposed_wells_xy_rate,
-        )
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-    except RuntimeError as exc:
-        raise HTTPException(500, str(exc))
-    runtime = time.time() - t0
 
-    # Retain Scenario C grids for the drawdown-maps page. wells_run carries
-    # the resolved change set (for trade this is +at-new and -at-old).
-    state.last_wells_run = wells_dicts
-    state.last_c_drawdown_by_year = c_result.drawdown_at_output_years
-    state.last_c_series_df = c_result.complex_series_df.copy()
-    # Back-compat slot for the drawdown-maps page: first positive-rate well.
+    # Reuse the cached no-pump twin — identical for every scenario with
+    # this config, so each request only pays for one MF6 run.
+    nopump_twin = None
+    if state.baseline.nopump_times_days is not None and state.baseline.nopump_heads is not None:
+        nopump_twin = (state.baseline.nopump_times_days, state.baseline.nopump_heads)
+
+    progress("running MODFLOW 6")
+    c_result = run_scenario(
+        state.cfg, state.grid, state.inputs, "C",
+        state.ic_head, workspace, chd_cells=state.chd_cells,
+        proposed_wells=proposed_wells_xy_rate,
+        nopump_twin=nopump_twin,
+    )
+    runtime = time.time() - t0
+    progress("sampling receptors")
+
+    # Retain Scenario C grids for the drawdown-maps page, keyed by job so
+    # concurrent regulators don't clobber each other's results.
     positive = [w for w in wells_dicts if w["rate_ML_per_year"] > 0]
+    proposed_bore_entry = None
     if positive:
         first = positive[0]
-        state.last_proposed_bore = {
+        proposed_bore_entry = {
             "bore_id": first["label"],
             "x": first["x"], "y": first["y"],
             "rate_ML_per_year": first["rate_ML_per_year"],
         }
+    _store_scenario(job_id, {
+        "wells_run": wells_dicts,
+        "c_drawdown_by_year": c_result.drawdown_at_output_years,
+        "c_series_df": c_result.complex_series_df.copy(),
+        "proposed_bore": proposed_bore_entry,
+    })
 
     combined = combine_receptor_tables(
         state.baseline.receptors_df,
@@ -527,6 +629,17 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
             rate_ML_per_year=p["rate_ML_per_year"],
         )
 
+    qa = ScenarioQA(
+        max_pct_discrepancy=c_result.max_pct_discrepancy,
+        chd_max_drawdown_m=c_result.chd_max_drawdown_m,
+        noflow_max_drawdown_m=c_result.noflow_max_drawdown_m,
+        boundary_warning=(
+            max(c_result.chd_max_drawdown_m, c_result.noflow_max_drawdown_m)
+            >= BOUNDARY_WARN_M
+        ),
+        mass_balance_warning=c_result.max_pct_discrepancy >= MASS_BALANCE_WARN_PCT,
+    )
+
     return ScenarioResponse(
         scenario_type=req.scenario_type,
         wells_run=[WellSpec(**w) for w in wells_dicts],
@@ -540,7 +653,59 @@ def scenarios(req: ScenarioRequest) -> ScenarioResponse:
         n_already_exceeded_any_year=len(already_ids),
         runtime_seconds=runtime,
         theis=theis_diag,
+        qa=qa,
+        provenance=state.provenance,
+        job_id=job_id,
     )
+
+
+def _run_job(job: _ScenarioJob) -> None:
+    """Worker-thread entry: serialise MF6 runs behind run_lock."""
+    def progress(msg: str) -> None:
+        job.progress = msg
+
+    with state.run_lock:
+        job.status = "running"
+        job.progress = "starting"
+        try:
+            job.result = _execute_scenario(job.req, job.id, progress)
+            job.status = "done"
+            job.progress = "complete"
+        except ValueError as exc:            # bad request (e.g. bore off-domain)
+            job.status = "error"
+            job.error = str(exc)
+        except Exception as exc:             # solver failure or bug — surface it
+            job.status = "error"
+            job.error = f"{type(exc).__name__}: {exc}"
+
+
+@app.post("/api/scenarios", response_model=ScenarioJobStatus, status_code=202)
+def submit_scenario(req: ScenarioRequest) -> ScenarioJobStatus:
+    """Queue a scenario run and return immediately with a job id.
+
+    Poll GET /api/scenarios/jobs/{job_id} for progress; `result` is the
+    full ScenarioResponse once status == "done".
+    """
+    if state.baseline is None:
+        raise HTTPException(503, "Baseline not ready")
+    # Validate the change set eagerly so an obviously-bad request fails
+    # now with a 400 rather than minutes later inside the job.
+    _build_wells_from_request(req)
+
+    job = _ScenarioJob(uuid.uuid4().hex[:12], req)
+    with state.jobs_lock:
+        state.jobs[job.id] = job
+    threading.Thread(target=_run_job, args=(job,), daemon=True).start()
+    return job.to_status()
+
+
+@app.get("/api/scenarios/jobs/{job_id}", response_model=ScenarioJobStatus)
+def scenario_job_status(job_id: str) -> ScenarioJobStatus:
+    with state.jobs_lock:
+        job = state.jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"unknown job id: {job_id}")
+    return job.to_status()
 
 
 @app.get("/api/existing-bores", response_model=ExistingBoresResponse)
@@ -633,14 +798,15 @@ def rollback_decision(decision_id: str, req: RollbackRequest) -> DecisionsRespon
 
 
 @app.get("/api/spring-series")
-def spring_series(complex_id: str | None = None):
+def spring_series(complex_id: str | None = None, job: str | None = None):
     """Per-complex drawdown time series across every model timestep."""
     if state.baseline is None or state.baseline.complex_series_df is None:
         raise HTTPException(503, "Baseline not ready")
     base = state.baseline.complex_series_df
+    entry = _get_scenario(job)
 
     if complex_id is None:
-        live = state.last_c_series_df
+        live = entry["c_series_df"] if entry else None
         ranked = (base.groupby("complex_id")["drawdown_m"].max().rename("peak_s_approved_m"))
         out = ranked.reset_index().to_dict("records")
         if live is not None and len(live):
@@ -674,7 +840,7 @@ def spring_series(complex_id: str | None = None):
         "s_total_m": None,
     }
 
-    live = state.last_c_series_df
+    live = entry["c_series_df"] if entry else None
     if live is not None and len(live):
         live_c = live[live["complex_id"] == complex_id].sort_values("time_days")
         if not live_c.empty:
@@ -740,25 +906,71 @@ _BLUE_RED_CMAP.set_bad(alpha=0.0)
 DRAWDOWN_DISPLAY_FLOOR_M = 0.2
 
 
+def _warp_upscale_factor() -> int:
+    """Upscale so MapLibre's bilinear filter only bleeds a fraction of a
+    cell, while capping the output image at ~4096 px on its long side so a
+    large grid can't produce a hundred-megabyte PNG."""
+    meta = _property_warp_meta()
+    longest = max(meta["dst_width"], meta["dst_height"])
+    return max(1, min(8, 4096 // max(1, longest)))
+
+
+def _rgba_warp_to_png(rgba: np.ndarray) -> bytes:
+    """Warp an MGA-space (nrow, ncol, 4) RGBA array to EPSG:4326 and encode
+    as PNG. Shared by the drawdown and property overlays so they carry
+    identical georeferencing (the corners from _property_warp_meta).
+
+    Why warp instead of just supplying four corners to MapLibre? An image
+    source is rubber-sheeted as a bilinear quadrilateral between its four
+    corners, but the MGA → WGS84 transformation is non-linear. The four
+    corners are exact; interior pixels drift by up to a few hundred metres
+    against a per-cell GeoJSON reference. Warping produces an axis-aligned
+    WGS84 raster whose pixel positions match the vector layers exactly.
+    """
+    from rasterio.warp import reproject, Resampling
+
+    meta = _property_warp_meta()
+    dst_rgba = np.zeros((meta["dst_height"], meta["dst_width"], 4), dtype=np.uint8)
+    for band in range(4):
+        reproject(
+            source=np.ascontiguousarray(rgba[..., band]),
+            destination=dst_rgba[..., band],
+            src_transform=meta["src_transform"],
+            src_crs=meta["src_crs"],
+            dst_transform=meta["dst_transform"],
+            dst_crs="EPSG:4326",
+            resampling=Resampling.nearest,
+        )
+
+    # Block-upscale so MapLibre's image-source bilinear filter (which
+    # ignores raster-resampling for image sources) only blurs across a
+    # fraction of a cell boundary.
+    up = _warp_upscale_factor()
+    if up > 1:
+        dst_rgba = np.repeat(np.repeat(dst_rgba, up, axis=0), up, axis=1)
+
+    from PIL import Image
+    img = Image.fromarray(dst_rgba, mode="RGBA")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", compress_level=3)
+    return buf.getvalue()
+
+
 def _drawdown_to_png(arr: np.ndarray, idomain: np.ndarray, vmax: float | None = None) -> bytes:
-    """Render a (nrow, ncol) drawdown grid to a transparent PNG."""
+    """Render a (nrow, ncol) drawdown grid to a transparent, warped PNG."""
     masked = np.where(idomain == 1, arr, np.nan)
     masked = np.where(masked >= DRAWDOWN_DISPLAY_FLOOR_M, masked, np.nan)
-    valid = masked[~np.isnan(masked)]
+    show = ~np.isnan(masked)
+    valid = masked[show]
     if vmax is None:
         vmax = float(np.nanpercentile(np.abs(valid), 99)) if valid.size else 1.0
         vmax = max(vmax, DRAWDOWN_DISPLAY_FLOOR_M + 0.1)
-    nrow, ncol = arr.shape
-    fig = plt.figure(figsize=(ncol / 100, nrow / 100), dpi=100)
-    ax = fig.add_axes([0, 0, 1, 1])
-    ax.set_axis_off()
-    norm = mcolors.Normalize(vmin=DRAWDOWN_DISPLAY_FLOOR_M, vmax=vmax)
-    ax.imshow(masked, cmap=_BLUE_RED_CMAP, norm=norm,
-              origin="upper", interpolation="nearest")
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", transparent=True)
-    plt.close(fig)
-    return buf.getvalue()
+
+    norm01 = (np.where(show, masked, 0.0) - DRAWDOWN_DISPLAY_FLOOR_M) / (vmax - DRAWDOWN_DISPLAY_FLOOR_M)
+    norm01 = np.clip(norm01, 0.0, 1.0)
+    rgba = (_BLUE_RED_CMAP(norm01) * 255.0).astype(np.uint8)
+    rgba[..., 3] = np.where(show, 255, 0).astype(np.uint8)
+    return _rgba_warp_to_png(rgba)
 
 
 def _property_warp_meta():
@@ -818,20 +1030,7 @@ def _property_to_png(
     vmin: float,
     vmax: float,
 ) -> bytes:
-    """Render the K / Ss field to a transparent PNG, with the heavy lifting
-    being rasterio.warp's reprojection from the project CRS to EPSG:4326.
-
-    Why warp instead of just supplying four corners to MapLibre? An image
-    source is rubber-sheeted as a bilinear quadrilateral between its four
-    corners, but the MGA → WGS84 transformation is non-linear. The four
-    corners are exact; interior pixels drift by up to a few hundred metres
-    against a per-cell GeoJSON reference. Warping with rasterio produces
-    an axis-aligned WGS84 raster whose pixel positions match the
-    per-cell polygons exactly, so the K / Ss overlay sits perfectly on
-    top of the active-cells / outcrop / CHD layers.
-    """
-    from rasterio.warp import reproject, Resampling
-
+    """Render the K / Ss field on a log10 colour scale to a warped PNG."""
     pos = (idomain == 1) & (arr > 0)
     log_min = np.log10(max(vmin, 1e-30))
     log_max = np.log10(max(vmax, vmin * 10))
@@ -843,31 +1042,7 @@ def _property_to_png(
     cmap = plt.get_cmap(cmap_name)
     rgba = (cmap(norm) * 255.0).astype(np.uint8)        # (nrow, ncol, 4)
     rgba[..., 3] = np.where(pos, 255, 0).astype(np.uint8)
-
-    # Warp each channel separately into the cached EPSG:4326 destination.
-    meta = _property_warp_meta()
-    dst_rgba = np.zeros((meta["dst_height"], meta["dst_width"], 4), dtype=np.uint8)
-    for band in range(4):
-        reproject(
-            source=np.ascontiguousarray(rgba[..., band]),
-            destination=dst_rgba[..., band],
-            src_transform=meta["src_transform"],
-            src_crs=meta["src_crs"],
-            dst_transform=meta["dst_transform"],
-            dst_crs="EPSG:4326",
-            resampling=Resampling.nearest,
-        )
-
-    # Upscale 8× so MapLibre's image-source bilinear filter only blurs
-    # across 1/8 of a cell boundary, i.e. invisible at any sensible zoom.
-    UPSCALE = 8
-    dst_rgba = np.repeat(np.repeat(dst_rgba, UPSCALE, axis=0), UPSCALE, axis=1)
-
-    from PIL import Image
-    img = Image.fromarray(dst_rgba, mode="RGBA")
-    buf = io.BytesIO()
-    img.save(buf, format="PNG", compress_level=3)
-    return buf.getvalue()
+    return _rgba_warp_to_png(rgba)
 
 
 def _property_stats(arr: np.ndarray, idomain: np.ndarray) -> tuple[float, float, float]:
@@ -919,17 +1094,20 @@ def _bbox_4326() -> dict:
 
 
 @app.get("/api/last-scenario/info")
-def last_scenario_info():
-    if state.last_c_drawdown_by_year is None or state.last_proposed_bore is None:
+def last_scenario_info(job: str | None = None):
+    """Info for a completed scenario run. `job` selects a specific run;
+    omitted = the most recently completed one."""
+    entry = _get_scenario(job)
+    if entry is None or entry.get("proposed_bore") is None:
         return JSONResponse({"available": False})
     transformer = pyproj.Transformer.from_crs(state.cfg.project.crs, "EPSG:4326", always_xy=True)
-    bore = dict(state.last_proposed_bore)
+    bore = dict(entry["proposed_bore"])
     bore_lng, bore_lat = transformer.transform(float(bore["x"]), float(bore["y"]))
 
     # Echo every well in the change-set so the map can plot multi-bore
     # and trade scenarios in full (not just the first bore).
     wells_out: list[dict] = []
-    for w in (state.last_wells_run or []):
+    for w in (entry.get("wells_run") or []):
         wx, wy = float(w["x"]), float(w["y"])
         wlng, wlat = transformer.transform(wx, wy)
         wells_out.append({
@@ -943,24 +1121,30 @@ def last_scenario_info():
         "available": True,
         "bore": {**bore, "lng": bore_lng, "lat": bore_lat},
         "wells": wells_out,
-        "years": sorted(state.last_c_drawdown_by_year.keys()),
-        "image_corners_4326": bbox["tl_tr_br_bl"],
+        "years": sorted(entry["c_drawdown_by_year"].keys()),
+        # Axis-aligned corners of the warped (EPSG:4326) raster — must be
+        # the warp corners, not the reprojected MGA trapezoid, or the
+        # overlay drifts against the vector layers in the interior.
+        "image_corners_4326": _property_warp_meta()["image_corners_4326"],
         "bbox_4326": bbox["bbox"],
         "threshold_m": state.cfg.assessment.regulatory_threshold_m,
     })
 
 
 @app.get("/api/last-scenario/drawdown.png")
-def last_scenario_drawdown_png(layer: str = "cumulative", year: float = 100.0):
-    if state.last_c_drawdown_by_year is None:
+def last_scenario_drawdown_png(layer: str = "cumulative", year: float = 100.0,
+                               job: str | None = None):
+    entry = _get_scenario(job)
+    if entry is None:
         raise HTTPException(404, "No scenario has been run yet")
-    available_years = list(state.last_c_drawdown_by_year.keys())
+    drawdown_by_year = entry["c_drawdown_by_year"]
+    available_years = list(drawdown_by_year.keys())
     near = [y for y in available_years if abs(float(y) - float(year)) < 1e-6]
     if not near:
         raise HTTPException(400, f"Year {year} not available; choose from {available_years}")
     y_key = near[0]
 
-    c_arr = state.last_c_drawdown_by_year[y_key]
+    c_arr = drawdown_by_year[y_key]
     if layer == "additional":
         arr = c_arr
     elif layer == "cumulative":
@@ -982,10 +1166,13 @@ def last_scenario_drawdown_png(layer: str = "cumulative", year: float = 100.0):
 
 @app.get("/api/last-scenario/drawdown/sample")
 def last_scenario_drawdown_sample(lng: float, lat: float,
-                                  layer: str = "cumulative", year: float = 100.0):
-    if state.last_c_drawdown_by_year is None:
+                                  layer: str = "cumulative", year: float = 100.0,
+                                  job: str | None = None):
+    entry = _get_scenario(job)
+    if entry is None:
         raise HTTPException(404, "No scenario has been run yet")
-    available_years = list(state.last_c_drawdown_by_year.keys())
+    drawdown_by_year = entry["c_drawdown_by_year"]
+    available_years = list(drawdown_by_year.keys())
     near = [yk for yk in available_years if abs(float(yk) - float(year)) < 1e-6]
     if not near:
         raise HTTPException(400, f"Year {year} not available")
@@ -1000,7 +1187,7 @@ def last_scenario_drawdown_sample(lng: float, lat: float,
             "x": float(x), "y": float(y_proj),
         })
 
-    c_val = float(state.last_c_drawdown_by_year[y_key][rc[0], rc[1]])
+    c_val = float(drawdown_by_year[y_key][rc[0], rc[1]])
     if layer == "additional":
         s_total = c_val
         s_approved = None
@@ -1260,13 +1447,18 @@ def model_setup_property_png(name: str):
     name = name.lower()
     if name not in _PROPERTY_CMAPS:
         raise HTTPException(400, "name must be 'k' or 'ss'")
-    arr = _property_array(name)
-    p2, p98, _ = _property_stats(arr, state.grid.idomain[0])
-    png = _property_to_png(
-        arr, state.grid.idomain[0],
-        cmap_name=_PROPERTY_CMAPS[name], vmin=p2, vmax=p98,
-    )
-    return Response(content=png, media_type="image/png",
+
+    # The field is static for the life of the process — render once.
+    cache: dict[str, bytes] = getattr(state, "_property_png_cache", None) or {}
+    if name not in cache:
+        arr = _property_array(name)
+        p2, p98, _ = _property_stats(arr, state.grid.idomain[0])
+        cache[name] = _property_to_png(
+            arr, state.grid.idomain[0],
+            cmap_name=_PROPERTY_CMAPS[name], vmin=p2, vmax=p98,
+        )
+        state._property_png_cache = cache
+    return Response(content=cache[name], media_type="image/png",
                     headers={"Cache-Control": "no-store"})
 
 
@@ -1307,6 +1499,19 @@ def model_setup_property_sample(name: str, lng: float, lat: float):
         "row": int(r), "col": int(c),
         "x": float(x), "y": float(y_proj),
     })
+
+
+@app.middleware("http")
+async def _no_cache_statics(request, call_next):
+    """Frontend assets revalidate on every load (ETag/304 keeps it cheap).
+
+    Replaces the manual `?v=N` cache-busting that repeatedly served stale
+    JS/CSS after deploys. API responses manage their own cache headers.
+    """
+    response = await call_next(request)
+    if not request.url.path.startswith("/api"):
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
 
 
 _FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
