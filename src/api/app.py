@@ -423,9 +423,9 @@ def version_info():
     this endpoint won't exist at all (404 → restart needed).
     """
     return JSONResponse({
-        "property_renderer": "pil-warped",
+        "property_renderer": "pil-warped-3857",
         "has_property_sample": True,
-        "build": "2026-05-26-rasterio-warp",
+        "build": "2026-07-13-mercator-warp",
     })
 
 
@@ -960,16 +960,17 @@ def _warp_upscale_factor() -> int:
 
 
 def _rgba_warp_to_png(rgba: np.ndarray) -> bytes:
-    """Warp an MGA-space (nrow, ncol, 4) RGBA array to EPSG:4326 and encode
-    as PNG. Shared by the drawdown and property overlays so they carry
-    identical georeferencing (the corners from _property_warp_meta).
+    """Warp an MGA-space (nrow, ncol, 4) RGBA array to Web Mercator and
+    encode as PNG. Shared by the drawdown and property overlays so they
+    carry identical georeferencing (the corners from _property_warp_meta).
 
     Why warp instead of just supplying four corners to MapLibre? An image
-    source is rubber-sheeted as a bilinear quadrilateral between its four
-    corners, but the MGA → WGS84 transformation is non-linear. The four
-    corners are exact; interior pixels drift by up to a few hundred metres
-    against a per-cell GeoJSON reference. Warping produces an axis-aligned
-    WGS84 raster whose pixel positions match the vector layers exactly.
+    source is texture-mapped linearly *in mercator space* between its four
+    corners. Any raster that isn't mercator-axis-aligned (raw MGA, or an
+    EPSG:4326 equirectangular warp) is exact at the corners but drifts in
+    the interior — kilometres at this domain's scale. Warping to
+    EPSG:3857 makes the GPU's linear interpolation exact everywhere, so
+    the raster registers with the vector layers at any zoom.
     """
     from rasterio.warp import reproject, Resampling
 
@@ -982,7 +983,7 @@ def _rgba_warp_to_png(rgba: np.ndarray) -> bytes:
             src_transform=meta["src_transform"],
             src_crs=meta["src_crs"],
             dst_transform=meta["dst_transform"],
-            dst_crs="EPSG:4326",
+            dst_crs=meta["dst_crs"],
             resampling=Resampling.nearest,
         )
 
@@ -1018,13 +1019,21 @@ def _drawdown_to_png(arr: np.ndarray, idomain: np.ndarray, vmax: float | None = 
 
 
 def _property_warp_meta():
-    """Cached warp parameters for reprojecting K / Ss from project CRS to
-    EPSG:4326. Computed once because they only depend on the grid extent.
+    """Cached warp parameters for reprojecting rasters from the project CRS
+    to **EPSG:3857 (Web Mercator)**. Computed once (grid-extent-only).
 
-    Returns a dict with the source/destination affine transforms, the
-    destination raster size, and the four axis-aligned image corners in
-    `[tl, tr, br, bl]` order — used both by `_property_to_png` to warp
-    the raster and by `/info` to position the image source in MapLibre.
+    Why 3857 and not 4326: MapLibre renders in mercator space and an
+    `image` source is texture-mapped *linearly in mercator coordinates*
+    between its four corners. A raster that is linear in latitude
+    (EPSG:4326) therefore drifts in the interior — for this domain
+    (23–29°S) the mid-image error is ~4 km (≈2.7 cells) southward, zero
+    at the corners. Warping to a mercator-axis-aligned raster makes the
+    GPU's linear interpolation exact everywhere.
+
+    Returns the source/destination affine transforms, destination raster
+    size, and the four image corners in lng/lat `[tl, tr, br, bl]` order
+    (MapLibre wants corner coordinates in lng/lat even though it maps
+    them in mercator space).
     """
     cached = getattr(state, "_property_warp_cache", None)
     if cached is not None:
@@ -1040,7 +1049,7 @@ def _property_warp_meta():
         float(g.delr[0]), float(g.delc[0]),
     )
     dst_transform, dst_width, dst_height = calculate_default_transform(
-        src_crs, "EPSG:4326", g.ncol, g.nrow,
+        src_crs, "EPSG:3857", g.ncol, g.nrow,
         g.xorigin, g.yorigin,
         g.xorigin + float(g.delr.sum()),
         g.yorigin + float(g.delc.sum()),
@@ -1049,19 +1058,20 @@ def _property_warp_meta():
     north = dst_transform.f
     east  = west  + dst_transform.a * dst_width
     south = north + dst_transform.e * dst_height
-    image_corners = [
-        [west, north],   # tl
-        [east, north],   # tr
-        [east, south],   # br
-        [west, south],   # bl
-    ]
+    # Corner lng/lats of the mercator-aligned rectangle.
+    to_ll = pyproj.Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+    tl = list(to_ll.transform(west, north))
+    tr_ = list(to_ll.transform(east, north))
+    br = list(to_ll.transform(east, south))
+    bl = list(to_ll.transform(west, south))
     cached = {
         "src_transform": src_transform,
         "src_crs": src_crs,
+        "dst_crs": "EPSG:3857",
         "dst_transform": dst_transform,
         "dst_width": int(dst_width),
         "dst_height": int(dst_height),
-        "image_corners_4326": image_corners,
+        "image_corners_4326": [tl, tr_, br, bl],
     }
     state._property_warp_cache = cached
     return cached
