@@ -15,13 +15,17 @@ def _toy_properties(dx: float = 1500.0) -> pd.DataFrame:
                 {
                     "ICOL": ic,
                     "IROW": ir,
-                    "ILAY": 1,
+                    # Real CSV convention: the Precipice is ILAY=24 (the
+                    # builder filters other layers out by default).
+                    "ILAY": 24,
                     "INODE": ic * ir,
                     "IBOUND": 1,
                     "NTOP": 100.0,
                     "NBOT": 0.0,
                     "X": 500_000 + (ic - 1) * dx,
-                    "Y": 7_000_000 + (ir - 1) * dx,
+                    # IROW 1 is the northernmost row (max Y) — verified
+                    # against the real CSV: corr(IROW, Y) = -1.
+                    "Y": 7_000_000 - (ir - 1) * dx,
                     "THICKNESS": 100.0,
                     "OUTCROP": "Y" if ir == 1 else "N",
                     "Depth": 50.0,

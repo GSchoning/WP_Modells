@@ -61,6 +61,11 @@ def build_grid_from_properties(
                 f"kept {len(df)} rows",
                 file=sys.stderr,
             )
+    if df.empty:
+        raise ValueError(
+            f"build_grid_from_properties: no rows with ILAY == {layer}. "
+            "Check grid.properties_layer against the properties CSV."
+        )
     df["ICOL"] = df["ICOL"].astype(int)
     df["IROW"] = df["IROW"].astype(int)
 
