@@ -108,6 +108,8 @@ class _State:
     grid: Grid | None = None
     ic_head: np.ndarray | None = None
     chd_cells: list | None = None
+    drn_cells: list | None = None                     # outcrop drains (steady state)
+    ghb_cells: list | None = None                     # linearised drains (transient)
     workspace_root: Path | None = None
     baseline: cache_mod.BaselineCache | None = None
     complex_centroids_4326: dict | None = None      # GeoJSON FeatureCollection
@@ -184,6 +186,7 @@ def _bootstrap_baseline(force: bool = False) -> cache_mod.BaselineCache:
         state.cfg, state.grid, state.inputs, "A",
         state.ic_head, state.workspace_root / "scen_A",
         chd_cells=state.chd_cells,
+        ghb_cells=state.ghb_cells,
     )
     cache = cache_mod.BaselineCache(
         key=key,
@@ -214,6 +217,23 @@ def _bootstrap_ic() -> None:
     grid = state.grid
     workspace = state.workspace_root / "ss"
 
+    # Rejected-recharge drains (parent-model device): outcrop cells drain
+    # at the minimum DEM elevation within the cell, so recharge that would
+    # mound above the lowest topography leaves the model instead.
+    drn_cells = []
+    if state.cfg.drains.enabled and state.cfg.inputs.dem is not None:
+        from ..drains import build_drain_cells
+        try:
+            drn_cells = build_drain_cells(
+                grid, state.cfg.inputs.dem,
+                conductance=state.cfg.drains.conductance_m2_per_day,
+                conductance_scale=state.cfg.drains.conductance_scale,
+            )
+            print(f"[drains] {len(drn_cells)} outcrop drain cells at min-DEM elevation")
+        except Exception as exc:
+            print(f"[drains] disabled — failed to build drain cells: {exc}")
+    state.drn_cells = drn_cells
+
     quadrants = state.cfg.assessment.chd_quadrants
     chd_filtered = active_boundary_chd_cells(
         grid, exclude_mask=grid.outcrop_mask, quadrants=quadrants,
@@ -228,9 +248,11 @@ def _bootstrap_ic() -> None:
     ]
     for label, chd in attempts:
         try:
-            ic = run_steady_state(state.cfg, grid, workspace, chd_cells=chd)
+            ic = run_steady_state(state.cfg, grid, workspace, chd_cells=chd,
+                                  drn_cells=drn_cells)
             state.chd_cells = chd
             state.ic_head = ic
+            _linearise_drains(ic)
             print(f"[boundary] steady-state converged with {label} ({len(chd)} CHD cells)")
             return
         except RuntimeError as exc:
@@ -242,6 +264,19 @@ def _bootstrap_ic() -> None:
     state.ic_head = np.full_like(grid.top, mean_top)
     # Use the safer (all-edges) CHD with the uniform IC.
     state.chd_cells = chd_unfiltered
+    _linearise_drains(state.ic_head)
+
+
+def _linearise_drains(ss_head: np.ndarray) -> None:
+    """Convert drains flowing at steady state into linear GHBs for the
+    transient runs (see src/drains.py). Sets state.ghb_cells."""
+    if not state.drn_cells:
+        state.ghb_cells = []
+        return
+    from ..drains import linearise_drains
+    state.ghb_cells = linearise_drains(state.drn_cells, ss_head)
+    print(f"[drains] {len(state.ghb_cells)} of {len(state.drn_cells)} drains "
+          f"flowing at steady state → linearised as GHB for transient runs")
 
 
 def _mf6_version() -> str:
@@ -519,6 +554,7 @@ def _execute_scenario(
     c_result = run_scenario(
         state.cfg, state.grid, state.inputs, "C",
         state.ic_head, workspace, chd_cells=state.chd_cells,
+        ghb_cells=state.ghb_cells,
         proposed_wells=proposed_wells_xy_rate,
         nopump_twin=nopump_twin,
     )
@@ -644,6 +680,8 @@ def _execute_scenario(
             >= BOUNDARY_WARN_M
         ),
         mass_balance_warning=c_result.max_pct_discrepancy >= MASS_BALANCE_WARN_PCT,
+        n_drain_reversals=c_result.n_drain_reversals,
+        drain_warning=c_result.n_drain_reversals > 0,
     )
 
     return ScenarioResponse(

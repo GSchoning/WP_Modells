@@ -40,6 +40,10 @@ class ScenarioResult:
     # influencing the answer and the result needs a caveat.
     chd_max_drawdown_m: float = 0.0
     noflow_max_drawdown_m: float = 0.0
+    # Linearised rejected-recharge drains whose head fell below the drain
+    # elevation in the pumped run — where a real drain would have shut
+    # off. Non-zero → drawdown near those cells is under-predicted.
+    n_drain_reversals: int = 0
 
 
 def _bores_to_wells(
@@ -201,7 +205,7 @@ def _sample_receptors(
 
 
 def run_steady_state(
-    cfg: Config, grid: Grid, workspace: Path, *, chd_cells=None
+    cfg: Config, grid: Grid, workspace: Path, *, chd_cells=None, drn_cells=None
 ) -> np.ndarray:
     """Run the no-pumping steady-state pre-run; return initial heads (nlay, nrow, ncol)."""
     sim = build_steady_state(
@@ -209,6 +213,7 @@ def run_steady_state(
         workspace,
         name="ss",
         chd_cells=chd_cells,
+        drn_cells=drn_cells,
         complexity=cfg.solver.complexity,
         recharge_multiplier=cfg.assessment.recharge_multiplier,
     )
@@ -229,6 +234,7 @@ def run_scenario(
     workspace: Path,
     *,
     chd_cells=None,
+    ghb_cells=None,
     proposed_wells: list[tuple[float, float, float]] | None = None,
     nopump_twin: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> ScenarioResult:
@@ -288,6 +294,7 @@ def run_scenario(
         initial_head=initial_head,
         perioddata=perioddata,
         chd_cells=chd_cells,
+        ghb_cells=ghb_cells,
         recharge=True,
         complexity=cfg.solver.complexity,
         recharge_multiplier=cfg.assessment.recharge_multiplier,
@@ -311,6 +318,7 @@ def run_scenario(
             initial_head=initial_head,
             perioddata=perioddata,
             chd_cells=chd_cells,
+            ghb_cells=ghb_cells,
             recharge=True,
             complexity=cfg.solver.complexity,
             recharge_multiplier=cfg.assessment.recharge_multiplier,
@@ -326,6 +334,11 @@ def run_scenario(
     year_idx = _times_to_output_years(times_days, cfg.time.output_years)
     drawdown_by_year = {y: drawdown[i] for y, i in year_idx.items()}
     chd_max_dd, noflow_max_dd = _boundary_drawdown_stats(drawdown[-1], grid, chd_cells)
+
+    n_reversals = 0
+    if ghb_cells:
+        from .drains import count_reversals
+        n_reversals = count_reversals(list(ghb_cells), heads[-1])
 
     # Sample drawdown at every member spring, then aggregate to complex
     # taking the max — the regulatory unit of analysis is the complex,
@@ -385,6 +398,7 @@ def run_scenario(
         max_pct_discrepancy=pct_disc,
         chd_max_drawdown_m=chd_max_dd,
         noflow_max_drawdown_m=noflow_max_dd,
+        n_drain_reversals=n_reversals,
     )
 
 

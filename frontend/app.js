@@ -986,6 +986,9 @@ function renderDecision(result) {
     if (result.qa.mass_balance_warning) {
       mh += `<div class="advisory">⚠ Mass balance: MF6 budget discrepancy ${result.qa.max_pct_discrepancy.toFixed(2)}% exceeds 1% — solver convergence is questionable for this run.</div>`;
     }
+    if (result.qa.drain_warning) {
+      mh += `<div class="advisory">⚠ Rejected-recharge linearisation: ${result.qa.n_drain_reversals} outcrop drain cell${result.qa.n_drain_reversals === 1 ? "" : "s"} drew below drain level — drawdown near those cells is under-predicted. Treat near-outcrop impacts as a lower bound.</div>`;
+    }
   }
   // Provenance line: which config/data/binary produced this number.
   if (result.provenance) {

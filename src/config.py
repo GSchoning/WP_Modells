@@ -64,6 +64,20 @@ class TimeCfg(BaseModel):
     output_years: list[float] = Field(default_factory=lambda: [10, 50, 100])
 
 
+class DrainsCfg(BaseModel):
+    """Rejected-recharge drains in the outcrop (parent-model device).
+
+    Drain elevation = minimum of the DEM within each outcrop cell.
+    The steady state uses real DRN cells; the transient runs use the
+    linearised (GHB) form so superposition stays exact — see src/drains.py.
+    """
+    enabled: bool = False
+    # Fixed conductance (m²/day) for every drain. None = estimate per
+    # cell as K·A/b (interim until parent-model conductances are supplied).
+    conductance_m2_per_day: float | None = None
+    conductance_scale: float = 1.0
+
+
 class SolverCfg(BaseModel):
     complexity: Literal["SIMPLE", "MODERATE", "COMPLEX"] = "MODERATE"
 
@@ -105,6 +119,7 @@ class Config(BaseModel):
     solver: SolverCfg = SolverCfg()
     run: RunCfg = RunCfg()
     assessment: AssessmentCfg = AssessmentCfg()
+    drains: DrainsCfg = DrainsCfg()
 
 
 def load_config(path: str | Path) -> Config:

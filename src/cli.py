@@ -128,9 +128,24 @@ def run(
     chd_cells = active_boundary_chd_cells(grid, exclude_mask=grid.outcrop_mask)
     typer.echo(f"\nBoundary CHD on {len(chd_cells)} active-edge cells (head = NTOP, outcrop excluded).")
 
+    # Rejected-recharge drains at min-DEM elevation in outcrop cells.
+    drn_cells = []
+    if cfg.drains.enabled and cfg.inputs.dem is not None:
+        from .drains import build_drain_cells
+        try:
+            drn_cells = build_drain_cells(
+                grid, cfg.inputs.dem,
+                conductance=cfg.drains.conductance_m2_per_day,
+                conductance_scale=cfg.drains.conductance_scale,
+            )
+            typer.echo(f"Rejected-recharge drains on {len(drn_cells)} outcrop cells (min-DEM elevation).")
+        except Exception as exc:
+            typer.echo(f"  drains disabled — failed to build: {exc}")
+
     typer.echo("Running steady-state pre-run (no pumping, recharge on)…")
     try:
-        ic_head = run_steady_state(cfg, grid, workspace_root / "ss", chd_cells=chd_cells)
+        ic_head = run_steady_state(cfg, grid, workspace_root / "ss", chd_cells=chd_cells,
+                                   drn_cells=drn_cells)
     except RuntimeError as exc:
         typer.echo(f"  steady-state failed: {exc}")
         # Uniform IC fallback. A spatially-varying grid.top is a non-
@@ -144,6 +159,13 @@ def run(
         typer.echo(f"  Falling back to uniform initial head = {mean_top:.1f} m (mean of active top).")
         ic_head = np.full_like(grid.top, mean_top)
 
+    # Linearise flowing drains into GHBs for the transient runs.
+    ghb_cells = []
+    if drn_cells:
+        from .drains import linearise_drains
+        ghb_cells = linearise_drains(drn_cells, ic_head)
+        typer.echo(f"  {len(ghb_cells)} of {len(drn_cells)} drains flowing at steady state → GHB.")
+
     results = {}
     nopump_twin = None
     for scen in cfg.run.scenarios:
@@ -152,6 +174,7 @@ def run(
             results[scen] = run_scenario(
                 cfg, grid, inputs, scen, ic_head, workspace_root / f"scen_{scen}",
                 chd_cells=chd_cells,
+                ghb_cells=ghb_cells,
                 nopump_twin=nopump_twin,
             )
             # The no-pump twin is scenario-independent — reuse it so the
@@ -161,6 +184,9 @@ def run(
             typer.echo(f"  done; {len(results[scen].times_days)} time steps saved.")
             if results[scen].max_pct_discrepancy >= 1.0:
                 typer.echo(f"  WARNING: mass-balance discrepancy {results[scen].max_pct_discrepancy:.2f}%")
+            if results[scen].n_drain_reversals:
+                typer.echo(f"  WARNING: {results[scen].n_drain_reversals} linearised drain(s) "
+                           "drew below drain level — near-outcrop drawdown under-predicted")
             recv_csv = out_dir / f"scenario_{scen}_springs.csv"
             results[scen].receptors_df.to_csv(recv_csv, index=False)
             n_springs = results[scen].receptors_df["receptor_id"].nunique() if len(results[scen].receptors_df) else 0

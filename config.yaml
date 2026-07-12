@@ -93,3 +93,16 @@ assessment:
   # boundary. The NE quadrant is the outcrop / recharge-inflow side
   # and SW is excluded for symmetry; both become no-flow boundaries.
   chd_quadrants: ["NW", "SE"]
+
+# Rejected-recharge drains in the outcrop, mirroring the parent regional
+# model: each outcrop cell drains at the minimum DEM elevation within the
+# cell, so recharge that would mound above the lowest topography leaves
+# the model (seeps / springs / baseflow) instead of pressurising the
+# outcrop. Steady state uses real DRN cells; transient runs use the
+# linearised (GHB) form so superposition stays exact. Conductance is an
+# interim per-cell estimate C = K·A/b until the parent model's calibrated
+# DRN conductances are supplied — then set conductance_m2_per_day.
+drains:
+  enabled: true
+  conductance_m2_per_day: null   # null = estimate from K per cell
+  conductance_scale: 1.0

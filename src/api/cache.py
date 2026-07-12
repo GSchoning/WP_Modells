@@ -65,6 +65,13 @@ def baseline_key(cfg: Config, config_path: Path) -> str:
         parts.append(_file_sha256(Path(cfg.inputs.springs)))
     if Path(cfg.inputs.outcrop).exists():
         parts.append(_file_sha256(Path(cfg.inputs.outcrop)))
+    # Rejected-recharge drains derive elevations from the DEM, so the DEM
+    # content becomes baseline-relevant once drains are enabled.
+    if cfg.drains.enabled and cfg.inputs.dem is not None and Path(cfg.inputs.dem).exists():
+        parts.append("drains")
+        parts.append(_file_sha256(Path(cfg.inputs.dem)))
+        parts.append(f"dcond={cfg.drains.conductance_m2_per_day}")
+        parts.append(f"dscale={cfg.drains.conductance_scale:.6g}")
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 

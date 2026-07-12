@@ -12,7 +12,8 @@ import flopy
 import numpy as np
 from flopy.mf6 import (
     MFSimulation, ModflowGwf, ModflowTdis, ModflowIms,
-    ModflowGwfdis, ModflowGwfic, ModflowGwfnpf, ModflowGwfsto,
+    ModflowGwfdis, ModflowGwfdrn, ModflowGwfghb, ModflowGwfic,
+    ModflowGwfnpf, ModflowGwfsto,
     ModflowGwfchd, ModflowGwfrch, ModflowGwfwel, ModflowGwfoc,
 )
 
@@ -25,6 +26,10 @@ YEAR_DAYS = 365.25
 WellRecord = tuple[int, int, int, float]
 # Each entry: (layer, row, col, head_m).
 ChdRecord = tuple[int, int, int, float]
+# Each entry: (layer, row, col, elevation_m, conductance_m2_per_day).
+DrnRecord = tuple[int, int, int, float, float]
+# Each entry: (layer, row, col, head_m, conductance_m2_per_day).
+GhbRecord = tuple[int, int, int, float, float]
 
 
 def _add_dis(gwf: ModflowGwf, grid: Grid) -> None:
@@ -87,6 +92,22 @@ def _add_wel(gwf: ModflowGwf, wells: Sequence[WellRecord]) -> None:
     ModflowGwfwel(gwf, stress_period_data=spd)
 
 
+def _add_drn(gwf: ModflowGwf, drains: Sequence[DrnRecord]) -> None:
+    if not drains:
+        return
+    spd = {0: [[(int(l), int(r), int(c)), float(e), float(cd)]
+               for (l, r, c, e, cd) in drains]}
+    ModflowGwfdrn(gwf, stress_period_data=spd)
+
+
+def _add_ghb(gwf: ModflowGwf, ghbs: Sequence[GhbRecord]) -> None:
+    if not ghbs:
+        return
+    spd = {0: [[(int(l), int(r), int(c)), float(h), float(cd)]
+               for (l, r, c, h, cd) in ghbs]}
+    ModflowGwfghb(gwf, stress_period_data=spd)
+
+
 def _add_oc(gwf: ModflowGwf, name: str, n_periods: int = 1) -> None:
     # saverecord as a dict so the SAVE rule fires in every stress period;
     # passing a bare list applies only to period 0.
@@ -118,11 +139,17 @@ def build_steady_state(
     *,
     name: str = "ss",
     chd_cells: Sequence[ChdRecord] | None = None,
+    drn_cells: Sequence[DrnRecord] | None = None,
     initial_head: np.ndarray | float | None = None,
     complexity: str = "MODERATE",
     recharge_multiplier: float = 1.0,
 ) -> MFSimulation:
-    """Pre-development steady-state run (no wells, recharge active)."""
+    """Pre-development steady-state run (no wells, recharge active).
+
+    `drn_cells`: rejected-recharge drains in the outcrop. Real DRN here
+    (the piecewise-linearity is fine for shaping the IC); the transient
+    runs use the linearised GHB form instead.
+    """
     sim, gwf = _make_sim(workspace, name, perioddata=[(1.0, 1, 1.0)], complexity=complexity)
     _add_dis(gwf, grid)
     _add_ic(gwf, initial_head if initial_head is not None else grid.top)
@@ -130,6 +157,7 @@ def build_steady_state(
     _add_sto(gwf, grid, transient=False)
     _add_rch(gwf, grid, multiplier=recharge_multiplier)
     _add_chd(gwf, chd_cells or [])
+    _add_drn(gwf, drn_cells or [])
     _add_oc(gwf, name)
     return sim
 
@@ -143,11 +171,17 @@ def build_transient(
     initial_head: np.ndarray | float,
     perioddata: list[tuple[float, int, float]],
     chd_cells: Sequence[ChdRecord] | None = None,
+    ghb_cells: Sequence[GhbRecord] | None = None,
     recharge: bool = True,
     complexity: str = "MODERATE",
     recharge_multiplier: float = 1.0,
 ) -> MFSimulation:
-    """One transient stress period, with wells, optionally recharge + CHD."""
+    """One transient stress period, with wells, optionally recharge + CHD.
+
+    `ghb_cells`: linearised rejected-recharge drains (drains flowing at
+    steady state, fixed at their drain elevation). Linear boundary, so
+    superposition across scenarios remains exact.
+    """
     sim, gwf = _make_sim(workspace, name, perioddata=perioddata, complexity=complexity)
     _add_dis(gwf, grid)
     _add_ic(gwf, initial_head)
@@ -156,6 +190,7 @@ def build_transient(
     if recharge:
         _add_rch(gwf, grid, multiplier=recharge_multiplier)
     _add_chd(gwf, chd_cells or [])
+    _add_ghb(gwf, ghb_cells or [])
     _add_wel(gwf, list(wells))
     _add_oc(gwf, name, n_periods=len(perioddata))
     return sim

@@ -110,6 +110,11 @@ class ScenarioQA(BaseModel):
     noflow_max_drawdown_m: float = 0.0
     boundary_warning: bool = False
     mass_balance_warning: bool = False
+    # Linearised rejected-recharge drains that a real drain would have
+    # shut off (head fell below drain elevation in the pumped run) —
+    # drawdown near those cells is under-predicted.
+    n_drain_reversals: int = 0
+    drain_warning: bool = False
 
 
 class ScenarioResponse(BaseModel):
