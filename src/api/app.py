@@ -319,6 +319,10 @@ def _df_to_year_results(combined: pd.DataFrame, threshold: float) -> list[YearRe
     has_theis = "drawdown_m_theis" in combined.columns
     has_r = "r_m" in combined.columns
     has_n = "n_springs" in combined.columns
+    # Receptors closer than ~2 cells to a proposed well get a mesh-
+    # dependence flag: the FD solution in/next to the well cell is biased
+    # by the point-sink-in-a-finite-cell treatment (CLAUDE.md §10).
+    mesh_limit_m = 2.0 * float(state.grid.delr[0]) if state.grid is not None else 3000.0
     for y in sorted(combined["time_years"].unique()):
         sub = combined[combined["time_years"] == y].sort_values("s_total", ascending=False)
         complexes: list[ComplexDrawdown] = []
@@ -328,6 +332,7 @@ def _df_to_year_results(combined: pd.DataFrame, threshold: float) -> list[YearRe
             already = s_appr >= threshold
             exceeds = s_tot >= threshold
             triggered = exceeds and not already
+            r_m = float(r["r_m"]) if has_r and not pd.isna(r["r_m"]) else None
             complexes.append(ComplexDrawdown(
                 complex_id=str(r["receptor_id"]),
                 n_springs=int(r["n_springs"]) if has_n and not pd.isna(r["n_springs"]) else 1,
@@ -335,10 +340,11 @@ def _df_to_year_results(combined: pd.DataFrame, threshold: float) -> list[YearRe
                 s_additional_m=float(r["s_additional"]),
                 s_total_m=s_tot,
                 s_additional_theis_m=float(r["drawdown_m_theis"]) if has_theis and not pd.isna(r["drawdown_m_theis"]) else None,
-                r_to_proposed_m=float(r["r_m"]) if has_r and not pd.isna(r["r_m"]) else None,
+                r_to_proposed_m=r_m,
                 exceeds_threshold=exceeds,
                 already_exceeded=already,
                 triggered_by_proposed=triggered,
+                mesh_dependent=(r_m is not None and r_m < mesh_limit_m),
             ))
         out.append(YearResults(
             time_years=float(y),

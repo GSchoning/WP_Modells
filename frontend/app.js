@@ -1344,8 +1344,11 @@ function renderTable(result) {
                     : c.already_exceeded ? "already-row" : "";
     const cls = rowClass ? ` class="${rowClass}"` : "";
     const safeId = GABORA.escapeHtml(c.complex_id);
+    const meshMark = c.mesh_dependent
+      ? ` <span class="mesh-flag" title="Within ~2 grid cells of a proposed bore — drawdown at this receptor is mesh-dependent and carries extra numerical uncertainty">†</span>`
+      : "";
     html += `<tr${cls} data-id="${safeId}">`;
-    html += `<td>${safeId}</td>`;
+    html += `<td>${safeId}${meshMark}</td>`;
     html += `<td class="num">${fmt(c.s_approved_m)}</td>`;
     html += `<td class="num">${fmt(c.s_additional_m)}</td>`;
     if (hasTheis) html += `<td class="num">${fmt(c.s_additional_theis_m)}</td>`;

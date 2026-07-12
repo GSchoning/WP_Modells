@@ -512,3 +512,4 @@ tr.row-selected  { box-shadow: inset 3px 0 0 var(--accent); }
   font: 500 0.78rem "Inter", sans-serif; cursor: pointer;
 }
 .csv-btn:hover { background: var(--accent-soft); color: var(--accent); }
+.mesh-flag { color: #b45309; font-weight: 700; cursor: help; }

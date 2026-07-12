@@ -71,8 +71,15 @@ def formation_avg_T_S(grid: Grid) -> tuple[float, float]:
         mean is the standard homogeneous-equivalent transmissivity
         (Matheron 1967; Gelhar 1993). Robust against very high / very
         low cell outliers in calibrated fields.
-      - S: arithmetic mean of Ss × thickness — storage is additive, so
-        the arithmetic mean is the appropriate aggregate.
+      - S: **median** of Ss × thickness over active cells. The obvious
+        arithmetic mean is unusable for the Precipice data: the ~1.5%
+        of cells in the outcrop carry water-table-scale storage
+        (S ≈ 0.3, the parent model's negative-SS convention for
+        unconfined cells) and drag the mean ~55× above the confined
+        median, roughly halving the Theis drawdown estimate at typical
+        spring distances. The receptor propagation path is through the
+        confined formation, so the confined-typical (median) S is the
+        representative value.
 
     Returns (T, S) in (m²/day, dimensionless).
     """
@@ -94,8 +101,9 @@ def formation_avg_T_S(grid: Grid) -> tuple[float, float]:
         raise ValueError("formation_avg_T_S: no active cells with positive T.")
     T_geo = float(np.exp(np.log(T_pos).mean()))
 
-    S_arith = float(S_cells[S_cells > 0].mean()) if (S_cells > 0).any() else 1e-4
-    return T_geo, S_arith
+    S_pos = S_cells[S_cells > 0]
+    S_median = float(np.median(S_pos)) if S_pos.size else 1e-4
+    return T_geo, S_median
 
 
 def theis_at_springs(

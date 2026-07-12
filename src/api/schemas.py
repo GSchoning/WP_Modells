@@ -77,6 +77,10 @@ class ComplexDrawdown(BaseModel):
     exceeds_threshold: bool = False                   # s_total_m >= regulatory threshold
     already_exceeded: bool = False                    # s_approved_m alone >= threshold
     triggered_by_proposed: bool = False               # s_approved < threshold but s_total >=
+    # Receptor sits within ~2 grid cells of a proposed well — drawdown in
+    # and next to the well cell is mesh-dependent (point sink in a finite
+    # cell), so the value carries extra numerical uncertainty.
+    mesh_dependent: bool = False
 
 
 class YearResults(BaseModel):
