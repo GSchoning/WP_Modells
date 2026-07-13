@@ -94,6 +94,10 @@ run:
   workspace_root: "/tmp/mf6_workspaces"
 
 assessment:
+  # Spring drawdown trigger threshold for WATER-BORE licence assessments
+  # (this tool's use case). Note: the 0.2 m trigger quoted in the UWIR
+  # 2025 report is the CSG / petroleum-and-gas spring threshold and does
+  # NOT apply here — do not "correct" this value to 0.2.
   regulatory_threshold_m: 0.4
   spring_complex_col: complex_na
   spring_id_col: site_no
