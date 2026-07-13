@@ -59,6 +59,7 @@ def baseline_key(cfg: Config, config_path: Path) -> str:
         _file_sha256(Path(cfg.inputs.properties_csv)),
         _file_sha256(Path(cfg.inputs.water_use.path)),
         f"rmult={cfg.assessment.recharge_multiplier:.6g}",
+        f"bmode={cfg.assessment.boundary_mode}",
         f"chdq={','.join(cfg.assessment.chd_quadrants or [])}",
     ]
     if cfg.inputs.springs is not None and Path(cfg.inputs.springs).exists():

@@ -79,9 +79,9 @@
     <div class="notes">
       <h3>What you're looking at</h3>
       <p><strong>Active cells</strong> are the modelled domain — the formation extent from the properties CSV.</p>
-      <p><strong>Outcrop / recharge</strong> cells receive recharge from above. Non-outcrop cells get zero recharge.</p>
-      <p><strong>CHD boundary</strong> cells have heads pinned to NTOP. They sit on the deep pinch-out edge so recharge has somewhere to leave the system.</p>
-      <p><strong>No-flow boundary</strong> cells are active edge cells that <em>don't</em> have CHD — typically the outcrop pinch-out edge, where the boundary is a recharge inflow rather than a regional discharge.</p>
+      <p><strong>Outcrop / recharge</strong> cells receive recharge from above and carry rejected-recharge drains at the minimum in-cell DEM elevation. Non-outcrop cells get zero recharge.</p>
+      <p><strong>No-flow boundary</strong> is the default for the whole perimeter: the boundary audit showed it is almost entirely a thin pinch-out fringe (median 6–19 m thick), so a closed boundary is the physically correct — and conservative — treatment. Steady-state discharge happens through the outcrop drains.</p>
+      <p><strong>CHD boundary</strong> cells (heads pinned to NTOP) appear only when the model runs in a legacy CHD mode or the no-flow steady state failed to converge and the bootstrap fell back. Normally this layer is empty.</p>
     </div>
   </aside>
 

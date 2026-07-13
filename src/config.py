@@ -98,10 +98,21 @@ class AssessmentCfg(BaseModel):
     # recharge, 2.0 doubles it. Drawdown is theoretically invariant under
     # confined-linear superposition, so this is mostly an integrity check.
     recharge_multiplier: float = 1.0
+    # Lateral boundary treatment. The boundary audit (2026-07) showed the
+    # perimeter is almost entirely a thin pinch-out fringe (thickness
+    # p50 6-19 m vs 44 m interior; boundary T p50 ~8 m²/d), so the
+    # physically correct default is closed:
+    #   - "no_flow":       entire perimeter no-flow. Requires drains
+    #                      (rejected recharge) as the steady-state outlet.
+    #                      Conservative for drawdown (never absorbs it).
+    #   - "chd_quadrants": legacy — CHD on chd_quadrants faces, head=NTOP.
+    #   - "chd_all":       CHD on every active-edge cell.
+    # If the steady state fails to converge under "no_flow", the bootstrap
+    # falls back to the CHD configurations with a loud warning.
+    boundary_mode: Literal["no_flow", "chd_quadrants", "chd_all"] = "no_flow"
     # Compass quadrants (relative to the active-domain centroid) where the
-    # boundary CHD is placed. Empty/None = all four (NE, NW, SW, SE).
-    # Set to e.g. ["NW", "SE"] to keep CHD only on the deep-pinch-out
-    # edges and leave the outcrop / regional-flow sides as no-flow.
+    # boundary CHD is placed in "chd_quadrants" mode (also the fallback
+    # order if "no_flow" cannot converge). Empty/None = all four.
     chd_quadrants: list[Literal["N", "NE", "E", "SE", "S", "SW", "W", "NW"]] | None = None
 
 

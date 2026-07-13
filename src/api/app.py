@@ -235,24 +235,40 @@ def _bootstrap_ic() -> None:
     state.drn_cells = drn_cells
 
     quadrants = state.cfg.assessment.chd_quadrants
+    mode = state.cfg.assessment.boundary_mode
     chd_filtered = active_boundary_chd_cells(
         grid, exclude_mask=grid.outcrop_mask, quadrants=quadrants,
     )
     chd_unfiltered = active_boundary_chd_cells(grid)
-    attempts = [
-        (
-            f"quadrants={quadrants or 'all'} + outcrop excluded",
-            chd_filtered,
-        ),
-        ("all-edges fallback", chd_unfiltered),
-    ]
-    for label, chd in attempts:
+
+    # Attempt ladder ordered by the configured boundary mode. The boundary
+    # audit showed the perimeter is almost entirely a thin pinch-out fringe,
+    # so "no_flow" (closed perimeter, drains as the steady-state outlet) is
+    # the physically-preferred default; CHD configs remain as convergence
+    # fallbacks only, and falling back is reported loudly because it
+    # changes the conceptual model.
+    attempts: list[tuple[str, list]] = []
+    if mode == "no_flow":
+        if not drn_cells:
+            print("[boundary] WARNING: no_flow mode without drains — the "
+                  "steady state has no outlet for recharge and will likely "
+                  "fail; enable drains or switch boundary_mode.")
+        attempts.append(("no-flow perimeter (pinch-out) + drains", []))
+    if mode in ("no_flow", "chd_quadrants"):
+        attempts.append((f"CHD quadrants={quadrants or 'all'} + outcrop excluded", chd_filtered))
+    attempts.append(("all-edges CHD", chd_unfiltered))
+
+    for i, (label, chd) in enumerate(attempts):
         try:
             ic = run_steady_state(state.cfg, grid, workspace, chd_cells=chd,
                                   drn_cells=drn_cells)
             state.chd_cells = chd
             state.ic_head = ic
             _linearise_drains(ic)
+            if i > 0:
+                print(f"[boundary] WARNING: configured boundary_mode='{mode}' "
+                      f"did not converge; fell back to '{label}'. The "
+                      f"conceptual model differs from the configured one.")
             print(f"[boundary] steady-state converged with {label} ({len(chd)} CHD cells)")
             return
         except RuntimeError as exc:

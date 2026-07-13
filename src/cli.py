@@ -125,8 +125,19 @@ def run(
     # holds. Outcrop cells are excluded from the CHD set: the outcrop edge
     # is a recharge inflow, not a regional discharge — pinning heads there
     # would suppress the recharge response.
-    chd_cells = active_boundary_chd_cells(grid, exclude_mask=grid.outcrop_mask)
-    typer.echo(f"\nBoundary CHD on {len(chd_cells)} active-edge cells (head = NTOP, outcrop excluded).")
+    mode = cfg.assessment.boundary_mode
+    if mode == "no_flow":
+        chd_cells = []
+        typer.echo("\nBoundary: no-flow perimeter (pinch-out) — drains provide the steady-state outlet.")
+    elif mode == "chd_quadrants":
+        chd_cells = active_boundary_chd_cells(
+            grid, exclude_mask=grid.outcrop_mask,
+            quadrants=cfg.assessment.chd_quadrants,
+        )
+        typer.echo(f"\nBoundary CHD on {len(chd_cells)} active-edge cells (head = NTOP, outcrop excluded).")
+    else:  # chd_all
+        chd_cells = active_boundary_chd_cells(grid)
+        typer.echo(f"\nBoundary CHD on all {len(chd_cells)} active-edge cells (head = NTOP).")
 
     # Rejected-recharge drains at min-DEM elevation in outcrop cells.
     drn_cells = []

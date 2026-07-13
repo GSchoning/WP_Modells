@@ -12,3 +12,7 @@ def test_repo_config_loads():
     assert cfg.inputs.water_use.source_crs == "EPSG:4283"
     assert cfg.inputs.water_use.rate_col == "ML_Aquifer"
     assert "Stock_Domestic" in cfg.inputs.water_use.receptor_filter["exclude_values"]
+    # Boundary-audit outcome: closed perimeter is the default, with drains
+    # providing the steady-state outlet.
+    assert cfg.assessment.boundary_mode == "no_flow"
+    assert cfg.drains.enabled is True
