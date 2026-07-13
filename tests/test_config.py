@@ -12,7 +12,8 @@ def test_repo_config_loads():
     assert cfg.inputs.water_use.source_crs == "EPSG:4283"
     assert cfg.inputs.water_use.rate_col == "ML_Aquifer"
     assert "Stock_Domestic" in cfg.inputs.water_use.receptor_filter["exclude_values"]
-    # Boundary-audit outcome: closed perimeter is the default, with drains
-    # providing the steady-state outlet.
-    assert cfg.assessment.boundary_mode == "no_flow"
+    # Boundary-audit + UWIR 2019 Fig A1-14 outcome: closed pinch-outs,
+    # GHBs only on the W/S truncation faces, drains as the SS outlet.
+    assert cfg.assessment.boundary_mode == "uwir_ghb"
+    assert cfg.assessment.ghb_faces == ["W", "S"]
     assert cfg.drains.enabled is True

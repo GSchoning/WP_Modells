@@ -89,20 +89,20 @@ assessment:
   spring_complex_col: complex_na
   spring_id_col: site_no
   recharge_multiplier: 1.0
-  # Lateral boundary treatment. The boundary audit (outputs/
-  # boundary_audit.csv) showed the perimeter is almost entirely a thin
-  # pinch-out fringe — thickness p50 6-19 m vs 44 m interior, boundary
-  # T p50 ~8 m²/d — so the physically correct treatment is a closed
-  # (no-flow) perimeter, with the outcrop drains providing the
-  # steady-state discharge. This is also conservative for drawdown:
-  # a closed boundary reflects a cone of depression rather than
-  # absorbing it. The one genuinely transmissive stretch (the western
-  # Eromanga Precipice corridor, T ~170 m²/d) is a candidate for a GHB
-  # far-field boundary once OGIA's potentiometric surface is available.
-  boundary_mode: "no_flow"
-  # CHD placement used only in "chd_quadrants" mode, and as the
-  # convergence fallback if the no-flow steady state cannot balance
-  # recharge against the drains.
+  # Lateral boundary treatment, following the UWIR 2019 modelling report
+  # (Appendix A, Figure A1-14): the parent model closes every natural
+  # pinch-out edge and assigns GHBs only where the Precipice is truncated
+  # by the model-domain frame — the western (Eromanga) and southern
+  # faces. Our boundary audit (outputs/boundary_audit.csv) agrees: the
+  # perimeter is almost entirely a thin pinch-out fringe (thickness p50
+  # 6-19 m vs 44 m interior) and the western truncation face is the one
+  # transmissive corridor (T p50 ~158 m²/d). Set to "no_flow" to close
+  # the perimeter entirely (fully conservative sensitivity case).
+  boundary_mode: "uwir_ghb"
+  ghb_faces: ["W", "S"]        # per Fig A1-14; east (Kumbarilla divide) stays closed
+  ghb_conductance_scale: 1.0   # C = K·b per cell until OGIA values arrive
+  # CHD placement used only in "chd_quadrants" mode, and as the final
+  # convergence fallback.
   chd_quadrants: ["NW", "SE"]
 
 # Rejected-recharge drains in the outcrop, mirroring the parent regional

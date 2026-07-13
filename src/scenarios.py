@@ -205,7 +205,8 @@ def _sample_receptors(
 
 
 def run_steady_state(
-    cfg: Config, grid: Grid, workspace: Path, *, chd_cells=None, drn_cells=None
+    cfg: Config, grid: Grid, workspace: Path, *,
+    chd_cells=None, drn_cells=None, ghb_cells=None,
 ) -> np.ndarray:
     """Run the no-pumping steady-state pre-run; return initial heads (nlay, nrow, ncol)."""
     sim = build_steady_state(
@@ -214,6 +215,7 @@ def run_steady_state(
         name="ss",
         chd_cells=chd_cells,
         drn_cells=drn_cells,
+        ghb_cells=ghb_cells,
         complexity=cfg.solver.complexity,
         recharge_multiplier=cfg.assessment.recharge_multiplier,
     )
@@ -235,6 +237,7 @@ def run_scenario(
     *,
     chd_cells=None,
     ghb_cells=None,
+    drain_ghb_cells=None,
     proposed_wells: list[tuple[float, float, float]] | None = None,
     nopump_twin: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> ScenarioResult:
@@ -335,10 +338,15 @@ def run_scenario(
     drawdown_by_year = {y: drawdown[i] for y, i in year_idx.items()}
     chd_max_dd, noflow_max_dd = _boundary_drawdown_stats(drawdown[-1], grid, chd_cells)
 
+    # Drain-reversal QA runs only over the *linearised drain* GHBs — a
+    # far-field boundary GHB supplying water under drawdown is correct
+    # behaviour, not a linearisation error. Callers that mix boundary
+    # GHBs into ghb_cells pass the drain subset separately.
+    reversal_cells = drain_ghb_cells if drain_ghb_cells is not None else ghb_cells
     n_reversals = 0
-    if ghb_cells:
+    if reversal_cells:
         from .drains import count_reversals
-        n_reversals = count_reversals(list(ghb_cells), heads[-1])
+        n_reversals = count_reversals(list(reversal_cells), heads[-1])
 
     # Sample drawdown at every member spring, then aggregate to complex
     # taking the max — the regulatory unit of analysis is the complex,

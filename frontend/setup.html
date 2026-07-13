@@ -41,7 +41,7 @@
       <label class="layer-row">
         <input type="checkbox" id="toggle-chd" checked />
         <span class="swatch chd"></span>
-        <span class="layer-name">CHD boundary <span class="muted">(deep edge)</span></span>
+        <span class="layer-name">Far-field boundary <span class="muted">(GHB/CHD)</span></span>
       </label>
       <label class="layer-row">
         <input type="checkbox" id="toggle-noflow" checked />
@@ -80,8 +80,8 @@
       <h3>What you're looking at</h3>
       <p><strong>Active cells</strong> are the modelled domain — the formation extent from the properties CSV.</p>
       <p><strong>Outcrop / recharge</strong> cells receive recharge from above and carry rejected-recharge drains at the minimum in-cell DEM elevation. Non-outcrop cells get zero recharge.</p>
-      <p><strong>No-flow boundary</strong> is the default for the whole perimeter: the boundary audit showed it is almost entirely a thin pinch-out fringe (median 6–19 m thick), so a closed boundary is the physically correct — and conservative — treatment. Steady-state discharge happens through the outcrop drains.</p>
-      <p><strong>CHD boundary</strong> cells (heads pinned to NTOP) appear only when the model runs in a legacy CHD mode or the no-flow steady state failed to converge and the bootstrap fell back. Normally this layer is empty.</p>
+      <p><strong>No-flow boundary</strong> covers every natural pinch-out edge — the audit showed the perimeter is almost entirely a thin fringe (median 6–19 m thick). Steady-state discharge happens through the outcrop drains.</p>
+      <p><strong>Far-field boundary</strong> cells are the western/southern truncation faces where the Precipice continues beyond the model frame — GHBs per the UWIR 2019 design (Fig A1-14). CHD cells appear here only if a legacy mode or convergence fallback is active.</p>
     </div>
   </aside>
 

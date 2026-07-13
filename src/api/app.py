@@ -46,7 +46,7 @@ from fastapi.staticfiles import StaticFiles
 from ..config import Config, load_config
 from ..grid import Grid, build_grid_from_properties, cell_of
 from ..io_layer import Inputs, ML_PER_YEAR_TO_M3_PER_DAY, load_inputs
-from ..model_builder import active_boundary_chd_cells
+from ..model_builder import active_boundary_chd_cells, truncation_face_ghb_cells
 from ..scenarios import ScenarioResult, run_scenario, run_steady_state
 from ..superposition import combine_receptor_tables
 from ..theis import formation_avg_T_S, theis_at_springs
@@ -110,6 +110,7 @@ class _State:
     chd_cells: list | None = None
     drn_cells: list | None = None                     # outcrop drains (steady state)
     ghb_cells: list | None = None                     # linearised drains (transient)
+    boundary_ghb: list | None = None                  # truncation-face far-field GHBs
     workspace_root: Path | None = None
     baseline: cache_mod.BaselineCache | None = None
     complex_centroids_4326: dict | None = None      # GeoJSON FeatureCollection
@@ -186,7 +187,8 @@ def _bootstrap_baseline(force: bool = False) -> cache_mod.BaselineCache:
         state.cfg, state.grid, state.inputs, "A",
         state.ic_head, state.workspace_root / "scen_A",
         chd_cells=state.chd_cells,
-        ghb_cells=state.ghb_cells,
+        ghb_cells=(state.boundary_ghb or []) + (state.ghb_cells or []),
+        drain_ghb_cells=state.ghb_cells or [],
     )
     cache = cache_mod.BaselineCache(
         key=key,
@@ -240,36 +242,50 @@ def _bootstrap_ic() -> None:
         grid, exclude_mask=grid.outcrop_mask, quadrants=quadrants,
     )
     chd_unfiltered = active_boundary_chd_cells(grid)
+    ghb_ws = truncation_face_ghb_cells(
+        grid, state.cfg.assessment.ghb_faces,
+        conductance_scale=state.cfg.assessment.ghb_conductance_scale,
+    )
 
     # Attempt ladder ordered by the configured boundary mode. The boundary
     # audit showed the perimeter is almost entirely a thin pinch-out fringe,
-    # so "no_flow" (closed perimeter, drains as the steady-state outlet) is
-    # the physically-preferred default; CHD configs remain as convergence
-    # fallbacks only, and falling back is reported loudly because it
-    # changes the conceptual model.
-    attempts: list[tuple[str, list]] = []
-    if mode == "no_flow":
-        if not drn_cells:
-            print("[boundary] WARNING: no_flow mode without drains — the "
-                  "steady state has no outlet for recharge and will likely "
-                  "fail; enable drains or switch boundary_mode.")
-        attempts.append(("no-flow perimeter (pinch-out) + drains", []))
-    if mode in ("no_flow", "chd_quadrants"):
-        attempts.append((f"CHD quadrants={quadrants or 'all'} + outcrop excluded", chd_filtered))
-    attempts.append(("all-edges CHD", chd_unfiltered))
+    # and UWIR 2019 Fig A1-14 places GHBs only on the W/S truncation faces —
+    # so "uwir_ghb" (closed pinch-outs + far-field GHBs where the formation
+    # is cut by the domain frame, drains as the steady-state outlet) is the
+    # preferred default. CHD configs remain as convergence fallbacks only,
+    # and falling back is reported loudly because it changes the
+    # conceptual model.
+    attempts: list[tuple[str, list, list]] = []   # (label, chd, boundary_ghb)
+    if mode in ("uwir_ghb", "no_flow") and not drn_cells:
+        print(f"[boundary] WARNING: {mode} mode without drains — the "
+              "steady state has no outlet for recharge and will likely "
+              "fail; enable drains or switch boundary_mode.")
+    if mode == "uwir_ghb":
+        attempts.append((
+            f"no-flow pinch-outs + {len(ghb_ws)} truncation-face GHBs "
+            f"({'/'.join(state.cfg.assessment.ghb_faces)}) + drains",
+            [], ghb_ws,
+        ))
+    if mode in ("uwir_ghb", "no_flow"):
+        attempts.append(("no-flow perimeter (pinch-out) + drains", [], []))
+    if mode in ("uwir_ghb", "no_flow", "chd_quadrants"):
+        attempts.append((f"CHD quadrants={quadrants or 'all'} + outcrop excluded", chd_filtered, []))
+    attempts.append(("all-edges CHD", chd_unfiltered, []))
 
-    for i, (label, chd) in enumerate(attempts):
+    for i, (label, chd, bghb) in enumerate(attempts):
         try:
             ic = run_steady_state(state.cfg, grid, workspace, chd_cells=chd,
-                                  drn_cells=drn_cells)
+                                  drn_cells=drn_cells, ghb_cells=bghb)
             state.chd_cells = chd
+            state.boundary_ghb = bghb
             state.ic_head = ic
             _linearise_drains(ic)
             if i > 0:
                 print(f"[boundary] WARNING: configured boundary_mode='{mode}' "
                       f"did not converge; fell back to '{label}'. The "
                       f"conceptual model differs from the configured one.")
-            print(f"[boundary] steady-state converged with {label} ({len(chd)} CHD cells)")
+            print(f"[boundary] steady-state converged with {label} "
+                  f"({len(chd)} CHD, {len(bghb)} boundary-GHB cells)")
             return
         except RuntimeError as exc:
             print(f"[boundary] steady-state failed with {label}: {exc}")
@@ -570,7 +586,8 @@ def _execute_scenario(
     c_result = run_scenario(
         state.cfg, state.grid, state.inputs, "C",
         state.ic_head, workspace, chd_cells=state.chd_cells,
-        ghb_cells=state.ghb_cells,
+        ghb_cells=(state.boundary_ghb or []) + (state.ghb_cells or []),
+        drain_ghb_cells=state.ghb_cells or [],
         proposed_wells=proposed_wells_xy_rate,
         nopump_twin=nopump_twin,
     )
@@ -1408,9 +1425,13 @@ def _bool_mask_to_png(mask: np.ndarray, hex_color: str, alpha: float = 0.7) -> b
 
 
 def _chd_mask() -> np.ndarray:
+    """Far-field boundary cells (CHD and truncation-face GHB) for the
+    setup-page layer."""
     g = state.grid
     mask = np.zeros((g.nrow, g.ncol), dtype=bool)
     for (_l, r, c, _h) in (state.chd_cells or []):
+        mask[r, c] = True
+    for (_l, r, c, _h, _cd) in (state.boundary_ghb or []):
         mask[r, c] = True
     return mask
 

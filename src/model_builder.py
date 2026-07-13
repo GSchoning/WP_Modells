@@ -140,6 +140,7 @@ def build_steady_state(
     name: str = "ss",
     chd_cells: Sequence[ChdRecord] | None = None,
     drn_cells: Sequence[DrnRecord] | None = None,
+    ghb_cells: Sequence[GhbRecord] | None = None,
     initial_head: np.ndarray | float | None = None,
     complexity: str = "MODERATE",
     recharge_multiplier: float = 1.0,
@@ -149,6 +150,8 @@ def build_steady_state(
     `drn_cells`: rejected-recharge drains in the outcrop. Real DRN here
     (the piecewise-linearity is fine for shaping the IC); the transient
     runs use the linearised GHB form instead.
+    `ghb_cells`: far-field boundary GHBs (truncation faces) — the same
+    records are reused unchanged in the transient runs.
     """
     sim, gwf = _make_sim(workspace, name, perioddata=[(1.0, 1, 1.0)], complexity=complexity)
     _add_dis(gwf, grid)
@@ -158,6 +161,7 @@ def build_steady_state(
     _add_rch(gwf, grid, multiplier=recharge_multiplier)
     _add_chd(gwf, chd_cells or [])
     _add_drn(gwf, drn_cells or [])
+    _add_ghb(gwf, ghb_cells or [])
     _add_oc(gwf, name)
     return sim
 
@@ -194,6 +198,48 @@ def build_transient(
     _add_wel(gwf, list(wells))
     _add_oc(gwf, name, n_periods=len(perioddata))
     return sim
+
+
+def truncation_face_ghb_cells(
+    grid: Grid,
+    faces: Sequence[str] = ("W", "S"),
+    *,
+    conductance_scale: float = 1.0,
+) -> list[GhbRecord]:
+    """GHB records on active cells lying on the grid frame — where the
+    formation is truncated by the parent model's domain edge rather than
+    pinching out naturally.
+
+    Mirrors the UWIR 2019 design (Appendix A, Figure A1-14): the Precipice
+    carries GHBs on its *western and southern* truncation faces only; every
+    natural pinch-out edge is no-flow. Conductance per cell is estimated as
+    C = K·b·(W/L) = K·b for square cells — replace with the parent model's
+    calibrated values when supplied. Head is set to NTOP per cell as an
+    interim: in the twin-differenced linear model the GHB *head* cancels in
+    drawdown (only the conductance matters); it affects only the IC and the
+    drain-state classification.
+
+    `faces`: subset of {"N", "S", "E", "W"} (grid frame sides).
+    """
+    cells: list[GhbRecord] = []
+    active = grid.idomain[0] == 1
+    side_masks = {
+        "N": (np.zeros_like(active)), "S": (np.zeros_like(active)),
+        "W": (np.zeros_like(active)), "E": (np.zeros_like(active)),
+    }
+    side_masks["N"][0, :] = True
+    side_masks["S"][-1, :] = True
+    side_masks["W"][:, 0] = True
+    side_masks["E"][:, -1] = True
+    want = np.zeros_like(active)
+    for f in faces:
+        want |= side_masks[f.upper()]
+    rs, cs = np.where(active & want)
+    for r, c in zip(rs, cs):
+        thickness = max(float(grid.top[r, c] - grid.botm[0, r, c]), 1.0)
+        cond = conductance_scale * float(grid.k[0, r, c]) * thickness
+        cells.append((0, int(r), int(c), float(grid.top[r, c]), cond))
+    return cells
 
 
 def boundary_chd_cells(grid: Grid, head: float | np.ndarray) -> list[ChdRecord]:

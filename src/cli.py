@@ -16,7 +16,7 @@ from .config import load_config
 from .figures import make_all as make_figures
 from .grid import build_grid_from_properties
 from .io_layer import load_inputs, validate, ML_PER_YEAR_TO_M3_PER_DAY
-from .model_builder import active_boundary_chd_cells
+from .model_builder import active_boundary_chd_cells, truncation_face_ghb_cells
 from .reporting import write_impact_report, write_validation_report
 from .scenarios import run_scenario, run_steady_state
 from .superposition import combine_rasters, combine_receptor_tables
@@ -126,7 +126,16 @@ def run(
     # is a recharge inflow, not a regional discharge — pinning heads there
     # would suppress the recharge response.
     mode = cfg.assessment.boundary_mode
-    if mode == "no_flow":
+    boundary_ghb = []
+    if mode == "uwir_ghb":
+        chd_cells = []
+        boundary_ghb = truncation_face_ghb_cells(
+            grid, cfg.assessment.ghb_faces,
+            conductance_scale=cfg.assessment.ghb_conductance_scale,
+        )
+        typer.echo(f"\nBoundary: no-flow pinch-outs + {len(boundary_ghb)} truncation-face GHBs "
+                   f"({'/'.join(cfg.assessment.ghb_faces)}) — UWIR 2019 Fig A1-14 design.")
+    elif mode == "no_flow":
         chd_cells = []
         typer.echo("\nBoundary: no-flow perimeter (pinch-out) — drains provide the steady-state outlet.")
     elif mode == "chd_quadrants":
@@ -156,7 +165,7 @@ def run(
     typer.echo("Running steady-state pre-run (no pumping, recharge on)…")
     try:
         ic_head = run_steady_state(cfg, grid, workspace_root / "ss", chd_cells=chd_cells,
-                                   drn_cells=drn_cells)
+                                   drn_cells=drn_cells, ghb_cells=boundary_ghb)
     except RuntimeError as exc:
         typer.echo(f"  steady-state failed: {exc}")
         # Uniform IC fallback. A spatially-varying grid.top is a non-
@@ -185,7 +194,8 @@ def run(
             results[scen] = run_scenario(
                 cfg, grid, inputs, scen, ic_head, workspace_root / f"scen_{scen}",
                 chd_cells=chd_cells,
-                ghb_cells=ghb_cells,
+                ghb_cells=boundary_ghb + ghb_cells,
+                drain_ghb_cells=ghb_cells,
                 nopump_twin=nopump_twin,
             )
             # The no-pump twin is scenario-independent — reuse it so the

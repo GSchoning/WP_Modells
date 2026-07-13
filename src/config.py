@@ -100,16 +100,25 @@ class AssessmentCfg(BaseModel):
     recharge_multiplier: float = 1.0
     # Lateral boundary treatment. The boundary audit (2026-07) showed the
     # perimeter is almost entirely a thin pinch-out fringe (thickness
-    # p50 6-19 m vs 44 m interior; boundary T p50 ~8 m²/d), so the
-    # physically correct default is closed:
+    # p50 6-19 m vs 44 m interior; boundary T p50 ~8 m²/d), and the UWIR
+    # 2019 report (Appendix A, Fig A1-14) shows the parent model assigns
+    # GHBs on the Precipice's *western and southern* truncation faces
+    # only, with natural pinch-outs closed:
+    #   - "uwir_ghb":      no-flow perimeter + GHB on the W/S grid-frame
+    #                      truncation faces (parent-model design).
     #   - "no_flow":       entire perimeter no-flow. Requires drains
     #                      (rejected recharge) as the steady-state outlet.
     #                      Conservative for drawdown (never absorbs it).
     #   - "chd_quadrants": legacy — CHD on chd_quadrants faces, head=NTOP.
     #   - "chd_all":       CHD on every active-edge cell.
-    # If the steady state fails to converge under "no_flow", the bootstrap
-    # falls back to the CHD configurations with a loud warning.
-    boundary_mode: Literal["no_flow", "chd_quadrants", "chd_all"] = "no_flow"
+    # If the steady state fails to converge under the configured mode, the
+    # bootstrap falls back down this list with a loud warning.
+    boundary_mode: Literal["uwir_ghb", "no_flow", "chd_quadrants", "chd_all"] = "uwir_ghb"
+    # Grid-frame faces that get truncation GHBs in "uwir_ghb" mode.
+    ghb_faces: list[Literal["N", "S", "E", "W"]] = Field(default_factory=lambda: ["W", "S"])
+    # Scale on the estimated GHB conductance C = K·b per cell (interim
+    # until the parent model's calibrated values are supplied).
+    ghb_conductance_scale: float = 1.0
     # Compass quadrants (relative to the active-domain centroid) where the
     # boundary CHD is placed in "chd_quadrants" mode (also the fallback
     # order if "no_flow" cannot converge). Empty/None = all four.
