@@ -47,7 +47,9 @@ class GridCfg(BaseModel):
     buffer_m: float = 50_000
     boundary_type: Literal["no_flow", "chd_regional_gradient"] = "no_flow"
     # Source CSV is exported from a multi-layer regional model; only rows
-    # with ILAY == this value are used. The Precipice Sandstone is layer 24.
+    # with ILAY == this value are used. The Precipice Sandstone is layer 24
+    # in the current model revision (it was layer 23 in the 2019 UWIR
+    # model — figures in the 2019 modelling report use the old numbering).
     properties_layer: int = 24
 
 
