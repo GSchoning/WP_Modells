@@ -25,10 +25,14 @@ inputs:
   # outcrop; replace with the real topographic DEM when supplied.
   dem: "Data/DEM/PCP_DEM.tif"
 
-  # The delivered properties CSV has an empty rch column. Interim uniform
-  # recharge over outcrop from the UWIR 2025 layer-24 water balance:
-  # 25,283 ML/yr over 1,231 km² (Table 6-14). Recharge cancels in the
-  # twin-differenced drawdown; this only shapes the IC and drain states.
+  # The properties CSV's rch column is empty, so recharge is supplied
+  # per-cell from this OGIA steady-state export (INODE, RCH_SS_m_per_day),
+  # applied at exactly the cells OGIA recharges (northern exposed-outcrop
+  # belt, 215 cells, ~12,400 ML/yr). Recharge cancels in the twin-
+  # differenced drawdown; it shapes the IC and drain states.
+  recharge_csv: "Data/Properties_recharge/Precipice_L24_SS_recharge.csv"
+  # Uniform-over-outcrop last resort if neither rch column nor the CSV
+  # above provides values (UWIR balance ÷ area = 5.63e-5 m/d).
   recharge_fallback_m_per_day: 5.63e-5
 
   # Water-use database. Coordinates GIS_LAT/GIS_LNG are GDA94 geographic

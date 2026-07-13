@@ -59,6 +59,8 @@ def baseline_key(cfg: Config, config_path: Path) -> str:
         CACHE_SCHEMA_VERSION,
         _file_sha256(Path(config_path)),
         _file_sha256(Path(cfg.inputs.properties_csv)),
+        (_file_sha256(Path(cfg.inputs.recharge_csv))
+         if cfg.inputs.recharge_csv and Path(cfg.inputs.recharge_csv).exists() else "no-rch-csv"),
         _file_sha256(Path(cfg.inputs.water_use.path)),
         f"rmult={cfg.assessment.recharge_multiplier:.6g}",
         f"bmode={cfg.assessment.boundary_mode}",

@@ -35,9 +35,14 @@ class InputsCfg(BaseModel):
     water_use: WaterUseCfg
     springs: Path | None = None
     proposed_bore: ProposedBoreCfg
-    # Uniform recharge over outcrop, used only when the properties CSV's
-    # rch column is empty (the delivered export has no recharge values).
-    # UWIR 2025 layer-24 balance: 25,283 ML/yr over 1,231 km² = 5.63e-5 m/d.
+    # Per-cell steady-state recharge (m/day) keyed by INODE — the OGIA
+    # export (columns INODE, RCH_SS_m_per_day). Used when the properties
+    # CSV's rch column is empty (as the delivered export is). Applied at
+    # exactly the cells OGIA recharges (northern exposed-outcrop belt).
+    recharge_csv: Path | None = None
+    # Uniform-over-outcrop last resort, used only when neither the rch
+    # column nor recharge_csv provides values. UWIR 2025 layer-24 balance:
+    # 25,283 ML/yr over 1,231 km² = 5.63e-5 m/d.
     recharge_fallback_m_per_day: float | None = None
 
 

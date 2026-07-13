@@ -71,6 +71,26 @@ def _read_water_use(cfg: Config) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
     return pumping, receptors
 
 
+def load_recharge_by_inode(cfg: Config) -> dict[int, float] | None:
+    """Per-cell steady-state recharge (m/day) keyed by INODE, or None.
+
+    Reads cfg.inputs.recharge_csv — an OGIA export with columns
+    INODE and RCH_SS_m_per_day (the steady-state recharge field for the
+    Precipice outcrop). Joined to the grid by INODE in grid.py.
+    """
+    path = getattr(cfg.inputs, "recharge_csv", None)
+    if path is None or not Path(path).exists():
+        return None
+    df = pd.read_csv(path)
+    rate_col = next((c for c in df.columns if "rch" in c.lower() or "rech" in c.lower()), None)
+    if "INODE" not in df.columns or rate_col is None:
+        raise ValueError(
+            f"recharge_csv {path} must have INODE and a recharge-rate column; "
+            f"found {list(df.columns)}"
+        )
+    return {int(i): float(r) for i, r in zip(df["INODE"], df[rate_col]) if pd.notna(r)}
+
+
 def _read_springs(cfg: Config) -> gpd.GeoDataFrame | None:
     p = cfg.inputs.springs
     if p is None or not Path(p).exists():

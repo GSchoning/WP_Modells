@@ -18,7 +18,7 @@ def _toy_properties(dx: float = 1500.0) -> pd.DataFrame:
                     # Real CSV convention: the Precipice is ILAY=24 (the
                     # builder filters other layers out by default).
                     "ILAY": 24,
-                    "INODE": ic * ir,
+                    "INODE": (ir - 1) * 3 + ic,     # unique per (row, col)
                     "IBOUND": 1,
                     "NTOP": 100.0,
                     "NBOT": 0.0,
@@ -86,3 +86,23 @@ def test_recharge_fallback_applied_when_rch_empty():
     # Without a fallback the field stays zero (and RCH is simply omitted).
     g2 = build_grid_from_properties(props, "EPSG:28355")
     assert not np.any(g2.rch > 0)
+
+
+def test_per_cell_recharge_by_inode_takes_precedence():
+    """The INODE-keyed OGIA field is applied at exactly its cells (and wins
+    over the uniform fallback) when the rch column is empty."""
+    props = _toy_properties()
+    props["rch"] = np.nan
+    # Recharge on two specific cells only, keyed by their INODE.
+    r1 = props.loc[(props.IROW == 1) & (props.ICOL == 1), "INODE"].iloc[0]
+    r2 = props.loc[(props.IROW == 1) & (props.ICOL == 2), "INODE"].iloc[0]
+    rbi = {int(r1): 3.0e-5, int(r2): 7.0e-5}
+    g = build_grid_from_properties(props, "EPSG:28355",
+                                   recharge_by_inode=rbi,
+                                   recharge_fallback_m_per_day=5.63e-5)
+    assert np.isclose(g.rch[0, 0], 3.0e-5)      # (IROW1,ICOL1) → row0,col0
+    assert np.isclose(g.rch[0, 1], 7.0e-5)
+    # Every other cell — including other outcrop cells — is zero: the
+    # per-cell field defines the recharge footprint, not the fallback.
+    mask = np.zeros_like(g.rch, dtype=bool); mask[0, 0] = mask[0, 1] = True
+    assert np.all(g.rch[~mask] == 0)

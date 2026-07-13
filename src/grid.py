@@ -40,6 +40,7 @@ class Grid:
 
 def build_grid_from_properties(
     properties: pd.DataFrame, crs: str, *, layer: int = 24,
+    recharge_by_inode: dict[int, float] | None = None,
     recharge_fallback_m_per_day: float | None = None,
 ) -> Grid:
     """Reconstruct a single-layer Grid from the per-cell properties table.
@@ -49,6 +50,11 @@ def build_grid_from_properties(
     we don't overlay properties from other formations onto the same (row, col).
 
     Assumes ICOL / IROW are 1-based and X/Y are cell centres in project CRS.
+
+    Recharge precedence: (1) `recharge_by_inode` (per-cell steady-state
+    field keyed by INODE — the authoritative OGIA export) if supplied and
+    the properties `rch` column is empty; (2) the `rch` column if it has
+    values; (3) a uniform `recharge_fallback_m_per_day` over outcrop.
     """
     df = properties.copy()
     if "ILAY" in df.columns:
@@ -107,18 +113,35 @@ def build_grid_from_properties(
 
     rch = np.where(outcrop_mask, rch, 0.0)
 
-    # The delivered properties export has an entirely empty `rch` column.
-    # Recharge cancels exactly in the twin-differenced linear drawdown, but
-    # the steady state (and hence the drain-state linearisation) needs it.
-    # Until a per-cell field is supplied, fall back to a uniform rate over
-    # the outcrop (configured; the UWIR 2025 layer-24 water balance gives
-    # 25,283 ML/yr over 1,231 km² = 5.63e-5 m/d).
-    if not np.any(rch > 0) and recharge_fallback_m_per_day:
-        rch = np.where(outcrop_mask, float(recharge_fallback_m_per_day), 0.0)
-        import sys
+    # If the properties `rch` column is empty (the delivered export is),
+    # prefer the per-cell steady-state recharge field keyed by INODE — the
+    # authoritative OGIA product. It is applied at exactly the cells OGIA
+    # recharges (the northern exposed-outcrop belt), zero elsewhere.
+    import sys
+    if not np.any(rch > 0) and recharge_by_inode and "INODE" in df.columns:
+        inodes = df["INODE"].to_numpy()
+        rr = df["IROW"].to_numpy() - 1
+        cc = df["ICOL"].to_numpy() - 1
+        rch = np.zeros((nrow, ncol), dtype=float)
+        n_applied = 0
+        for ino, r_, c_ in zip(inodes, rr, cc):
+            val = recharge_by_inode.get(int(ino))
+            if val is not None and val > 0:
+                rch[r_, c_] = float(val)
+                n_applied += 1
         print(
-            f"[grid] rch column empty — applied uniform fallback recharge "
-            f"{recharge_fallback_m_per_day:.3g} m/d over {int(outcrop_mask.sum())} outcrop cells",
+            f"[grid] applied per-cell steady-state recharge on {n_applied} cells "
+            f"from INODE-keyed field (total "
+            f"{rch.sum()*float(delr[0])*float(delc[0])*365.25/1000:,.0f} ML/yr)",
+            file=sys.stderr,
+        )
+    elif not np.any(rch > 0) and recharge_fallback_m_per_day:
+        # Last resort: uniform rate over outcrop (only if no per-cell field).
+        rch = np.where(outcrop_mask, float(recharge_fallback_m_per_day), 0.0)
+        print(
+            f"[grid] rch column empty and no per-cell field — applied uniform "
+            f"fallback recharge {recharge_fallback_m_per_day:.3g} m/d over "
+            f"{int(outcrop_mask.sum())} outcrop cells",
             file=sys.stderr,
         )
 

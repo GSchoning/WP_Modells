@@ -15,7 +15,7 @@ import typer
 from .config import load_config
 from .figures import make_all as make_figures
 from .grid import build_grid_from_properties
-from .io_layer import load_inputs, validate, ML_PER_YEAR_TO_M3_PER_DAY
+from .io_layer import load_inputs, validate, load_recharge_by_inode, ML_PER_YEAR_TO_M3_PER_DAY
 from .model_builder import active_boundary_chd_cells, truncation_face_ghb_cells
 from .reporting import write_impact_report, write_validation_report
 from .scenarios import run_scenario, run_steady_state
@@ -41,6 +41,7 @@ def validate_cmd(config: Path = typer.Option("config.yaml", "--config", "-c")):
     inputs = load_inputs(cfg)
     grid = build_grid_from_properties(
         inputs.properties, cfg.project.crs, layer=cfg.grid.properties_layer,
+        recharge_by_inode=load_recharge_by_inode(cfg),
         recharge_fallback_m_per_day=cfg.inputs.recharge_fallback_m_per_day,
     )
     findings = validate(inputs, cfg, grid)
@@ -78,6 +79,7 @@ def run(
     typer.echo(f"Building grid from properties.csv (ILAY={cfg.grid.properties_layer})…")
     grid = build_grid_from_properties(
         inputs.properties, cfg.project.crs, layer=cfg.grid.properties_layer,
+        recharge_by_inode=load_recharge_by_inode(cfg),
         recharge_fallback_m_per_day=cfg.inputs.recharge_fallback_m_per_day,
     )
     _print_grid_summary(grid)

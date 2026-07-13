@@ -45,7 +45,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..config import Config, load_config
 from ..grid import Grid, build_grid_from_properties, cell_of
-from ..io_layer import Inputs, ML_PER_YEAR_TO_M3_PER_DAY, load_inputs
+from ..io_layer import Inputs, ML_PER_YEAR_TO_M3_PER_DAY, load_inputs, load_recharge_by_inode
 from ..model_builder import active_boundary_chd_cells, truncation_face_ghb_cells
 from ..scenarios import ScenarioResult, run_scenario, run_steady_state
 from ..superposition import combine_receptor_tables
@@ -347,6 +347,7 @@ async def lifespan(app: FastAPI):
     state.grid = build_grid_from_properties(
         state.inputs.properties, state.cfg.project.crs,
         layer=state.cfg.grid.properties_layer,
+        recharge_by_inode=load_recharge_by_inode(state.cfg),
         recharge_fallback_m_per_day=state.cfg.inputs.recharge_fallback_m_per_day,
     )
     state.workspace_root = Path(state.cfg.run.workspace_root)
