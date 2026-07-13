@@ -12,8 +12,13 @@ def test_repo_config_loads():
     assert cfg.inputs.water_use.source_crs == "EPSG:4283"
     assert cfg.inputs.water_use.rate_col == "ML_Aquifer"
     assert "Stock_Domestic" in cfg.inputs.water_use.receptor_filter["exclude_values"]
-    # Boundary-audit + UWIR 2019 Fig A1-14 outcome: closed pinch-outs,
-    # GHBs only on the W/S truncation faces, drains as the SS outlet.
+    # Boundary-audit + UWIR 2025 Fig F.1-15 outcome: closed pinch-outs,
+    # GHBs only on the WESTERN truncation face (2019 also had southern;
+    # 2025 does not), calibrated pilot heads, drains as the SS outlet.
     assert cfg.assessment.boundary_mode == "uwir_ghb"
-    assert cfg.assessment.ghb_faces == ["W", "S"]
+    assert cfg.assessment.ghb_faces == ["W"]
+    assert cfg.assessment.ghb_heads == "uwir2025_pilot"
     assert cfg.drains.enabled is True
+    # The delivered CSV's rch column is empty; the UWIR-balance fallback
+    # (25,283 ML/yr over 1,231 km²) must be configured.
+    assert cfg.inputs.recharge_fallback_m_per_day is not None

@@ -245,6 +245,7 @@ def _bootstrap_ic() -> None:
     ghb_ws = truncation_face_ghb_cells(
         grid, state.cfg.assessment.ghb_faces,
         conductance_scale=state.cfg.assessment.ghb_conductance_scale,
+        head_source=state.cfg.assessment.ghb_heads,
     )
 
     # Attempt ladder ordered by the configured boundary mode. The boundary
@@ -346,6 +347,7 @@ async def lifespan(app: FastAPI):
     state.grid = build_grid_from_properties(
         state.inputs.properties, state.cfg.project.crs,
         layer=state.cfg.grid.properties_layer,
+        recharge_fallback_m_per_day=state.cfg.inputs.recharge_fallback_m_per_day,
     )
     state.workspace_root = Path(state.cfg.run.workspace_root)
     state.workspace_root.mkdir(parents=True, exist_ok=True)

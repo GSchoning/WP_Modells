@@ -200,25 +200,49 @@ def build_transient(
     return sim
 
 
+# Calibrated western-GHB heads for the Precipice (model layer 24), from
+# UWIR 2025 Appendix G Figure G.1-39 — posterior base values of the 11
+# pilot points h_24_127_1 … h_24_187_1 (9-km spacing along the western
+# model edge). Keyed by 1-based IROW; our grid rows verified identical to
+# the parent model's (west-face active cells are exactly IROW 127–187).
+UWIR2025_L24_GHB_HEADS: dict[int, float] = {
+    127: 705.6, 133: 685.1, 139: 668.5, 145: 617.3, 151: 608.8,
+    157: 535.0, 163: 481.4, 169: 423.4, 175: 436.3, 181: 431.1, 187: 463.4,
+}
+
+
+def _uwir2025_ghb_head(irow_1based: int) -> float:
+    """Interpolate the calibrated pilot heads to any row (clamped ends)."""
+    rows = sorted(UWIR2025_L24_GHB_HEADS)
+    heads = [UWIR2025_L24_GHB_HEADS[r] for r in rows]
+    return float(np.interp(irow_1based, rows, heads))
+
+
 def truncation_face_ghb_cells(
     grid: Grid,
-    faces: Sequence[str] = ("W", "S"),
+    faces: Sequence[str] = ("W",),
     *,
     conductance_scale: float = 1.0,
+    head_source: str = "uwir2025_pilot",
 ) -> list[GhbRecord]:
     """GHB records on active cells lying on the grid frame — where the
     formation is truncated by the parent model's domain edge rather than
     pinching out naturally.
 
-    Mirrors the UWIR 2019 design (Appendix A, Figure A1-14): the Precipice
-    carries GHBs on its *western and southern* truncation faces only; every
-    natural pinch-out edge is no-flow. Conductance per cell is estimated as
-    C = K·b·(W/L) = K·b for square cells — replace with the parent model's
-    calibrated values when supplied. Head is set to NTOP per cell as an
-    interim: in the twin-differenced linear model the GHB *head* cancels in
-    drawdown (only the conductance matters); it affects only the IC and the
-    drain-state classification.
+    Mirrors the UWIR 2025 design (Appendix F, Figure F.1-15): the Precipice
+    carries GHBs on its *western* truncation face only (the 2019 revision
+    also had southern GHBs; the 2025 documents show none for layer 24);
+    every natural pinch-out edge is no-flow. Conductance per cell is
+    estimated as C = K·b·(W/L) = K·b for square cells — the 2025 report
+    does not document the conductance basis (defers to OGIA 2019b), so
+    replace with calibrated values when supplied. In the twin-differenced
+    linear model the GHB *head* cancels in drawdown (only the conductance
+    matters); it affects the IC and the drain-state classification.
 
+    `head_source`:
+      - "uwir2025_pilot": interpolate the calibrated posterior pilot-point
+        heads (UWIR2025_L24_GHB_HEADS) by row — the parent model's values.
+      - "ntop": formation top per cell (legacy interim).
     `faces`: subset of {"N", "S", "E", "W"} (grid frame sides).
     """
     cells: list[GhbRecord] = []
@@ -238,7 +262,11 @@ def truncation_face_ghb_cells(
     for r, c in zip(rs, cs):
         thickness = max(float(grid.top[r, c] - grid.botm[0, r, c]), 1.0)
         cond = conductance_scale * float(grid.k[0, r, c]) * thickness
-        cells.append((0, int(r), int(c), float(grid.top[r, c]), cond))
+        if head_source == "uwir2025_pilot":
+            head = _uwir2025_ghb_head(int(r) + 1)      # 1-based IROW
+        else:
+            head = float(grid.top[r, c])
+        cells.append((0, int(r), int(c), head, cond))
     return cells
 
 

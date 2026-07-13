@@ -39,7 +39,8 @@ class Grid:
 
 
 def build_grid_from_properties(
-    properties: pd.DataFrame, crs: str, *, layer: int = 24
+    properties: pd.DataFrame, crs: str, *, layer: int = 24,
+    recharge_fallback_m_per_day: float | None = None,
 ) -> Grid:
     """Reconstruct a single-layer Grid from the per-cell properties table.
 
@@ -106,8 +107,33 @@ def build_grid_from_properties(
 
     rch = np.where(outcrop_mask, rch, 0.0)
 
-    # Sanitise non-physical entries in active cells.
-    # - K and Ss: take abs(); replace zeros with a default so MF6 doesn't choke.
+    # The delivered properties export has an entirely empty `rch` column.
+    # Recharge cancels exactly in the twin-differenced linear drawdown, but
+    # the steady state (and hence the drain-state linearisation) needs it.
+    # Until a per-cell field is supplied, fall back to a uniform rate over
+    # the outcrop (configured; the UWIR 2025 layer-24 water balance gives
+    # 25,283 ML/yr over 1,231 km² = 5.63e-5 m/d).
+    if not np.any(rch > 0) and recharge_fallback_m_per_day:
+        rch = np.where(outcrop_mask, float(recharge_fallback_m_per_day), 0.0)
+        import sys
+        print(
+            f"[grid] rch column empty — applied uniform fallback recharge "
+            f"{recharge_fallback_m_per_day:.3g} m/d over {int(outcrop_mask.sum())} outcrop cells",
+            file=sys.stderr,
+        )
+
+    # Sanitise / decode entries in active cells.
+    # - K: take abs(); replace zeros with a default so MF6 doesn't choke.
+    # - Negative SS: the parent-model export stores a DIMENSIONLESS
+    #   storativity (the formation-wide outcrop Sy, e.g. 1.6293e-2) in the
+    #   SS column with a negative sign for water-table cells — verified
+    #   against the UWIR 2025 report (Fig G.4-30 annotation) and the data
+    #   itself (338/547 outcrop cells carry exactly |SS| = 1.6293e-2,
+    #   thickness-independent). Convert to specific storage so that
+    #   Ss·b = |SS| exactly: ss = |SS| / thickness. Treating |SS| as a
+    #   1/m value (the old behaviour) inflated outcrop storage by the
+    #   cell thickness (~17-100x), damping simulated spring impacts —
+    #   the non-conservative direction.
     # - Thickness: enforce a small minimum so DIS top > bot.
     active = ibound == 1
     neg_k = active & (k < 0)
@@ -119,14 +145,16 @@ def build_grid_from_properties(
     k_abs[zero_k] = DEFAULT_K_M_PER_DAY
     ss_abs[zero_ss] = DEFAULT_SS_1_PER_M
     k = k_abs
-    ss = ss_abs
     bad_thickness = active & ~((top - bot) >= MIN_THICKNESS_M)
     if bad_thickness.any():
         bot[bad_thickness] = top[bad_thickness] - MIN_THICKNESS_M
 
+    thickness = np.maximum(top - bot, MIN_THICKNESS_M)
+    ss = np.where(neg_ss, ss_abs / thickness, ss_abs)
+
     sanitised = {
         "k_negative_abs_taken": int(neg_k.sum()),
-        "ss_negative_abs_taken": int(neg_ss.sum()),
+        "ss_negative_decoded_as_dimensionless_S": int(neg_ss.sum()),
         "k_zero_set_to_default": int(zero_k.sum()),
         "ss_zero_set_to_default": int(zero_ss.sum()),
         "thickness_too_small": int(bad_thickness.sum()),
@@ -134,7 +162,7 @@ def build_grid_from_properties(
     if any(sanitised.values()):
         import sys
         print(
-            f"[grid] sanitised non-physical properties in active cells: {sanitised}",
+            f"[grid] sanitised/decoded properties in active cells: {sanitised}",
             file=sys.stderr,
         )
 

@@ -35,6 +35,10 @@ class InputsCfg(BaseModel):
     water_use: WaterUseCfg
     springs: Path | None = None
     proposed_bore: ProposedBoreCfg
+    # Uniform recharge over outcrop, used only when the properties CSV's
+    # rch column is empty (the delivered export has no recharge values).
+    # UWIR 2025 layer-24 balance: 25,283 ML/yr over 1,231 km² = 5.63e-5 m/d.
+    recharge_fallback_m_per_day: float | None = None
 
 
 class AquiferCfg(BaseModel):
@@ -117,10 +121,14 @@ class AssessmentCfg(BaseModel):
     # bootstrap falls back down this list with a loud warning.
     boundary_mode: Literal["uwir_ghb", "no_flow", "chd_quadrants", "chd_all"] = "uwir_ghb"
     # Grid-frame faces that get truncation GHBs in "uwir_ghb" mode.
-    ghb_faces: list[Literal["N", "S", "E", "W"]] = Field(default_factory=lambda: ["W", "S"])
-    # Scale on the estimated GHB conductance C = K·b per cell (interim
-    # until the parent model's calibrated values are supplied).
+    # UWIR 2025 (App. F, Fig F.1-15): western face only for layer 24.
+    ghb_faces: list[Literal["N", "S", "E", "W"]] = Field(default_factory=lambda: ["W"])
+    # Scale on the estimated GHB conductance C = K·b per cell (interim —
+    # the 2025 report does not document the conductance basis).
     ghb_conductance_scale: float = 1.0
+    # GHB head source: calibrated UWIR 2025 posterior pilot heads
+    # (Fig G.1-39, 423-706 m AHD along the western strip) or NTOP.
+    ghb_heads: Literal["uwir2025_pilot", "ntop"] = "uwir2025_pilot"
     # Compass quadrants (relative to the active-domain centroid) where the
     # boundary CHD is placed in "chd_quadrants" mode (also the fallback
     # order if "no_flow" cannot converge). Empty/None = all four.

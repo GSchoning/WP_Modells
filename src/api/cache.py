@@ -27,8 +27,10 @@ CACHE_DIR = Path("outputs/cache")
 # boundary CHD excludes outcrop cells. v4 = chd_quadrants. v5 = yearly
 # fine-period stress block (fine_period_years). v6 = per-complex time
 # series persisted alongside output-year aggregates. v7 = stress periods
-# aligned to output years + cached no-pump twin heads.
-CACHE_SCHEMA_VERSION = "v7"
+# aligned to output years + cached no-pump twin heads. v8 = negative-SS
+# decoded as dimensionless Sy, recharge fallback, UWIR-2025 W-only GHBs
+# with calibrated pilot heads.
+CACHE_SCHEMA_VERSION = "v8"
 
 
 @dataclass
@@ -62,6 +64,8 @@ def baseline_key(cfg: Config, config_path: Path) -> str:
         f"bmode={cfg.assessment.boundary_mode}",
         f"ghbf={','.join(cfg.assessment.ghb_faces)}",
         f"ghbs={cfg.assessment.ghb_conductance_scale:.6g}",
+        f"ghbh={cfg.assessment.ghb_heads}",
+        f"rfall={cfg.inputs.recharge_fallback_m_per_day}",
         f"chdq={','.join(cfg.assessment.chd_quadrants or [])}",
     ]
     if cfg.inputs.springs is not None and Path(cfg.inputs.springs).exists():

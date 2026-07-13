@@ -19,8 +19,17 @@ inputs:
   # described in CLAUDE.md §5; the grid is read directly from this table.
   properties_csv: "Data/Properties_recharge/properties.csv"
 
-  # Surface DEM (informational; not required for confined-aquifer drawdown).
+  # NOTE: PCP_DEM.tif is the Precipice top-STRUCTURE surface, not ground
+  # topography (verified: reads -804 m at Roma where ground is ~300 m).
+  # Drain elevations built from it are approximately right at exposed
+  # outcrop; replace with the real topographic DEM when supplied.
   dem: "Data/DEM/PCP_DEM.tif"
+
+  # The delivered properties CSV has an empty rch column. Interim uniform
+  # recharge over outcrop from the UWIR 2025 layer-24 water balance:
+  # 25,283 ML/yr over 1,231 km² (Table 6-14). Recharge cancels in the
+  # twin-differenced drawdown; this only shapes the IC and drain states.
+  recharge_fallback_m_per_day: 5.63e-5
 
   # Water-use database. Coordinates GIS_LAT/GIS_LNG are GDA94 geographic
   # (EPSG:4283) and are reprojected to the project CRS on ingest.
@@ -89,18 +98,26 @@ assessment:
   spring_complex_col: complex_na
   spring_id_col: site_no
   recharge_multiplier: 1.0
-  # Lateral boundary treatment, following the UWIR 2019 modelling report
-  # (Appendix A, Figure A1-14): the parent model closes every natural
-  # pinch-out edge and assigns GHBs only where the Precipice is truncated
-  # by the model-domain frame — the western (Eromanga) and southern
-  # faces. Our boundary audit (outputs/boundary_audit.csv) agrees: the
-  # perimeter is almost entirely a thin pinch-out fringe (thickness p50
-  # 6-19 m vs 44 m interior) and the western truncation face is the one
-  # transmissive corridor (T p50 ~158 m²/d). Set to "no_flow" to close
-  # the perimeter entirely (fully conservative sensitivity case).
+  # Lateral boundary treatment, following the UWIR 2025 modelling report
+  # (App. F Fig F.1-15): the parent model closes every natural pinch-out
+  # edge and assigns GHBs only where the Precipice is truncated by the
+  # western model-domain frame. Our boundary audit
+  # (outputs/boundary_audit.csv) agrees: the perimeter is almost
+  # entirely a thin pinch-out fringe (thickness p50 6-19 m vs 44 m
+  # interior) and the western truncation face is the one transmissive
+  # corridor (T p50 ~158 m²/d). Set to "no_flow" to close the perimeter
+  # entirely (fully conservative sensitivity case).
   boundary_mode: "uwir_ghb"
-  ghb_faces: ["W", "S"]        # per Fig A1-14; east (Kumbarilla divide) stays closed
-  ghb_conductance_scale: 1.0   # C = K·b per cell until OGIA values arrive
+  # UWIR 2025 (App. F Fig F.1-15): layer 24 carries GHBs on the WESTERN
+  # truncation face only (the 2019 model also had southern GHBs — no
+  # longer the case). Our west-face active cells are exactly the parent
+  # model's GHB strip (IROW 127-187, northing ~7,165-7,256 km).
+  ghb_faces: ["W"]
+  ghb_conductance_scale: 1.0   # C = K·b per cell; 2025 report doesn't document the basis
+  # Heads = calibrated posterior pilot values from Fig G.1-39 (423-706 m
+  # AHD along the strip), interpolated by row. Head cancels in drawdown;
+  # this improves the IC and drain-state classification.
+  ghb_heads: "uwir2025_pilot"
   # CHD placement used only in "chd_quadrants" mode, and as the final
   # convergence fallback.
   chd_quadrants: ["NW", "SE"]

@@ -40,7 +40,8 @@ def validate_cmd(config: Path = typer.Option("config.yaml", "--config", "-c")):
     cfg = load_config(config)
     inputs = load_inputs(cfg)
     grid = build_grid_from_properties(
-        inputs.properties, cfg.project.crs, layer=cfg.grid.properties_layer
+        inputs.properties, cfg.project.crs, layer=cfg.grid.properties_layer,
+        recharge_fallback_m_per_day=cfg.inputs.recharge_fallback_m_per_day,
     )
     findings = validate(inputs, cfg, grid)
     out = Path("reports/validation.md")
@@ -76,7 +77,8 @@ def run(
 
     typer.echo(f"Building grid from properties.csv (ILAY={cfg.grid.properties_layer})…")
     grid = build_grid_from_properties(
-        inputs.properties, cfg.project.crs, layer=cfg.grid.properties_layer
+        inputs.properties, cfg.project.crs, layer=cfg.grid.properties_layer,
+        recharge_fallback_m_per_day=cfg.inputs.recharge_fallback_m_per_day,
     )
     _print_grid_summary(grid)
 
@@ -132,9 +134,10 @@ def run(
         boundary_ghb = truncation_face_ghb_cells(
             grid, cfg.assessment.ghb_faces,
             conductance_scale=cfg.assessment.ghb_conductance_scale,
+            head_source=cfg.assessment.ghb_heads,
         )
         typer.echo(f"\nBoundary: no-flow pinch-outs + {len(boundary_ghb)} truncation-face GHBs "
-                   f"({'/'.join(cfg.assessment.ghb_faces)}) — UWIR 2019 Fig A1-14 design.")
+                   f"({'/'.join(cfg.assessment.ghb_faces)}) — UWIR 2025 Fig F.1-15 design.")
     elif mode == "no_flow":
         chd_cells = []
         typer.echo("\nBoundary: no-flow perimeter (pinch-out) — drains provide the steady-state outlet.")
