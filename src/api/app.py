@@ -1304,7 +1304,11 @@ def last_scenario_drawdown_sample(lng: float, lat: float,
     })
 
 
-def _cells_to_geojson(mask: np.ndarray) -> dict:
+def _cells_to_geojson(mask: np.ndarray, props_fn=None) -> dict:
+    """Cell squares as GeoJSON polygons (per-corner reprojection to 4326).
+
+    `props_fn(row, col) -> dict` optionally adds per-feature properties
+    (merged over the default row/col)."""
     g = state.grid
     rs, cs = np.where(mask)
     if rs.size == 0:
@@ -1338,9 +1342,12 @@ def _cells_to_geojson(mask: np.ndarray) -> dict:
             [float(ul_lon[i]), float(ul_lat[i])],
             [float(ll_lon[i]), float(ll_lat[i])],
         ]
+        props = {"row": int(rs[i]), "col": int(cs[i])}
+        if props_fn is not None:
+            props.update(props_fn(int(rs[i]), int(cs[i])))
         features.append({
             "type": "Feature",
-            "properties": {"row": int(rs[i]), "col": int(cs[i])},
+            "properties": props,
             "geometry": {"type": "Polygon", "coordinates": [ring]},
         })
     return {"type": "FeatureCollection", "features": features}
@@ -1402,11 +1409,31 @@ def _build_aquifers_geojson() -> dict | None:
     return {"type": "FeatureCollection", "features": features}
 
 
+def _mask_from_records(records, nrc=None) -> np.ndarray:
+    """(nrow, ncol) bool mask from (l, r, c, ...) boundary/drain records."""
+    g = state.grid
+    mask = np.zeros((g.nrow, g.ncol), dtype=bool)
+    for rec in (records or []):
+        mask[rec[1], rec[2]] = True
+    return mask
+
+
 def _build_setup_geojson() -> dict:
+    """Layers reflect the boundary state the bootstrap actually converged
+    with (built after _bootstrap_ic): CHD and GHB are separate layers now,
+    and drains get their own layer with a `flowing` property (true where
+    the steady-state head sits above the drain elevation — i.e. the cell
+    was linearised into a GHB for the transient runs)."""
+    flowing_rc = {(rec[1], rec[2]) for rec in (state.ghb_cells or [])}
     return {
         "active":  _cells_to_geojson(state.grid.idomain[0] == 1),
         "outcrop": _cells_to_geojson(state.grid.outcrop_mask),
-        "chd":     _cells_to_geojson(_chd_mask()),
+        "chd":     _cells_to_geojson(_mask_from_records(state.chd_cells)),
+        "ghb":     _cells_to_geojson(_mask_from_records(state.boundary_ghb)),
+        "drains":  _cells_to_geojson(
+            _mask_from_records(state.drn_cells),
+            props_fn=lambda r, c: {"flowing": (r, c) in flowing_rc},
+        ),
         "noflow":  _cells_to_geojson(_noflow_boundary_mask()),
     }
 
@@ -1467,8 +1494,12 @@ def model_setup_info():
             "n_outcrop_cells": int(g.outcrop_mask.sum()),
         },
         "boundaries": {
-            "n_chd_cells": int(_chd_mask().sum()),
+            # CHD-only count (legacy modes / convergence fallback).
+            "n_chd_cells": len(state.chd_cells or []),
+            "n_ghb_cells": len(state.boundary_ghb or []),
             "n_noflow_boundary_cells": int(_noflow_boundary_mask().sum()),
+            "n_drain_cells": len(state.drn_cells or []),
+            "n_drains_flowing": len(state.ghb_cells or []),
         },
         "recharge_multiplier": state.cfg.assessment.recharge_multiplier,
     })
@@ -1492,7 +1523,8 @@ def model_setup_geojson(layer: str):
     if state.setup_geojson is None:
         raise HTTPException(503, "Setup not ready")
     if layer not in state.setup_geojson:
-        raise HTTPException(400, "layer must be one of: active, outcrop, chd, noflow")
+        raise HTTPException(
+            400, f"layer must be one of: {', '.join(sorted(state.setup_geojson))}")
     return JSONResponse(state.setup_geojson[layer])
 
 

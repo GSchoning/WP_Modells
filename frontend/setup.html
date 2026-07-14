@@ -39,14 +39,24 @@
         <span class="layer-name">Outcrop / recharge zone</span>
       </label>
       <label class="layer-row">
+        <input type="checkbox" id="toggle-drains" checked />
+        <span class="swatch drains"></span>
+        <span class="layer-name">Rejected-recharge drains <span class="muted">(bright = flowing)</span></span>
+      </label>
+      <label class="layer-row">
+        <input type="checkbox" id="toggle-ghb" checked />
+        <span class="swatch ghb"></span>
+        <span class="layer-name">GHB far-field <span class="muted">(western truncation)</span></span>
+      </label>
+      <label class="layer-row">
         <input type="checkbox" id="toggle-chd" checked />
         <span class="swatch chd"></span>
-        <span class="layer-name">Far-field boundary <span class="muted">(GHB/CHD)</span></span>
+        <span class="layer-name">CHD boundary <span class="muted">(legacy/fallback — normally empty)</span></span>
       </label>
       <label class="layer-row">
         <input type="checkbox" id="toggle-noflow" checked />
         <span class="swatch noflow"></span>
-        <span class="layer-name">No-flow boundary <span class="muted">(outcrop edge)</span></span>
+        <span class="layer-name">No-flow boundary <span class="muted">(pinch-out perimeter)</span></span>
       </label>
       <label class="layer-row">
         <input type="checkbox" id="toggle-bores" checked />
@@ -79,9 +89,11 @@
     <div class="notes">
       <h3>What you're looking at</h3>
       <p><strong>Active cells</strong> are the modelled domain — the formation extent from the properties CSV.</p>
-      <p><strong>Outcrop / recharge</strong> cells receive recharge from above and carry rejected-recharge drains at the minimum in-cell DEM elevation. Non-outcrop cells get zero recharge.</p>
-      <p><strong>No-flow boundary</strong> covers every natural pinch-out edge — the audit showed the perimeter is almost entirely a thin fringe (median 6–19 m thick). Steady-state discharge happens through the outcrop drains.</p>
-      <p><strong>Far-field boundary</strong> cells are the western/southern truncation faces where the Precipice continues beyond the model frame — GHBs per the UWIR 2019 design (Fig A1-14). CHD cells appear here only if a legacy mode or convergence fallback is active.</p>
+      <p><strong>Outcrop / recharge</strong> cells define the recharge zone; the OGIA steady-state recharge field applies to the exposed northern belt.</p>
+      <p><strong>Drains</strong> simulate rejected recharge at the minimum in-cell DEM elevation. Bright cells are flowing at steady state (linearised into GHBs for the transient runs so superposition holds); faint cells are dry.</p>
+      <p><strong>GHB far-field</strong> cells are the western truncation strip where the Precipice continues beyond the model frame — per UWIR 2025 (Fig F.1-15), with heads from the calibrated pilot values (Fig G.1-39).</p>
+      <p><strong>No-flow boundary</strong> covers every natural pinch-out edge — the boundary audit showed the perimeter is almost entirely a thin fringe (median 6–19 m thick).</p>
+      <p><strong>CHD</strong> cells appear only in legacy modes or if the configured boundary failed to converge and the bootstrap fell back — normally this layer is empty.</p>
     </div>
   </aside>
 

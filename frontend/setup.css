@@ -37,6 +37,8 @@
   border-radius: 3px; flex-shrink: 0; box-shadow: 0 0 0 1px rgba(15,23,42,0.1); }
 .swatch.active   { background: rgba(156,163,175,0.5); }
 .swatch.outcrop  { background: #10b981; }
+.swatch.drains   { background: #d97706; }
+.swatch.ghb      { background: #38bdf8; }
 .swatch.chd      { background: #dc2626; }
 .swatch.noflow   { background: #1f2937; }
 .swatch.bores    { background: #ef4444; border-radius: 50%; }

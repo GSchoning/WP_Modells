@@ -12,6 +12,13 @@ const SAT_STYLE = GABORA.makeSatStyle({ roads: true, places: true });
 const VECTOR_LAYERS = [
   { id: "active",  url: "/api/model-setup/active.geojson",  fill: "#9ca3af", stroke: "#475569", opacity: 0.25, strokeOpacity: 0.0 },
   { id: "outcrop", url: "/api/model-setup/outcrop.geojson", fill: "#10b981", stroke: "#047857", opacity: 0.55, strokeOpacity: 0.0 },
+  // Rejected-recharge drains: full opacity where flowing at steady state
+  // (linearised into GHBs for the transients), faint where dry.
+  { id: "drains",  url: "/api/model-setup/drains.geojson",  fill: "#d97706", stroke: "#92400e",
+    opacity: ["case", ["boolean", ["get", "flowing"], false], 0.85, 0.25], strokeOpacity: 0.4 },
+  // Far-field boundaries, now split: GHB (uwir_ghb mode, western strip)
+  // vs CHD (legacy modes / convergence fallback — normally empty).
+  { id: "ghb",     url: "/api/model-setup/ghb.geojson",     fill: "#38bdf8", stroke: "#075985", opacity: 0.9, strokeOpacity: 0.7 },
   { id: "chd",     url: "/api/model-setup/chd.geojson",     fill: "#dc2626", stroke: "#7f1d1d", opacity: 0.85, strokeOpacity: 0.6 },
   { id: "noflow",  url: "/api/model-setup/noflow.geojson",  fill: "#1f2937", stroke: "#000000", opacity: 0.85, strokeOpacity: 0.6 },
 ];
@@ -32,15 +39,21 @@ async function init() {
     `${info.grid.nrow} × ${info.grid.ncol} grid, ${info.grid.dx_m.toFixed(0)} m cells · ` +
     `${info.grid.n_active_cells.toLocaleString()} active cells`;
 
+  const b = info.boundaries;
   $("counts").innerHTML =
     `<div><span class="swatch active" style="vertical-align:middle"></span> ` +
     `${info.grid.n_active_cells.toLocaleString()} active cells</div>` +
     `<div><span class="swatch outcrop" style="vertical-align:middle"></span> ` +
     `${info.grid.n_outcrop_cells.toLocaleString()} outcrop / recharge cells</div>` +
+    `<div><span class="swatch drains" style="vertical-align:middle"></span> ` +
+    `${(b.n_drain_cells ?? 0).toLocaleString()} drain cells ` +
+    `(${(b.n_drains_flowing ?? 0).toLocaleString()} flowing)</div>` +
+    `<div><span class="swatch ghb" style="vertical-align:middle"></span> ` +
+    `${(b.n_ghb_cells ?? 0).toLocaleString()} GHB far-field cells</div>` +
     `<div><span class="swatch chd" style="vertical-align:middle"></span> ` +
-    `${info.boundaries.n_chd_cells.toLocaleString()} CHD boundary cells</div>` +
+    `${b.n_chd_cells.toLocaleString()} CHD cells</div>` +
     `<div><span class="swatch noflow" style="vertical-align:middle"></span> ` +
-    `${info.boundaries.n_noflow_boundary_cells.toLocaleString()} no-flow boundary cells</div>` +
+    `${b.n_noflow_boundary_cells.toLocaleString()} no-flow boundary cells</div>` +
     `<div class="muted" style="margin-top:0.4rem">recharge multiplier: ${info.recharge_multiplier}</div>`;
 
   const map = new maplibregl.Map({
@@ -148,6 +161,8 @@ async function init() {
   };
   toggle("toggle-active",    ["vec-active-fill",  "vec-active-line"]);
   toggle("toggle-outcrop",   ["vec-outcrop-fill", "vec-outcrop-line"]);
+  toggle("toggle-drains",    ["vec-drains-fill",  "vec-drains-line"]);
+  toggle("toggle-ghb",       ["vec-ghb-fill",     "vec-ghb-line"]);
   toggle("toggle-chd",       ["vec-chd-fill",     "vec-chd-line"]);
   toggle("toggle-noflow",    ["vec-noflow-fill",  "vec-noflow-line"]);
   toggle("toggle-bores",     ["pumping"]);
