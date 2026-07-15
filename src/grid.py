@@ -147,17 +147,21 @@ def build_grid_from_properties(
 
     # Sanitise / decode entries in active cells.
     # - K: take abs(); replace zeros with a default so MF6 doesn't choke.
-    # - Negative SS: the parent-model export stores a DIMENSIONLESS
-    #   storativity (the formation-wide outcrop Sy, e.g. 1.6293e-2) in the
-    #   SS column with a negative sign for water-table cells — verified
-    #   against the UWIR 2025 report (Fig G.4-30 annotation) and the data
-    #   itself (338/547 outcrop cells carry exactly |SS| = 1.6293e-2,
-    #   thickness-independent). Convert to specific storage so that
-    #   Ss·b = |SS| exactly: ss = |SS| / thickness. Treating |SS| as a
-    #   1/m value (the old behaviour) inflated outcrop storage by the
-    #   cell thickness (~17-100x), damping simulated spring impacts —
-    #   the non-conservative direction.
+    # - Negative SS: the parent-model export marks water-table (outcrop)
+    #   cells with a negative sign, but carries TWO kinds of magnitude:
+    #     * Sy-like (338 cells, exactly 1.6293e-2 — the formation-wide
+    #       outcrop Sy annotated on UWIR 2025 Fig G.4-30): a DIMENSIONLESS
+    #       storativity. Convert so Ss·b = |SS| exactly: ss = |SS|/b.
+    #     * Ss-like (209 cells, exactly 1.63e-6 — within the UWIR Ss
+    #       bounds 5.58e-7..1.33e-5 1/m): a plain specific storage that
+    #       happens to carry the water-table sign. abs() only. Decoding
+    #       these as dimensionless (the previous behaviour) produced
+    #       storativities of ~2e-6 — near-zero storage through half the
+    #       outcrop belt, which made drawdown at springs explode.
+    #   The discriminator is magnitude: dimensionless Sy is >1e-3;
+    #   physical Ss for this formation is <1.33e-5.
     # - Thickness: enforce a small minimum so DIS top > bot.
+    SY_DECODE_THRESHOLD = 1e-3
     active = ibound == 1
     neg_k = active & (k < 0)
     neg_ss = active & (ss < 0)
@@ -173,11 +177,13 @@ def build_grid_from_properties(
         bot[bad_thickness] = top[bad_thickness] - MIN_THICKNESS_M
 
     thickness = np.maximum(top - bot, MIN_THICKNESS_M)
-    ss = np.where(neg_ss, ss_abs / thickness, ss_abs)
+    neg_sy = neg_ss & (ss_abs > SY_DECODE_THRESHOLD)
+    ss = np.where(neg_sy, ss_abs / thickness, ss_abs)
 
     sanitised = {
         "k_negative_abs_taken": int(neg_k.sum()),
-        "ss_negative_decoded_as_dimensionless_S": int(neg_ss.sum()),
+        "ss_negative_sy_decoded_as_dimensionless": int(neg_sy.sum()),
+        "ss_negative_kept_as_specific_storage": int((neg_ss & ~neg_sy).sum()),
         "k_zero_set_to_default": int(zero_k.sum()),
         "ss_zero_set_to_default": int(zero_ss.sum()),
         "thickness_too_small": int(bad_thickness.sum()),

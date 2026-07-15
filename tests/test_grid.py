@@ -60,17 +60,24 @@ def test_cell_of_round_trips():
     assert rc is not None
 
 
-def test_negative_ss_decoded_as_dimensionless_storativity():
-    """The parent-model export stores outcrop Sy as a NEGATIVE, dimensionless
-    value in the SS column (UWIR 2025 convention, e.g. -1.6293e-2). The
-    builder must convert it so that Ss·b == |SS| exactly."""
+def test_negative_ss_decoded_by_magnitude():
+    """The parent-model export marks water-table cells with negative SS but
+    carries two magnitudes: Sy-like values (>1e-3, dimensionless — decode
+    so Ss·b == |SS|) and Ss-like values (within the formation's specific-
+    storage bounds — keep as 1/m via abs())."""
     props = _toy_properties()
     sy = 1.6293e-2
-    props.loc[(props.IROW == 1) & (props.ICOL == 1), "SS"] = -sy
+    ss_small = 1.63e-6
+    props.loc[(props.IROW == 1) & (props.ICOL == 1), "SS"] = -sy       # Sy-like
+    props.loc[(props.IROW == 1) & (props.ICOL == 2), "SS"] = -ss_small # Ss-like
     g = build_grid_from_properties(props, "EPSG:28355")
     thickness = float(g.top[0, 0] - g.botm[0, 0, 0])
-    S = float(g.ss[0, 0, 0]) * thickness
-    assert np.isclose(S, sy)
+    # Sy-like: storativity equals the exported value exactly.
+    assert np.isclose(float(g.ss[0, 0, 0]) * thickness, sy)
+    # Ss-like: kept as specific storage (1/m), NOT divided by thickness —
+    # decoding it as dimensionless gave S ~ 2e-6 (near-zero storage) and
+    # made spring drawdowns explode.
+    assert np.isclose(float(g.ss[0, 0, 1]), ss_small)
     # Positive-SS cells stay as specific storage (1/m).
     assert np.isclose(float(g.ss[0, 1, 1]), 1e-5)
 
