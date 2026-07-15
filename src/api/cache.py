@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -53,10 +54,34 @@ def _file_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+# Source files whose changes alter the numbers a baseline produces. Their
+# combined hash is part of the cache key, so a code change invalidates the
+# cache automatically — CACHE_SCHEMA_VERSION alone relies on a human
+# remembering to bump it, and the RCHA / island-anchor / conductance-clamp
+# commits all changed the model under an unchanged key (only startup
+# crashes prevented a stale baseline from being served).
+_MODEL_SOURCE_FILES = (
+    "config.py", "grid.py", "io_layer.py", "model_builder.py",
+    "scenarios.py", "drains.py",
+)
+
+
+def _code_fingerprint() -> str:
+    src_dir = Path(__file__).resolve().parents[1]     # src/
+    h = hashlib.sha256()
+    for name in _MODEL_SOURCE_FILES:
+        p = src_dir / name
+        if p.exists():
+            h.update(name.encode())
+            h.update(p.read_bytes())
+    return h.hexdigest()[:16]
+
+
 def baseline_key(cfg: Config, config_path: Path) -> str:
     """Hash of every input that affects Scenario A's cached output."""
     parts = [
         CACHE_SCHEMA_VERSION,
+        _code_fingerprint(),
         _file_sha256(Path(config_path)),
         _file_sha256(Path(cfg.inputs.properties_csv)),
         (_file_sha256(Path(cfg.inputs.recharge_csv))
@@ -134,9 +159,24 @@ def save(cache: BaselineCache, cfg: Config, config_path: Path) -> None:
     manifest = {
         "key": cache.key,
         "config_path": str(config_path),
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "git_rev": _git_rev(),
+        "code_fingerprint": _code_fingerprint(),
+        "cache_schema": CACHE_SCHEMA_VERSION,
         "n_springs": int(cache.receptors_df["receptor_id"].nunique()),
         "output_years": sorted(cache.drawdown_by_year.keys()),
         "n_series_complexes": int(cache.complex_series_df["complex_id"].nunique())
             if len(cache.complex_series_df) else 0,
     }
     manifest_p.write_text(json.dumps(manifest, indent=2))
+
+
+def _git_rev() -> str:
+    import subprocess
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip() or "unknown"
+    except OSError:
+        return "unknown"

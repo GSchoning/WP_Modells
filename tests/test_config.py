@@ -22,3 +22,11 @@ def test_repo_config_loads():
     # The delivered CSV's rch column is empty; the UWIR-balance fallback
     # (25,283 ML/yr over 1,231 km²) must be configured.
     assert cfg.inputs.recharge_fallback_m_per_day is not None
+
+
+def test_cache_code_fingerprint_deterministic():
+    """The baseline cache key includes a fingerprint of the model-building
+    source files, so code changes invalidate cached baselines automatically."""
+    from src.api.cache import _code_fingerprint
+    a, b = _code_fingerprint(), _code_fingerprint()
+    assert a == b and len(a) == 16 and all(ch in "0123456789abcdef" for ch in a)
