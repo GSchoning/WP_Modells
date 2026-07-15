@@ -167,6 +167,17 @@ def run(
         except Exception as exc:
             typer.echo(f"  drains disabled — failed to build: {exc}")
 
+    # Weak anchors for active islands that carry no BC — without them the
+    # closed-perimeter steady state is singular (see anchor_ghb_cells).
+    from .model_builder import anchor_ghb_cells
+    bc_cells = {(rec[1], rec[2]) for rec in chd_cells}
+    bc_cells |= {(rec[1], rec[2]) for rec in boundary_ghb}
+    bc_cells |= {(rec[1], rec[2]) for rec in drn_cells}
+    anchors = anchor_ghb_cells(grid, bc_cells)
+    if anchors:
+        typer.echo(f"  {len(anchors)} weak anchor GHBs for BC-less active islands.")
+    boundary_ghb = list(boundary_ghb) + anchors
+
     typer.echo("Running steady-state pre-run (no pumping, recharge on)…")
     try:
         ic_head = run_steady_state(cfg, grid, workspace_root / "ss", chd_cells=chd_cells,

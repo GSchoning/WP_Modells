@@ -274,6 +274,47 @@ def truncation_face_ghb_cells(
     return cells
 
 
+def anchor_ghb_cells(
+    grid: Grid,
+    bc_cells: set[tuple[int, int]],
+    *,
+    conductance: float = 1.0,
+) -> list[GhbRecord]:
+    """One weak GHB per connected active component that carries no other
+    boundary condition.
+
+    With a closed (no-flow) perimeter, an active island holding no drain /
+    GHB / CHD cell has a mathematically undefined steady-state head — the
+    matrix is singular and MF6 dies with a floating overflow. Each such
+    orphan component gets a single GHB at its highest-NTOP cell, head =
+    NTOP there, with a deliberately tiny conductance: 1 m²/d exchanges a
+    negligible flux under any realistic drawdown (≈1 m³/d per metre), so
+    scenario results are unaffected, but the component's head datum is
+    defined. GHBs are linear, so superposition is untouched.
+
+    `bc_cells`: (row, col) of every cell that already carries a
+    head-dependent BC (drains, boundary GHBs, CHD).
+    """
+    from scipy import ndimage
+
+    active = grid.idomain[0] == 1
+    labels, n_comp = ndimage.label(active)
+    has_bc = np.zeros(n_comp + 1, dtype=bool)
+    for (r, c) in bc_cells:
+        has_bc[labels[r, c]] = True
+
+    anchors: list[GhbRecord] = []
+    for comp in range(1, n_comp + 1):
+        if has_bc[comp]:
+            continue
+        rs, cs = np.where(labels == comp)
+        top_vals = grid.top[rs, cs]
+        i = int(np.argmax(top_vals))
+        r, c = int(rs[i]), int(cs[i])
+        anchors.append((0, r, c, float(grid.top[r, c]), float(conductance)))
+    return anchors
+
+
 def boundary_chd_cells(grid: Grid, head: float | np.ndarray) -> list[ChdRecord]:
     """Return CHD records along the outermost ring of active cells.
 

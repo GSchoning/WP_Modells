@@ -85,18 +85,29 @@ def min_dem_per_cell(
     return out
 
 
+# Clamp on the estimated drain conductance. Unclamped K·A/b reaches
+# ~7e7 m²/d on the Precipice grid — 7 orders of magnitude above the
+# cell-to-cell conductances, which drove the steady-state solve to
+# floating overflow. 5,000 m²/d is the only conductance OGIA publishes
+# (UWIR 2025 §6.3.2.3, mine RIV cells) and is ample: at the ~126 m³/d
+# recharge a cell receives, the head excess over the drain elevation is
+# ~0.025 m.
+DRAIN_COND_MAX = 5_000.0
+DRAIN_COND_MIN = 1.0
+
+
 def estimate_conductance(grid: Grid, r: int, c: int, scale: float = 1.0) -> float:
-    """Interim drain conductance estimate: C = K · A / b (m²/day).
+    """Interim drain conductance estimate: C = K · A / b (m²/day), clamped
+    to [DRAIN_COND_MIN, DRAIN_COND_MAX].
 
     Uses horizontal K as a stand-in for the (unavailable) calibrated
-    parent-model conductance. Deliberately generous — a high-conductance
-    drain approaches a specified head at the drain elevation, which is
-    the intended "water table capped at the lowest topography" behaviour.
-    Replace with the parent model's DRN conductances when supplied.
+    parent-model conductance. Replace with the parent model's DRN
+    conductances when supplied.
     """
     thickness = max(float(grid.top[r, c] - grid.botm[0, r, c]), 1.0)
     area = float(grid.delr[c] * grid.delc[r])
-    return scale * float(grid.k[0, r, c]) * area / thickness
+    raw = scale * float(grid.k[0, r, c]) * area / thickness
+    return float(np.clip(raw, DRAIN_COND_MIN, DRAIN_COND_MAX))
 
 
 def build_drain_cells(

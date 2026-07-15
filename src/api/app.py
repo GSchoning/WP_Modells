@@ -273,12 +273,23 @@ def _bootstrap_ic() -> None:
         attempts.append((f"CHD quadrants={quadrants or 'all'} + outcrop excluded", chd_filtered, []))
     attempts.append(("all-edges CHD", chd_unfiltered, []))
 
+    from ..model_builder import anchor_ghb_cells
     for i, (label, chd, bghb) in enumerate(attempts):
+        # Weak anchors for active islands with no BC in THIS attempt's
+        # configuration — without them the steady state is singular.
+        bc_cells = {(rec[1], rec[2]) for rec in chd}
+        bc_cells |= {(rec[1], rec[2]) for rec in bghb}
+        bc_cells |= {(rec[1], rec[2]) for rec in drn_cells}
+        anchors = anchor_ghb_cells(grid, bc_cells)
+        if anchors:
+            print(f"[boundary] {len(anchors)} weak anchor GHBs added for "
+                  f"BC-less active islands")
+        bghb_eff = list(bghb) + anchors
         try:
             ic = run_steady_state(state.cfg, grid, workspace, chd_cells=chd,
-                                  drn_cells=drn_cells, ghb_cells=bghb)
+                                  drn_cells=drn_cells, ghb_cells=bghb_eff)
             state.chd_cells = chd
-            state.boundary_ghb = bghb
+            state.boundary_ghb = bghb_eff
             state.ic_head = ic
             _linearise_drains(ic)
             if i > 0:
@@ -286,7 +297,8 @@ def _bootstrap_ic() -> None:
                       f"did not converge; fell back to '{label}'. The "
                       f"conceptual model differs from the configured one.")
             print(f"[boundary] steady-state converged with {label} "
-                  f"({len(chd)} CHD, {len(bghb)} boundary-GHB cells)")
+                  f"({len(chd)} CHD, {len(bghb)} boundary-GHB, "
+                  f"{len(anchors)} anchor cells)")
             return
         except RuntimeError as exc:
             print(f"[boundary] steady-state failed with {label}: {exc}")
@@ -297,6 +309,7 @@ def _bootstrap_ic() -> None:
     state.ic_head = np.full_like(grid.top, mean_top)
     # Use the safer (all-edges) CHD with the uniform IC.
     state.chd_cells = chd_unfiltered
+    state.boundary_ghb = []
     _linearise_drains(state.ic_head)
 
 

@@ -60,13 +60,17 @@ def test_min_dem_per_cell_picks_lowest_point(grid_with_outcrop, dem_path):
 
 
 def test_build_drain_cells_conductance(grid_with_outcrop, dem_path):
+    from src.drains import DRAIN_COND_MAX
+
     g = grid_with_outcrop
     cells = build_drain_cells(g, dem_path)
     assert len(cells) == 2                       # one per outcrop cell
     (l, r, c, elev, cond) = cells[0]
     assert (r, c) == (0, 0) and elev == pytest.approx(12.5)
-    # Estimate C = K*A/b = 2.0 * 1e6 / 100.
-    assert cond == pytest.approx(estimate_conductance(g, 0, 0)) == pytest.approx(2e4)
+    # Raw estimate C = K*A/b = 2.0 * 1e6 / 100 = 2e4 — clamped to the cap
+    # (unclamped values reached ~7e7 m²/d on the real grid and drove the
+    # steady-state solve to floating overflow).
+    assert cond == pytest.approx(estimate_conductance(g, 0, 0)) == pytest.approx(DRAIN_COND_MAX)
 
     fixed = build_drain_cells(g, dem_path, conductance=123.0)
     assert all(cd == 123.0 for (*_, cd) in fixed)
