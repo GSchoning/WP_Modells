@@ -14,7 +14,7 @@ from flopy.mf6 import (
     MFSimulation, ModflowGwf, ModflowTdis, ModflowIms,
     ModflowGwfdis, ModflowGwfdrn, ModflowGwfghb, ModflowGwfic,
     ModflowGwfnpf, ModflowGwfsto,
-    ModflowGwfchd, ModflowGwfrch, ModflowGwfwel, ModflowGwfoc,
+    ModflowGwfchd, ModflowGwfrcha, ModflowGwfwel, ModflowGwfoc,
 )
 
 from .grid import Grid
@@ -75,7 +75,11 @@ def _add_rch(gwf: ModflowGwf, grid: Grid, multiplier: float = 1.0) -> None:
     if not np.any(grid.rch):
         return
     rch = grid.rch * float(multiplier) if multiplier != 1.0 else grid.rch
-    ModflowGwfrch(gwf, recharge=rch)
+    # RCHA is the array-based recharge package (recharge= takes a per-cell
+    # grid). ModflowGwfrch is the list-based variant and rejects the
+    # `recharge` kwarg — a latent bug here until real recharge data arrived,
+    # because the all-zero early-return above always fired before that.
+    ModflowGwfrcha(gwf, recharge=rch)
 
 
 def _add_chd(gwf: ModflowGwf, chd_cells: Sequence[ChdRecord]) -> None:
