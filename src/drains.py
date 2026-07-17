@@ -110,6 +110,81 @@ def estimate_conductance(grid: Grid, r: int, c: int, scale: float = 1.0) -> floa
     return float(np.clip(raw, DRAIN_COND_MIN, DRAIN_COND_MAX))
 
 
+def build_drain_cells_from_riv(
+    grid: Grid,
+    riv_csv: str | Path,
+    *,
+    conductance: float | None = None,
+    conductance_scale: float = 1.0,
+) -> list[DrnRecord]:
+    """DRN records from the parent model's RIV export (riv_cells.csv).
+
+    The UWIR 2025 regional model implements the surficial (rejected-
+    recharge) drains with RIV cells whose stage equals rbot, so each reach
+    only ever removes water — i.e. a drain at the calibrated stage with the
+    calibrated conductance. This supersedes deriving elevations from a DEM
+    and conductances from K·A/b.
+
+    Rows are mapped by IROW/ICOL — the same parent-model frame the Grid
+    arrays are indexed by. Where several reaches land in one tool cell
+    (e.g. the merged Hutton layers 19+20), the drain takes the minimum
+    stage and the summed conductance. Cells inactive in the tool grid are
+    dropped.
+    """
+    import pandas as pd
+
+    df = pd.read_csv(riv_csv)
+    required = {"IROW", "ICOL", "stage_m", "cond_m2_per_day"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"{riv_csv}: missing columns {sorted(missing)}")
+
+    df["r"] = df["IROW"].astype(int) - 1
+    df["c"] = df["ICOL"].astype(int) - 1
+    in_bounds = (df.r >= 0) & (df.r < grid.nrow) & (df.c >= 0) & (df.c < grid.ncol)
+    df = df[in_bounds]
+    active = grid.idomain[0][df.r.to_numpy(), df.c.to_numpy()] == 1
+    df = df[active]
+
+    merged = df.groupby(["r", "c"]).agg(
+        elev=("stage_m", "min"), cond=("cond_m2_per_day", "sum")
+    ).reset_index()
+    cells: list[DrnRecord] = []
+    for row in merged.itertuples(index=False):
+        cond = (float(conductance) if conductance is not None
+                else float(row.cond) * conductance_scale)
+        cells.append((0, int(row.r), int(row.c), float(row.elev), cond))
+    return cells
+
+
+def drain_cells_for_config(cfg, grid: Grid) -> tuple[list[DrnRecord], str]:
+    """Build drain cells per the config's source priority.
+
+    1. `drains.riv_cells_csv` (parent-model calibrated stages/conductances)
+       when set and present;
+    2. otherwise `inputs.dem` minimum-elevation drains with estimated
+       conductances.
+    Returns (records, source description for logging). Raises if neither
+    source is available.
+    """
+    riv = getattr(cfg.drains, "riv_cells_csv", None)
+    if riv is not None and Path(riv).exists():
+        cells = build_drain_cells_from_riv(
+            grid, riv,
+            conductance=cfg.drains.conductance_m2_per_day,
+            conductance_scale=cfg.drains.conductance_scale,
+        )
+        return cells, "parent-model RIV stages/conductances"
+    if cfg.inputs.dem is not None:
+        cells = build_drain_cells(
+            grid, cfg.inputs.dem,
+            conductance=cfg.drains.conductance_m2_per_day,
+            conductance_scale=cfg.drains.conductance_scale,
+        )
+        return cells, "min-DEM elevation, estimated conductance"
+    raise ValueError("drains enabled but neither drains.riv_cells_csv nor inputs.dem is available")
+
+
 def build_drain_cells(
     grid: Grid,
     dem_path: str | Path,

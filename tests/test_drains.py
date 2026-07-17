@@ -6,6 +6,7 @@ import pytest
 
 from src.drains import (
     build_drain_cells,
+    build_drain_cells_from_riv,
     count_reversals,
     estimate_conductance,
     linearise_drains,
@@ -74,6 +75,38 @@ def test_build_drain_cells_conductance(grid_with_outcrop, dem_path):
 
     fixed = build_drain_cells(g, dem_path, conductance=123.0)
     assert all(cd == 123.0 for (*_, cd) in fixed)
+
+
+def test_build_drain_cells_from_riv(grid_with_outcrop, tmp_path):
+    """Parent-model RIV export: IROW/ICOL mapping, same-cell merge (min
+    stage, summed conductance), inactive and out-of-bounds rows dropped."""
+    import pandas as pd
+
+    g = grid_with_outcrop
+    g.idomain[0, 3, 3] = 0
+    riv = tmp_path / "riv_cells.csv"
+    pd.DataFrame({
+        "ILAY": [24, 24, 24, 24, 24],
+        "INODE": [1, 2, 3, 4, 5],
+        "IROW": [1, 2, 2, 4, 99],       # (0,0); (1,2) twice; inactive; out of bounds
+        "ICOL": [1, 3, 3, 4, 1],
+        "X": [0, 0, 0, 0, 0], "Y": [0, 0, 0, 0, 0],
+        "stage_m": [250.0, 300.0, 295.0, 100.0, 100.0],
+        "cond_m2_per_day": [5000.0, 2000.0, 3000.0, 5000.0, 5000.0],
+        "rbot_m": [250.0, 300.0, 295.0, 100.0, 100.0],
+    }).to_csv(riv, index=False)
+
+    cells = build_drain_cells_from_riv(g, riv)
+    assert {(r, c) for (_l, r, c, _e, _cd) in cells} == {(0, 0), (1, 2)}
+    by_cell = {(r, c): (e, cd) for (_l, r, c, e, cd) in cells}
+    assert by_cell[(0, 0)] == (250.0, 5000.0)
+    # merged reaches: minimum stage, summed conductance
+    assert by_cell[(1, 2)] == (295.0, 5000.0)
+
+    fixed = build_drain_cells_from_riv(g, riv, conductance=123.0)
+    assert all(cd == 123.0 for (*_, cd) in fixed)
+    scaled = build_drain_cells_from_riv(g, riv, conductance_scale=0.5)
+    assert {cd for (*_, cd) in scaled} == {2500.0}
 
 
 def test_linearise_and_reversals(grid_with_outcrop, dem_path):

@@ -19,10 +19,11 @@ inputs:
   # described in CLAUDE.md §5; the grid is read directly from this table.
   properties_csv: "Data/Properties_recharge/properties.csv"
 
-  # NOTE: PCP_DEM.tif is the Precipice top-STRUCTURE surface, not ground
-  # topography (verified: reads -804 m at Roma where ground is ~300 m).
-  # Drain elevations built from it are approximately right at exposed
-  # outcrop; replace with the real topographic DEM when supplied.
+  # NOTE: PCP_DEM.tif is the structure surface of the Precipice BASE, not
+  # ground topography (verified 2026-07: matches model NBOT, median offset
+  # -0.4 m, corr 0.99998 — sits ~33 m below ground even in outcrop). Only
+  # used as the drain-elevation fallback when drains.riv_cells_csv is
+  # absent; replace with the real topographic DEM when supplied.
   dem: "Data/DEM/PCP_DEM.tif"
 
   # The properties CSV's rch column is empty, so recharge is supplied
@@ -136,14 +137,16 @@ assessment:
   chd_quadrants: ["NW", "SE"]
 
 # Rejected-recharge drains in the outcrop, mirroring the parent regional
-# model: each outcrop cell drains at the minimum DEM elevation within the
-# cell, so recharge that would mound above the lowest topography leaves
-# the model (seeps / springs / baseflow) instead of pressurising the
-# outcrop. Steady state uses real DRN cells; transient runs use the
-# linearised (GHB) form so superposition stays exact. Conductance is an
-# interim per-cell estimate C = K·A/b until the parent model's calibrated
-# DRN conductances are supplied — then set conductance_m2_per_day.
+# model, which implements them as RIV cells with stage == rbot (user-
+# confirmed; the model's DRN package is something else). riv_cells.csv is
+# extracted from the UWIR 2025 RIV package by scripts/extract_uwir2025.py
+# and carries the CALIBRATED stage (drain elevation) and conductance per
+# cell — it supersedes the old min-DEM elevation + K·A/b estimate, which
+# remains the fallback when the file is absent. Steady state uses real
+# DRN cells; transient runs use the linearised (GHB) form so
+# superposition stays exact.
 drains:
   enabled: true
-  conductance_m2_per_day: null   # null = estimate from K per cell
+  riv_cells_csv: "Data/Properties_recharge/riv_cells.csv"
+  conductance_m2_per_day: null   # null = calibrated per-cell RIV conductance
   conductance_scale: 1.0

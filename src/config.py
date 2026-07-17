@@ -78,13 +78,21 @@ class TimeCfg(BaseModel):
 class DrainsCfg(BaseModel):
     """Rejected-recharge drains in the outcrop (parent-model device).
 
-    Drain elevation = minimum of the DEM within each outcrop cell.
+    Preferred source: `riv_cells_csv` — the parent model's RIV cells
+    (extracted by scripts/extract_uwir2025.py), which ARE its surficial
+    drains (stage == rbot) with calibrated stage and conductance.
+    Fallback: drain elevation = minimum of the DEM within each outcrop
+    cell, conductance estimated as K·A/b.
     The steady state uses real DRN cells; the transient runs use the
     linearised (GHB) form so superposition stays exact — see src/drains.py.
     """
     enabled: bool = False
-    # Fixed conductance (m²/day) for every drain. None = estimate per
-    # cell as K·A/b (interim until parent-model conductances are supplied).
+    # Parent-model RIV export (ILAY, INODE, ICOL, IROW, X, Y, stage_m,
+    # cond_m2_per_day, rbot_m). When set and present it supersedes the DEM.
+    riv_cells_csv: Path | None = None
+    # Fixed conductance (m²/day) for every drain. None = use the calibrated
+    # per-cell RIV conductance (riv_cells_csv source) or estimate K·A/b
+    # (DEM source).
     conductance_m2_per_day: float | None = None
     conductance_scale: float = 1.0
 

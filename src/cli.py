@@ -155,17 +155,14 @@ def run(
         chd_cells = active_boundary_chd_cells(grid)
         typer.echo(f"\nBoundary CHD on all {len(chd_cells)} active-edge cells (head = NTOP).")
 
-    # Rejected-recharge drains at min-DEM elevation in outcrop cells.
+    # Rejected-recharge drains: parent-model RIV export when configured,
+    # else min-DEM elevation in outcrop cells.
     drn_cells = []
-    if cfg.drains.enabled and cfg.inputs.dem is not None:
-        from .drains import build_drain_cells
+    if cfg.drains.enabled:
+        from .drains import drain_cells_for_config
         try:
-            drn_cells = build_drain_cells(
-                grid, cfg.inputs.dem,
-                conductance=cfg.drains.conductance_m2_per_day,
-                conductance_scale=cfg.drains.conductance_scale,
-            )
-            typer.echo(f"Rejected-recharge drains on {len(drn_cells)} outcrop cells (min-DEM elevation).")
+            drn_cells, drn_source = drain_cells_for_config(cfg, grid)
+            typer.echo(f"Rejected-recharge drains on {len(drn_cells)} cells ({drn_source}).")
         except Exception as exc:
             typer.echo(f"  drains disabled — failed to build: {exc}")
 

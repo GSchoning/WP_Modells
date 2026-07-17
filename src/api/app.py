@@ -219,19 +219,15 @@ def _bootstrap_ic() -> None:
     grid = state.grid
     workspace = state.workspace_root / "ss"
 
-    # Rejected-recharge drains (parent-model device): outcrop cells drain
-    # at the minimum DEM elevation within the cell, so recharge that would
-    # mound above the lowest topography leaves the model instead.
+    # Rejected-recharge drains (parent-model device): the parent model's
+    # RIV cells (calibrated stage/conductance) when configured; otherwise
+    # outcrop cells drain at the minimum DEM elevation within the cell.
     drn_cells = []
-    if state.cfg.drains.enabled and state.cfg.inputs.dem is not None:
-        from ..drains import build_drain_cells
+    if state.cfg.drains.enabled:
+        from ..drains import drain_cells_for_config
         try:
-            drn_cells = build_drain_cells(
-                grid, state.cfg.inputs.dem,
-                conductance=state.cfg.drains.conductance_m2_per_day,
-                conductance_scale=state.cfg.drains.conductance_scale,
-            )
-            print(f"[drains] {len(drn_cells)} outcrop drain cells at min-DEM elevation")
+            drn_cells, drn_source = drain_cells_for_config(state.cfg, grid)
+            print(f"[drains] {len(drn_cells)} drain cells ({drn_source})")
         except Exception as exc:
             print(f"[drains] disabled — failed to build drain cells: {exc}")
     state.drn_cells = drn_cells
