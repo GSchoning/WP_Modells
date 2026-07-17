@@ -36,6 +36,12 @@ inputs:
   # above provides values (UWIR balance ÷ area = 5.63e-5 m/d).
   recharge_fallback_m_per_day: 5.63e-5
 
+  # Parent-model calibrated boundary GHBs (48 western-face cells with
+  # calibrated head AND conductance, extracted from the UWIR 2025 GHB
+  # package). Supersedes the transcribed pilot-head interpolation with
+  # estimated C = K·b; comment out to revert to that behaviour.
+  ghb_cells_csv: "Data/Properties_recharge/ghb_cells.csv"
+
   # Water-use database. Coordinates GIS_LAT/GIS_LNG are GDA94 geographic
   # (EPSG:4283) and are reprojected to the project CRS on ingest.
   water_use:

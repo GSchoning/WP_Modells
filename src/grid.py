@@ -38,8 +38,75 @@ class Grid:
     crs: str
 
 
+def _merge_layer_rows(
+    df: pd.DataFrame, recharge_by_inode: dict[int, float] | None
+) -> pd.DataFrame:
+    """Collapse a multi-layer per-cell table to one row per (IROW, ICOL).
+
+    Used for aquifers split across parent-model layers (Hutton = ILAY
+    19 + 20). Per column of cells:
+      - NTOP = max, NBOT = min (contiguous Upper/Lower stack)
+      - THICKNESS = summed layer thicknesses
+      - kx = transmissivity-weighted mean: sum(kx*b) / sum(b)
+      - SS: if any component carries the negative water-table (outcrop)
+        marker, the merged cell keeps the negative DIMENSIONLESS Sy
+        (largest magnitude) — the decode below divides by the merged
+        thickness so Ss*b = Sy still holds exactly. Otherwise a
+        thickness-weighted mean of the (positive) specific storages.
+      - IBOUND active if any component is active; OUTCROP 'Y' if any is.
+      - INODE = uppermost component's node (identification only).
+      - rch = summed steady-state recharge over the component INODEs
+        (recharge nodes can sit in either layer, so the INODE-keyed
+        lookup must happen before the merge discards the lower node ids).
+    """
+    df = df.sort_values("ILAY")
+    df["_thk"] = pd.to_numeric(df["THICKNESS"], errors="coerce").fillna(0.0)
+    df["_kx"] = pd.to_numeric(df["kx"], errors="coerce").fillna(0.0)
+    df["_ss"] = pd.to_numeric(df["SS"], errors="coerce").fillna(0.0)
+    if recharge_by_inode:
+        df["_rch"] = df["INODE"].map(lambda i: recharge_by_inode.get(int(i), 0.0))
+    else:
+        df["_rch"] = 0.0
+
+    def _one(g: pd.DataFrame) -> pd.Series:
+        b = g["_thk"].to_numpy()
+        b_sum = float(b.sum())
+        w = b / b_sum if b_sum > 0 else np.full(len(g), 1.0 / len(g))
+        neg = g["_ss"] < 0
+        if neg.any():
+            ss = -float(g.loc[neg, "_ss"].abs().max())
+        else:
+            ss = float((g["_ss"] * w).sum())
+        first = g.iloc[0]
+        return pd.Series({
+            "ICOL": first["ICOL"], "IROW": first["IROW"], "ILAY": first["ILAY"],
+            "INODE": first["INODE"],
+            "IBOUND": int((pd.to_numeric(g["IBOUND"], errors="coerce") == 1).any()),
+            "NTOP": pd.to_numeric(g["NTOP"], errors="coerce").max(),
+            "NBOT": pd.to_numeric(g["NBOT"], errors="coerce").min(),
+            "X": first["X"], "Y": first["Y"],
+            "THICKNESS": b_sum,
+            "OUTCROP": "Y" if (g["OUTCROP"].astype(str).str.upper() == "Y").any() else "N",
+            "Depth": pd.to_numeric(g.get("Depth"), errors="coerce").min(),
+            "kx": float((g["_kx"] * w).sum()),
+            "SS": ss,
+            "rch": float(g["_rch"].sum()),
+        })
+
+    merged = pd.DataFrame(
+        [_one(g) for _, g in df.groupby(["IROW", "ICOL"], sort=False)]
+    ).reset_index(drop=True)
+    import sys
+    print(
+        f"[grid] merged {len(df)} rows across ILAY {sorted(df['ILAY'].unique())} "
+        f"into {len(merged)} single-layer cells",
+        file=sys.stderr,
+    )
+    return merged
+
+
 def build_grid_from_properties(
-    properties: pd.DataFrame, crs: str, *, layer: int = 24,
+    properties: pd.DataFrame, crs: str, *, layer: int | list[int] = 24,
     recharge_by_inode: dict[int, float] | None = None,
     recharge_fallback_m_per_day: float | None = None,
     outcrop_storage: str = "formation_sy",
@@ -47,8 +114,11 @@ def build_grid_from_properties(
     """Reconstruct a single-layer Grid from the per-cell properties table.
 
     The source CSV is exported from a multi-layer regional model; rows for
-    layers other than the Precipice (ILAY=24 by default) are filtered out so
-    we don't overlay properties from other formations onto the same (row, col).
+    layers other than the target aquifer (ILAY=24, the Precipice, by
+    default) are filtered out so we don't overlay properties from other
+    formations onto the same (row, col). `layer` may be a list for
+    aquifers split across parent layers (Hutton = [19, 20]); the rows are
+    then merged per cell — see _merge_layer_rows.
 
     Assumes ICOL / IROW are 1-based and X/Y are cell centres in project CRS.
 
@@ -56,24 +126,29 @@ def build_grid_from_properties(
     field keyed by INODE — the authoritative OGIA export) if supplied and
     the properties `rch` column is empty; (2) the `rch` column if it has
     values; (3) a uniform `recharge_fallback_m_per_day` over outcrop.
+    (For merged multi-layer aquifers the INODE-keyed field is summed into
+    the `rch` column during the merge.)
     """
+    layers = [int(v) for v in (layer if isinstance(layer, (list, tuple)) else [layer])]
     df = properties.copy()
     if "ILAY" in df.columns:
         n_before = len(df)
-        df = df[pd.to_numeric(df["ILAY"], errors="coerce").astype("Int64") == layer]
+        df = df[pd.to_numeric(df["ILAY"], errors="coerce").astype("Int64").isin(layers)]
         n_dropped = n_before - len(df)
         if n_dropped:
             import sys
             print(
-                f"[grid] filtered {n_dropped} rows with ILAY != {layer}; "
+                f"[grid] filtered {n_dropped} rows with ILAY not in {layers}; "
                 f"kept {len(df)} rows",
                 file=sys.stderr,
             )
     if df.empty:
         raise ValueError(
-            f"build_grid_from_properties: no rows with ILAY == {layer}. "
+            f"build_grid_from_properties: no rows with ILAY in {layers}. "
             "Check grid.properties_layer against the properties CSV."
         )
+    if len(layers) > 1:
+        df = _merge_layer_rows(df, recharge_by_inode)
     df["ICOL"] = df["ICOL"].astype(int)
     df["IROW"] = df["IROW"].astype(int)
 

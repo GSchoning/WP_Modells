@@ -46,7 +46,7 @@ from fastapi.staticfiles import StaticFiles
 from ..config import Config, load_config
 from ..grid import Grid, build_grid_from_properties, cell_of
 from ..io_layer import Inputs, ML_PER_YEAR_TO_M3_PER_DAY, load_inputs, load_recharge_by_inode
-from ..model_builder import active_boundary_chd_cells, truncation_face_ghb_cells
+from ..model_builder import active_boundary_chd_cells, boundary_ghb_for_config
 from ..scenarios import ScenarioResult, run_scenario, run_steady_state
 from ..superposition import combine_receptor_tables
 from ..theis import formation_avg_T_S, theis_at_springs
@@ -238,11 +238,7 @@ def _bootstrap_ic() -> None:
         grid, exclude_mask=grid.outcrop_mask, quadrants=quadrants,
     )
     chd_unfiltered = active_boundary_chd_cells(grid)
-    ghb_ws = truncation_face_ghb_cells(
-        grid, state.cfg.assessment.ghb_faces,
-        conductance_scale=state.cfg.assessment.ghb_conductance_scale,
-        head_source=state.cfg.assessment.ghb_heads,
-    )
+    ghb_ws, ghb_source = boundary_ghb_for_config(state.cfg, grid)
 
     # Attempt ladder ordered by the configured boundary mode. The boundary
     # audit showed the perimeter is almost entirely a thin pinch-out fringe,
@@ -260,7 +256,7 @@ def _bootstrap_ic() -> None:
     if mode == "uwir_ghb":
         attempts.append((
             f"no-flow pinch-outs + {len(ghb_ws)} truncation-face GHBs "
-            f"({'/'.join(state.cfg.assessment.ghb_faces)}) + drains",
+            f"({ghb_source}) + drains",
             [], ghb_ws,
         ))
     if mode in ("uwir_ghb", "no_flow"):

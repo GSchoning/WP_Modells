@@ -16,7 +16,7 @@ from .config import load_config
 from .figures import make_all as make_figures
 from .grid import build_grid_from_properties
 from .io_layer import load_inputs, validate, load_recharge_by_inode, ML_PER_YEAR_TO_M3_PER_DAY
-from .model_builder import active_boundary_chd_cells, truncation_face_ghb_cells
+from .model_builder import active_boundary_chd_cells
 from .reporting import write_impact_report, write_validation_report
 from .scenarios import run_scenario, run_steady_state
 from .superposition import combine_rasters, combine_receptor_tables
@@ -135,13 +135,10 @@ def run(
     boundary_ghb = []
     if mode == "uwir_ghb":
         chd_cells = []
-        boundary_ghb = truncation_face_ghb_cells(
-            grid, cfg.assessment.ghb_faces,
-            conductance_scale=cfg.assessment.ghb_conductance_scale,
-            head_source=cfg.assessment.ghb_heads,
-        )
+        from .model_builder import boundary_ghb_for_config
+        boundary_ghb, ghb_source = boundary_ghb_for_config(cfg, grid)
         typer.echo(f"\nBoundary: no-flow pinch-outs + {len(boundary_ghb)} truncation-face GHBs "
-                   f"({'/'.join(cfg.assessment.ghb_faces)}) — UWIR 2025 Fig F.1-15 design.")
+                   f"({ghb_source}) — UWIR 2025 design.")
     elif mode == "no_flow":
         chd_cells = []
         typer.echo("\nBoundary: no-flow perimeter (pinch-out) — drains provide the steady-state outlet.")

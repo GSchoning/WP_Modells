@@ -98,7 +98,24 @@ def _read_springs(cfg: Config) -> gpd.GeoDataFrame | None:
     gdf = gpd.read_file(p)
     if gdf.crs is None:
         raise ValueError(f"springs shapefile {p} has no CRS")
-    return gdf.to_crs(cfg.project.crs)
+    gdf = gdf.to_crs(cfg.project.crs)
+
+    # Optional attribute filter — the shared springs layer attributes each
+    # spring to a source aquifer (e.g. source_aqu contains "Hutton").
+    flt = getattr(cfg.inputs, "springs_attr_filter", None)
+    if flt:
+        col, needle = flt["column"], str(flt["contains"])
+        if col not in gdf.columns:
+            raise ValueError(f"springs shapefile {p} has no column {col!r}")
+        keep = gdf[col].astype(str).str.contains(needle, case=False, na=False)
+        import sys
+        print(
+            f"[springs] attribute filter {col} ~ {needle!r}: kept "
+            f"{int(keep.sum())} of {len(gdf)} springs",
+            file=sys.stderr,
+        )
+        gdf = gdf[keep].copy()
+    return gdf
 
 
 def _polygonize_extent(gdf: gpd.GeoDataFrame, properties: pd.DataFrame, crs: str) -> gpd.GeoDataFrame:

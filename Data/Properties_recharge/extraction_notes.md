@@ -25,6 +25,8 @@ IROW 1 = north. INODE = global USG node number.
 - predev_heads.csv: steady-state starting heads (UWIRGen5_usg._sshds) =
   pre-development potentiometric surface.
 - outcrop.shp: dissolved 1500 m cells with SS < 0 (union across layers).
+- extent.shp: dissolved active (IBOUND=1) cells - the model-derived
+  formation extent (stands in for an official OGIA extent polygon).
 
 Validation: the same code regenerates the OGIA Precipice layer-24
 properties.csv byte-equivalent numerically (all columns; Depth within 2 m

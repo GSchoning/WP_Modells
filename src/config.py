@@ -40,6 +40,15 @@ class InputsCfg(BaseModel):
     # CSV's rch column is empty (as the delivered export is). Applied at
     # exactly the cells OGIA recharges (northern exposed-outcrop belt).
     recharge_csv: Path | None = None
+    # Parent-model calibrated GHB export (ghb_cells.csv from
+    # scripts/extract_uwir2025.py). When set and present, boundary GHBs in
+    # "uwir_ghb" mode use these cells/heads/conductances instead of the
+    # grid-frame-face placement with estimated C = K·b.
+    ghb_cells_csv: Path | None = None
+    # Optional attribute filter applied to the springs shapefile at ingest,
+    # e.g. {column: "source_aqu", contains: "Hutton"} — the shared springs
+    # layer attributes each spring to a source aquifer.
+    springs_attr_filter: dict | None = None
     # Uniform-over-outcrop last resort, used only when neither the rch
     # column nor recharge_csv provides values. UWIR 2025 layer-24 balance:
     # 25,283 ML/yr over 1,231 km² = 5.63e-5 m/d.
@@ -59,7 +68,9 @@ class GridCfg(BaseModel):
     # with ILAY == this value are used. The Precipice Sandstone is layer 24
     # in the current model revision (it was layer 23 in the 2019 UWIR
     # model — figures in the 2019 modelling report use the old numbering).
-    properties_layer: int = 24
+    # A list merges several parent layers into one model layer per cell
+    # (Hutton Sandstone = [19, 20], Upper + Lower) — see grid._merge_layer_rows.
+    properties_layer: int | list[int] = 24
 
 
 class TimeCfg(BaseModel):

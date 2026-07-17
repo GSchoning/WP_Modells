@@ -350,12 +350,13 @@ def validate_against_precipice(model: Model, rch: pd.DataFrame, ghb: pd.DataFram
 
 # ------------------------------------------------------------------ outputs
 
-def write_outcrop_shapefile(props: pd.DataFrame, path: Path) -> int:
+def write_cells_shapefile(cells: pd.DataFrame, path: Path) -> int:
+    """Dissolve 1500 m cells (X/Y centres) into a polygon shapefile."""
     import geopandas as gpd
     from shapely.geometry import box
     from shapely.ops import unary_union
 
-    cells = props.loc[props.OUTCROP == "Y", ["X", "Y"]].drop_duplicates()
+    cells = cells[["X", "Y"]].drop_duplicates()
     if cells.empty:
         return 0
     h = CELL / 2.0
@@ -393,6 +394,8 @@ IROW 1 = north. INODE = global USG node number.
 - predev_heads.csv: steady-state starting heads (UWIRGen5_usg._sshds) =
   pre-development potentiometric surface.
 - outcrop.shp: dissolved 1500 m cells with SS < 0 (union across layers).
+- extent.shp: dissolved active (IBOUND=1) cells - the model-derived
+  formation extent (stands in for an official OGIA extent polygon).
 
 Validation: the same code regenerates the OGIA Precipice layer-24
 properties.csv byte-equivalent numerically (all columns; Depth within 2 m
@@ -421,8 +424,11 @@ def export_aquifer(name: str, layers: list[int], out_dir: Path,
         r[["INODE", "X", "Y", "RCH_SS_m_per_day"]].to_csv(out_dir / "recharge_SS.csv", index=False)
         print(f"  recharge_SS.csv   {len(r):>7} rows")
 
-        n_cells = write_outcrop_shapefile(props, out_dir / "outcrop.shp")
+        n_cells = write_cells_shapefile(props[props.OUTCROP == "Y"], out_dir / "outcrop.shp")
         print(f"  outcrop.shp       {n_cells:>7} cells dissolved")
+
+        n_ext = write_cells_shapefile(props[props.IBOUND == 1], out_dir / "extent.shp")
+        print(f"  extent.shp        {n_ext:>7} active cells dissolved")
 
     g = ghb[lay_of.loc[ghb.INODE].isin(layers).values].copy()
     g["ILAY"] = lay_of.loc[g.INODE].values

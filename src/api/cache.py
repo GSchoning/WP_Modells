@@ -98,6 +98,12 @@ def baseline_key(cfg: Config, config_path: Path) -> str:
     ]
     if cfg.inputs.springs is not None and Path(cfg.inputs.springs).exists():
         parts.append(_file_sha256(Path(cfg.inputs.springs)))
+    if cfg.inputs.springs_attr_filter:
+        parts.append(f"spfilt={sorted(cfg.inputs.springs_attr_filter.items())}")
+    # Boundary GHBs read from the calibrated parent-model export when set.
+    if cfg.inputs.ghb_cells_csv is not None and Path(cfg.inputs.ghb_cells_csv).exists():
+        parts.append("ghb-file")
+        parts.append(_file_sha256(Path(cfg.inputs.ghb_cells_csv)))
     if Path(cfg.inputs.outcrop).exists():
         parts.append(_file_sha256(Path(cfg.inputs.outcrop)))
     # Rejected-recharge drains derive elevations/conductances from the

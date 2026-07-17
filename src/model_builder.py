@@ -274,6 +274,72 @@ def truncation_face_ghb_cells(
     return cells
 
 
+def file_ghb_cells(
+    grid: Grid,
+    ghb_csv: str | Path,
+    *,
+    conductance_scale: float = 1.0,
+) -> list[GhbRecord]:
+    """GHB records from the parent model's calibrated GHB export
+    (ghb_cells.csv from scripts/extract_uwir2025.py: ILAY, INODE, ICOL,
+    IROW, X, Y, head_m, cond_m2_per_day).
+
+    Uses the parent model's actual GHB cell locations, heads AND
+    conductances — superseding the grid-frame-face placement with
+    estimated C = K·b and transcribed pilot heads. Rows are mapped by
+    IROW/ICOL (the frame the Grid arrays are indexed by); cells inactive
+    in the tool grid are dropped. Where several parent layers put a GHB
+    in the same tool cell (merged Hutton 19+20), conductances sum and the
+    head is the conductance-weighted mean.
+    """
+    import pandas as pd
+
+    df = pd.read_csv(ghb_csv)
+    required = {"IROW", "ICOL", "head_m", "cond_m2_per_day"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"{ghb_csv}: missing columns {sorted(missing)}")
+
+    df["r"] = df["IROW"].astype(int) - 1
+    df["c"] = df["ICOL"].astype(int) - 1
+    in_bounds = (df.r >= 0) & (df.r < grid.nrow) & (df.c >= 0) & (df.c < grid.ncol)
+    df = df[in_bounds]
+    active = grid.idomain[0][df.r.to_numpy(), df.c.to_numpy()] == 1
+    df = df[active]
+
+    cells: list[GhbRecord] = []
+    for (r, c), g in df.groupby(["r", "c"]):
+        cond = float(g.cond_m2_per_day.sum())
+        head = float((g.head_m * g.cond_m2_per_day).sum() / cond) if cond > 0 \
+            else float(g.head_m.mean())
+        cells.append((0, int(r), int(c), head, cond * conductance_scale))
+    return cells
+
+
+def boundary_ghb_for_config(cfg, grid: Grid) -> tuple[list[GhbRecord], str]:
+    """Truncation-face GHBs per the config's source priority.
+
+    1. `inputs.ghb_cells_csv` (parent-model calibrated cells/heads/
+       conductances) when set and present;
+    2. otherwise grid-frame faces with estimated C = K·b and pilot /
+       NTOP heads (truncation_face_ghb_cells).
+    Returns (records, source description for logging).
+    """
+    ghb_csv = getattr(cfg.inputs, "ghb_cells_csv", None)
+    if ghb_csv is not None and Path(ghb_csv).exists():
+        cells = file_ghb_cells(
+            grid, ghb_csv,
+            conductance_scale=cfg.assessment.ghb_conductance_scale,
+        )
+        return cells, "parent-model calibrated GHB cells"
+    cells = truncation_face_ghb_cells(
+        grid, cfg.assessment.ghb_faces,
+        conductance_scale=cfg.assessment.ghb_conductance_scale,
+        head_source=cfg.assessment.ghb_heads,
+    )
+    return cells, f"grid-frame faces {'/'.join(cfg.assessment.ghb_faces)}, estimated C=K·b"
+
+
 def anchor_ghb_cells(
     grid: Grid,
     bc_cells: set[tuple[int, int]],

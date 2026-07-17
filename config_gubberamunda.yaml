@@ -1,0 +1,106 @@
+# Gubberamunda Sandstone — runtime configuration.
+#
+# Mirrors config.yaml (the Precipice POC) with Gubberamunda-specific
+# inputs from the UWIR 2025 extraction (scripts/extract_uwir2025.py).
+# Single parent-model layer (7).
+
+project:
+  name: "gubberamunda_poc"
+  crs: "EPSG:28355"                # GDA94 / MGA Zone 55
+
+inputs:
+  # Model-derived extent (dissolved active cells) and outcrop (negative-SS
+  # water-table cells) — stand-ins until official OGIA polygons arrive.
+  formation_extent: "Data/Gubberamunda/extent.shp"
+  outcrop:          "Data/Gubberamunda/outcrop.shp"
+
+  properties_csv: "Data/Gubberamunda/properties.csv"
+
+  # No topographic DEM yet (see docs/data_request_hutton_gubberamunda.md);
+  # drains take calibrated stages from riv_cells_csv, so none is needed.
+  dem: null
+
+  # Steady-state recharge at ALL water-table recharge nodes.
+  recharge_csv: "Data/Gubberamunda/recharge_SS.csv"
+  recharge_fallback_m_per_day: null
+
+  # Parent-model calibrated boundary GHBs (western heads + southern
+  # conductances, layer 7).
+  ghb_cells_csv: "Data/Gubberamunda/ghb_cells.csv"
+
+  # Full 2024 water-use table (all formations); filtered on FORMATION.
+  water_use:
+    path: "Data/Water Use/WU14_Wateruse_current_2024_UWIR_20250529.csv"
+    source_crs: "EPSG:4283"
+    lon_col: "GIS_LNG"
+    lat_col: "GIS_LAT"
+    id_col: "RN"
+    rate_col: "ML_Aquifer"
+    rate_units: "ML/year"
+    formation_col: "FORMATION"
+    formation_value: "Gubberamunda Sandstone"
+    receptor_filter:
+      column: "OGIA_P3"
+      exclude_values: ["Stock_Domestic"]
+
+  # Shared springs layer; keep only springs attributed to the Gubberamunda
+  # (source_aqu) — 10 of 390 (the data request assumed none; there are some).
+  springs: "Data/Springs/Active springs_POINT_rJliS3wVll.shp"
+  springs_attr_filter:
+    column: "source_aqu"
+    contains: "Gubberamunda"
+
+  proposed_bore:
+    bore_id: "PROPOSED_001"
+    x: null
+    y: null
+    rate_ML_per_year: null
+
+aquifer:
+  # Fallbacks only; NTOP/NBOT/THICKNESS come per-cell from properties.csv.
+  thickness_m: 150
+  top_elevation_m: 0
+
+grid:
+  source: "properties_csv"
+  buffer_m: 50000
+  boundary_type: "no_flow"
+  properties_layer: 7
+
+time:
+  total_years: 100
+  nstp: 30
+  tsmult: 1.2
+  fine_period_years: 10
+  output_years: [10, 50, 100]
+
+solver:
+  complexity: "MODERATE"
+
+run:
+  scenarios: ["A", "C"]
+  workspace_root: "/tmp/mf6_workspaces_gubberamunda"
+
+assessment:
+  regulatory_threshold_m: 0.4
+  spring_complex_col: complex_na
+  spring_id_col: site_no
+  recharge_multiplier: 1.0
+  # Boundary GHBs come from inputs.ghb_cells_csv (calibrated layer-7
+  # cells). The face/head settings below apply only if that file goes
+  # missing; ghb_heads must NOT be "uwir2025_pilot" here — the pilot
+  # table is Precipice layer-24 data.
+  boundary_mode: "uwir_ghb"
+  ghb_faces: ["W", "S"]           # UWIR 2025 App. F: Gubberamunda has W heads + S conductances
+  ghb_conductance_scale: 1.0
+  ghb_heads: "ntop"
+  outcrop_storage: "formation_sy" # 2.1985e-2 on the outcrop belt
+  chd_quadrants: ["NW", "SE"]
+
+drains:
+  enabled: true
+  # Calibrated surficial-drain stages/conductances from the parent model's
+  # RIV package (layer 7).
+  riv_cells_csv: "Data/Gubberamunda/riv_cells.csv"
+  conductance_m2_per_day: null
+  conductance_scale: 1.0

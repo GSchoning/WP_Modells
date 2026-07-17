@@ -53,6 +53,56 @@ def test_recharge_masked_to_outcrop():
     assert (g.rch[1:, :] == 0).all()
 
 
+def test_two_layer_merge():
+    """Hutton-style split aquifer (ILAY 19 + 20) merges to one layer per cell:
+    T-weighted kx, summed thickness, negative-Sy passthrough, INODE-keyed
+    recharge summed across both layers' nodes."""
+    rows = []
+    for ilay, inode0, ntop, nbot, kx, ss in [
+        (19, 100, 100.0, 40.0, 2.0, 1e-5),      # upper: b=60
+        (20, 200, 40.0, 0.0, 8.0, 2e-5),        # lower: b=40
+    ]:
+        for ic in range(1, 3):
+            rows.append({
+                "ICOL": ic, "IROW": 1, "ILAY": ilay, "INODE": inode0 + ic,
+                "IBOUND": 1, "NTOP": ntop, "NBOT": nbot,
+                "X": 500_000 + (ic - 1) * 1500.0, "Y": 7_000_000,
+                "THICKNESS": ntop - nbot,
+                # cell (1,1): upper layer is water-table (negative Sy)
+                "OUTCROP": "Y" if (ilay == 19 and ic == 1) else "N",
+                "Depth": 50.0, "kx": kx,
+                "SS": -5.878e-3 if (ilay == 19 and ic == 1) else ss,
+                "rch": "",
+            })
+    # a cell where ONLY the lower layer exists (pinched upper)
+    rows.append({
+        "ICOL": 3, "IROW": 1, "ILAY": 20, "INODE": 203, "IBOUND": 1,
+        "NTOP": 40.0, "NBOT": 0.0, "X": 500_000 + 2 * 1500.0, "Y": 7_000_000,
+        "THICKNESS": 40.0, "OUTCROP": "Y", "Depth": 20.0, "kx": 8.0,
+        "SS": -5.878e-3, "rch": "",
+    })
+    props = pd.DataFrame(rows)
+    rch_by_inode = {101: 1e-4, 201: 2e-4, 203: 3e-4}   # both layers of cell 1 + L20-only cell
+
+    g = build_grid_from_properties(props, "EPSG:28355", layer=[19, 20],
+                                   recharge_by_inode=rch_by_inode)
+    assert g.nrow == 1 and g.ncol == 3
+    # geometry: top of upper, bottom of lower
+    assert g.top[0, 1] == 100.0 and g.botm[0, 0, 1] == 0.0
+    # T-weighted kx: (2*60 + 8*40) / 100 = 4.4
+    assert np.isclose(g.k[0, 0, 1], 4.4)
+    # plain cell: thickness-weighted Ss = (1e-5*60 + 2e-5*40)/100
+    assert np.isclose(g.ss[0, 0, 1], (1e-5 * 60 + 2e-5 * 40) / 100)
+    # water-table cell: Sy decodes so Ss*b == Sy over the MERGED thickness
+    assert np.isclose(g.ss[0, 0, 0] * 100.0, 5.878e-3)
+    assert g.outcrop_mask[0, 0] and not g.outcrop_mask[0, 1]
+    # recharge summed across both layers' INODEs; L20-only cell keeps its own
+    assert np.isclose(g.rch[0, 0], 3e-4)
+    assert np.isclose(g.rch[0, 2], 3e-4)
+    # single-layer cell inherits the lower layer's geometry
+    assert g.top[0, 2] == 40.0 and np.isclose(g.ss[0, 0, 2] * 40.0, 5.878e-3)
+
+
 def test_cell_of_round_trips():
     props = _toy_properties()
     g = build_grid_from_properties(props, "EPSG:28355")
