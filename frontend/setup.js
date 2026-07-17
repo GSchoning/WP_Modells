@@ -209,8 +209,10 @@ function setupPropertyOverlay(map, info, name, label, rampClass, units) {
     map.addSource(sourceId, {
       type: "image",
       // Cache-buster: forces a fresh fetch each page load so stale
-      // server-rendered PNGs can't be served from disk cache.
-      url: `/api/model-setup/property/${name}.png?t=${Date.now()}`,
+      // server-rendered PNGs can't be served from disk cache. MapLibre
+      // image sources bypass the patched window.fetch, so the aquifer
+      // param is baked into the URL explicitly.
+      url: GABORA.withAquifer(`/api/model-setup/property/${name}.png?t=${Date.now()}`),
       coordinates: corners,
     });
     // Insert below the road layer so labels remain legible.

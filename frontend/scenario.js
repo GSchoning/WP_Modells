@@ -93,7 +93,9 @@ function createMap(elementId, layer, year) {
   map.on("load", () => {
     map.addSource("dd", {
       type: "image",
-      url: `/api/last-scenario/drawdown.png?layer=${layer}&year=${year}${jobQS()}`,
+      // MapLibre image sources bypass the patched window.fetch, so the
+      // aquifer param must be baked into the URL explicitly.
+      url: GABORA.withAquifer(`/api/last-scenario/drawdown.png?layer=${layer}&year=${year}${jobQS()}`),
       coordinates: STATE.info.image_corners_4326,
     });
     // Insert the drawdown raster BELOW the roads/places labels so towns
