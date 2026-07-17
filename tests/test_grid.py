@@ -60,11 +60,11 @@ def test_cell_of_round_trips():
     assert rc is not None
 
 
-def test_negative_ss_decoded_by_magnitude():
-    """The parent-model export marks water-table cells with negative SS but
-    carries two magnitudes: Sy-like values (>1e-3, dimensionless — decode
-    so Ss·b == |SS|) and Ss-like values (within the formation's specific-
-    storage bounds — keep as 1/m via abs())."""
+def test_negative_ss_default_gives_formation_sy_everywhere():
+    """Default outcrop_storage='formation_sy': EVERY negative-marked
+    (water-table) cell carries the formation-wide outcrop Sy as its
+    storativity, per UWIR 2025 Table B.2-2 — including cells whose export
+    magnitude was Ss-like."""
     props = _toy_properties()
     sy = 1.6293e-2
     ss_small = 1.63e-6
@@ -72,14 +72,25 @@ def test_negative_ss_decoded_by_magnitude():
     props.loc[(props.IROW == 1) & (props.ICOL == 2), "SS"] = -ss_small # Ss-like
     g = build_grid_from_properties(props, "EPSG:28355")
     thickness = float(g.top[0, 0] - g.botm[0, 0, 0])
-    # Sy-like: storativity equals the exported value exactly.
+    # Both water-table cells end up with S = formation Sy exactly.
     assert np.isclose(float(g.ss[0, 0, 0]) * thickness, sy)
-    # Ss-like: kept as specific storage (1/m), NOT divided by thickness —
-    # decoding it as dimensionless gave S ~ 2e-6 (near-zero storage) and
-    # made spring drawdowns explode.
-    assert np.isclose(float(g.ss[0, 0, 1]), ss_small)
+    assert np.isclose(float(g.ss[0, 0, 1]) * thickness, sy)
     # Positive-SS cells stay as specific storage (1/m).
     assert np.isclose(float(g.ss[0, 1, 1]), 1e-5)
+
+
+def test_negative_ss_as_exported_mode_keeps_ss_magnitudes():
+    """outcrop_storage='as_exported': Sy-like negatives decode to Sy;
+    Ss-like negatives are kept as specific storage (1/m)."""
+    props = _toy_properties()
+    sy = 1.6293e-2
+    ss_small = 1.63e-6
+    props.loc[(props.IROW == 1) & (props.ICOL == 1), "SS"] = -sy
+    props.loc[(props.IROW == 1) & (props.ICOL == 2), "SS"] = -ss_small
+    g = build_grid_from_properties(props, "EPSG:28355", outcrop_storage="as_exported")
+    thickness = float(g.top[0, 0] - g.botm[0, 0, 0])
+    assert np.isclose(float(g.ss[0, 0, 0]) * thickness, sy)
+    assert np.isclose(float(g.ss[0, 0, 1]), ss_small)   # NOT divided by b
 
 
 def test_recharge_fallback_applied_when_rch_empty():

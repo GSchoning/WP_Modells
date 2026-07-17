@@ -362,6 +362,7 @@ async def lifespan(app: FastAPI):
         layer=state.cfg.grid.properties_layer,
         recharge_by_inode=load_recharge_by_inode(state.cfg),
         recharge_fallback_m_per_day=state.cfg.inputs.recharge_fallback_m_per_day,
+        outcrop_storage=state.cfg.assessment.outcrop_storage,
     )
     state.workspace_root = Path(state.cfg.run.workspace_root)
     state.workspace_root.mkdir(parents=True, exist_ok=True)

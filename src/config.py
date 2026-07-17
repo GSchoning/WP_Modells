@@ -134,6 +134,15 @@ class AssessmentCfg(BaseModel):
     # GHB head source: calibrated UWIR 2025 posterior pilot heads
     # (Fig G.1-39, 423-706 m AHD along the western strip) or NTOP.
     ghb_heads: Literal["uwir2025_pilot", "ntop"] = "uwir2025_pilot"
+    # Storage at outcrop (negative-SS) cells:
+    #   "formation_sy": every water-table-marked cell carries the
+    #     formation-wide outcrop Sy (UWIR 2025 Table B.2-2 treats outcrop
+    #     Sy as a single formation-wide parameter) — the intended
+    #     "specific yield in outcrop" behaviour.
+    #   "as_exported": follow the export's per-cell magnitudes (mixed Sy
+    #     and Ss values; the split doesn't correlate with exposure,
+    #     burial or recharge, so it's likely an export artefact).
+    outcrop_storage: Literal["formation_sy", "as_exported"] = "formation_sy"
     # Compass quadrants (relative to the active-domain centroid) where the
     # boundary CHD is placed in "chd_quadrants" mode (also the fallback
     # order if "no_flow" cannot converge). Empty/None = all four.

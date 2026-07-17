@@ -43,6 +43,7 @@ def validate_cmd(config: Path = typer.Option("config.yaml", "--config", "-c")):
         inputs.properties, cfg.project.crs, layer=cfg.grid.properties_layer,
         recharge_by_inode=load_recharge_by_inode(cfg),
         recharge_fallback_m_per_day=cfg.inputs.recharge_fallback_m_per_day,
+        outcrop_storage=cfg.assessment.outcrop_storage,
     )
     findings = validate(inputs, cfg, grid)
     out = Path("reports/validation.md")
@@ -81,6 +82,7 @@ def run(
         inputs.properties, cfg.project.crs, layer=cfg.grid.properties_layer,
         recharge_by_inode=load_recharge_by_inode(cfg),
         recharge_fallback_m_per_day=cfg.inputs.recharge_fallback_m_per_day,
+        outcrop_storage=cfg.assessment.outcrop_storage,
     )
     _print_grid_summary(grid)
 

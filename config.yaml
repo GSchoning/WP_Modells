@@ -126,6 +126,11 @@ assessment:
   # AHD along the strip), interpolated by row. Head cancels in drawdown;
   # this improves the IC and drain-state classification.
   ghb_heads: "uwir2025_pilot"
+  # Outcrop (water-table) cells all carry the formation-wide outcrop Sy
+  # (1.6293e-2 in the export), per UWIR 2025 Table B.2-2 where outcrop
+  # Sy is one formation-wide parameter. "as_exported" reverts to the
+  # export's mixed per-cell magnitudes.
+  outcrop_storage: "formation_sy"
   # CHD placement used only in "chd_quadrants" mode, and as the final
   # convergence fallback.
   chd_quadrants: ["NW", "SE"]

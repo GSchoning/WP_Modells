@@ -42,6 +42,7 @@ def build_grid_from_properties(
     properties: pd.DataFrame, crs: str, *, layer: int = 24,
     recharge_by_inode: dict[int, float] | None = None,
     recharge_fallback_m_per_day: float | None = None,
+    outcrop_storage: str = "formation_sy",
 ) -> Grid:
     """Reconstruct a single-layer Grid from the per-cell properties table.
 
@@ -178,12 +179,29 @@ def build_grid_from_properties(
 
     thickness = np.maximum(top - bot, MIN_THICKNESS_M)
     neg_sy = neg_ss & (ss_abs > SY_DECODE_THRESHOLD)
-    ss = np.where(neg_sy, ss_abs / thickness, ss_abs)
+
+    # `outcrop_storage` decides what the Ss-magnitude negatives get:
+    #   - "formation_sy" (default): every negative-marked (water-table)
+    #     cell carries the formation-wide outcrop Sy, matching UWIR 2025
+    #     Table B.2-2 where outcrop Sy is a single formation-wide
+    #     parameter. The mixed magnitudes in the export don't correlate
+    #     with exposure, burial depth or recharge, so they're treated as
+    #     an export artefact rather than a storage signal.
+    #   - "as_exported": Sy-magnitude negatives decode to Sy; Ss-magnitude
+    #     negatives stay as specific storage (1/m).
+    formation_sy = float(np.median(ss_abs[neg_sy])) if neg_sy.any() else None
+    n_promoted = 0
+    if outcrop_storage == "formation_sy" and formation_sy is not None:
+        n_promoted = int((neg_ss & ~neg_sy).sum())
+        ss = np.where(neg_ss, formation_sy / thickness, ss_abs)
+    else:
+        ss = np.where(neg_sy, ss_abs / thickness, ss_abs)
 
     sanitised = {
         "k_negative_abs_taken": int(neg_k.sum()),
         "ss_negative_sy_decoded_as_dimensionless": int(neg_sy.sum()),
-        "ss_negative_kept_as_specific_storage": int((neg_ss & ~neg_sy).sum()),
+        "ss_negative_promoted_to_formation_sy": n_promoted,
+        "ss_negative_kept_as_specific_storage": int((neg_ss & ~neg_sy).sum()) - n_promoted,
         "k_zero_set_to_default": int(zero_k.sum()),
         "ss_zero_set_to_default": int(zero_ss.sum()),
         "thickness_too_small": int(bad_thickness.sum()),

@@ -92,6 +92,7 @@ def baseline_key(cfg: Config, config_path: Path) -> str:
         f"ghbf={','.join(cfg.assessment.ghb_faces)}",
         f"ghbs={cfg.assessment.ghb_conductance_scale:.6g}",
         f"ghbh={cfg.assessment.ghb_heads}",
+        f"ostor={cfg.assessment.outcrop_storage}",
         f"rfall={cfg.inputs.recharge_fallback_m_per_day}",
         f"chdq={','.join(cfg.assessment.chd_quadrants or [])}",
     ]
