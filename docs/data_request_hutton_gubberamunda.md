@@ -76,8 +76,12 @@ bores only.
 The real ground-surface DEM used by the regional model for drain
 elevations (finer than 1500 m; the parent model samples its minimum
 per cell). NOTE: the file currently in the repo (`Data/DEM/PCP_DEM.tif`)
-is the **Precipice top-structure surface, not topography** — do not
-copy that pattern. Suggested name: `Data/DEM/topo_DEM.tif`.
+is the **structure surface of the Precipice BASE, not topography**
+(verified: matches model NBOT, median offset −0.4 m, corr 0.99998) — do
+not copy that pattern. Suggested name: `Data/DEM/topo_DEM.tif`.
+Interim alternative for drain elevations: `riv_cells.csv` (extracted
+from the parent model's RIV package) carries the calibrated surficial
+drain stage per cell.
 
 ### 2.2 Water use
 `Data/Water Use/WATERUSE_GDA94.csv` already covers all formations via
