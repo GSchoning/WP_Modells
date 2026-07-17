@@ -249,8 +249,10 @@ function addWellMarkers(map) {
 function updateOverlay(layer, year) {
   const map = STATE.maps[layer];
   if (!map || !map.getSource("dd")) return;
+  // Same as createMap: MapLibre image requests bypass the patched
+  // window.fetch, so the aquifer param must be in the URL itself.
   map.getSource("dd").updateImage({
-    url: `/api/last-scenario/drawdown.png?layer=${layer}&year=${year}${jobQS()}`,
+    url: GABORA.withAquifer(`/api/last-scenario/drawdown.png?layer=${layer}&year=${year}${jobQS()}`),
     coordinates: STATE.info.image_corners_4326,
   });
 }
