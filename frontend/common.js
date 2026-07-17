@@ -64,5 +64,56 @@
     return Number(v).toExponential(2);
   }
 
-  window.GABORA = { makeSatStyle, raiseReferenceLayers, escapeHtml, fmtSci };
+  /* ---- Multi-aquifer routing --------------------------------------------
+   * The module pages are aquifer-agnostic; ?aquifer=<key> in the page URL
+   * selects which backend module serves them (default: precipice).
+   *  - every same-origin /api/ fetch gets the aquifer appended, and
+   *  - relative page links (setup.html, scenario.html, …) inherit it,
+   * so navigation keeps the module context without touching page code.
+   */
+  const AQUIFER = new URLSearchParams(window.location.search).get("aquifer") || "precipice";
+
+  const _fetch = window.fetch.bind(window);
+  window.fetch = function (input, init) {
+    try {
+      const url = typeof input === "string" ? input : input?.url;
+      if (url && (url.startsWith("/api/") || url.startsWith("api/"))) {
+        const sep = url.includes("?") ? "&" : "?";
+        const patched = `${url}${sep}aquifer=${encodeURIComponent(AQUIFER)}`;
+        input = typeof input === "string" ? patched : new Request(patched, input);
+      }
+    } catch (e) { /* fall through with the original input */ }
+    return _fetch(input, init);
+  };
+
+  function withAquifer(href) {
+    const sep = href.includes("?") ? "&" : "?";
+    return `${href}${sep}aquifer=${encodeURIComponent(AQUIFER)}`;
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    if (AQUIFER === "precipice") return;   // default needs no propagation
+    document.querySelectorAll("a[href]").forEach((a) => {
+      const href = a.getAttribute("href");
+      // only same-site module pages; leave the landing page (index.html)
+      // and external/anchor links alone.
+      if (!href || /^(https?:|#|mailto:)/.test(href)) return;
+      if (!/^(precipice|setup|scenario)\.html/.test(href)) return;
+      if (href.includes("aquifer=")) return;
+      a.setAttribute("href", withAquifer(href));
+    });
+    // Rebrand the module header for the active aquifer.
+    const sub = document.getElementById("module-subtitle");
+    if (sub) {
+      fetch("/api/healthz").then((r) => r.json()).then((h) => {
+        if (h && h.aquifer_title) {
+          sub.textContent = `${h.aquifer_title} — water licence impact assessment`;
+          document.title = `GABORA — ${h.aquifer_title}`;
+        }
+      }).catch(() => {});
+    }
+  });
+
+  window.GABORA = { makeSatStyle, raiseReferenceLayers, escapeHtml, fmtSci,
+                    AQUIFER, withAquifer };
 })();

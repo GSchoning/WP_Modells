@@ -997,7 +997,7 @@ function renderDecision(result) {
       `run ${GABORA.escapeHtml(result.job_id || "")} · baseline ${GABORA.escapeHtml(p.baseline_cache_key || "")} · ${GABORA.escapeHtml(p.mf6_version || "")}</div>`;
   }
   const jobParam = result.job_id ? `?job=${encodeURIComponent(result.job_id)}` : "";
-  mh += `<div><a href="scenario.html${jobParam}" target="_blank" rel="noopener" class="detail-link">View drawdown maps →</a></div>`;
+  mh += `<div><a href="${GABORA.withAquifer(`scenario.html${jobParam}`)}" target="_blank" rel="noopener" class="detail-link">View drawdown maps →</a></div>`;
   meta.innerHTML = mh;
 
   // Show the approve/reject controls now that a scenario is on screen.

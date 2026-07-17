@@ -177,6 +177,8 @@ class HealthResponse(BaseModel):
     n_spring_complexes: int
     regulatory_threshold_m: float
     baseline_cached: bool
+    aquifer: str = "precipice"          # module key serving this response
+    aquifer_title: str = "Precipice Sandstone"
 
 
 class DecisionScenario(BaseModel):

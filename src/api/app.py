@@ -19,6 +19,7 @@ reporting.
 """
 from __future__ import annotations
 
+import contextvars
 import io
 import json
 import os
@@ -85,9 +86,10 @@ SCENARIO_STORE_MAX = 8
 class _ScenarioJob:
     """In-memory job record for a background scenario run."""
 
-    def __init__(self, job_id: str, req: ScenarioRequest):
+    def __init__(self, job_id: str, req: ScenarioRequest, aquifer: str = "precipice"):
         self.id = job_id
         self.req = req
+        self.aquifer = aquifer      # module the worker thread must bind to
         self.status: str = "queued"
         self.progress: str = "waiting for a model slot"
         self.created_at: str = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -130,7 +132,60 @@ class _State:
         self.scenario_store: OrderedDict[str, dict] = OrderedDict()
 
 
-state = _State()
+# ---------------------------------------------------------------------------
+# Multi-aquifer support. Each module is a fully independent _State bootstrapped
+# from its own config; requests select one with ?aquifer=<key> (or the
+# X-Aquifer header), defaulting to the Precipice. The module-global `state`
+# is a proxy so the existing endpoint code keeps reading/writing `state.*`
+# unchanged — it resolves to the request's aquifer via a ContextVar.
+#
+# label = LABEL value in Data/Aquifers/GABORA_units_subareas.shp (drives the
+# landing-page "ready" flag and routing); title = human name for headers.
+AQUIFER_MODULES: dict[str, dict] = {
+    "precipice": {
+        "label": "Surat Precipice", "title": "Precipice Sandstone",
+        "config": os.environ.get("PRECIPICE_CONFIG", "config.yaml"),
+    },
+    "hutton": {
+        "label": "Surat Hutton", "title": "Hutton Sandstone",
+        "config": "config_hutton.yaml",
+    },
+    "gubberamunda": {
+        "label": "Gubberamunda", "title": "Gubberamunda Sandstone",
+        "config": "config_gubberamunda.yaml",
+    },
+}
+DEFAULT_AQUIFER = "precipice"
+
+_STATES: dict[str, _State] = {}
+_ACTIVE: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "gabora_aquifer", default=DEFAULT_AQUIFER
+)
+
+
+def _resolve_aquifer_key(requested: str | None) -> str:
+    if requested in _STATES:
+        return requested
+    if DEFAULT_AQUIFER in _STATES:
+        return DEFAULT_AQUIFER
+    return next(iter(_STATES), DEFAULT_AQUIFER)
+
+
+class _StateProxy:
+    """Delegates every attribute access to the request's aquifer _State."""
+    __slots__ = ()
+
+    def _target(self) -> _State:
+        return _STATES[_ACTIVE.get()]
+
+    def __getattr__(self, name):
+        return getattr(self._target(), name)
+
+    def __setattr__(self, name, value):
+        setattr(self._target(), name, value)
+
+
+state = _StateProxy()
 
 
 def _store_scenario(job_id: str, entry: dict) -> None:
@@ -343,9 +398,10 @@ def _build_provenance() -> dict:
     }
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    config_path = Path(os.environ.get("PRECIPICE_CONFIG", "config.yaml"))
+def _bootstrap_module(key: str, config_path: Path) -> None:
+    """Load config + inputs + grid, run/load the IC and baseline for one
+    aquifer module. Must run with _ACTIVE bound to `key` and
+    _STATES[key] registered (the helpers below all read the `state` proxy)."""
     state.cfg = load_config(config_path)
     state.config_path = config_path
     state.inputs = load_inputs(state.cfg)
@@ -360,7 +416,9 @@ async def lifespan(app: FastAPI):
     state.workspace_root.mkdir(parents=True, exist_ok=True)
     # Audit trail lives under var/ — a dedicated runtime-data directory,
     # NOT outputs/ (which is treated as disposable by cleanups/redeploys).
-    state.decisions_path = Path("var") / "decision_events.jsonl"
+    # The Precipice keeps its pre-multi-aquifer filename.
+    suffix = "" if key == DEFAULT_AQUIFER else f"_{key}"
+    state.decisions_path = Path("var") / f"decision_events{suffix}.jsonl"
     state.provenance = _build_provenance()
 
     _bootstrap_ic()
@@ -369,15 +427,68 @@ async def lifespan(app: FastAPI):
         state.inputs.springs, state.cfg.assessment.spring_complex_col,
     )
     state.setup_geojson = _build_setup_geojson()
-    state.aquifers_geojson = _build_aquifers_geojson()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # GABORA_AQUIFERS limits which modules boot (comma-separated keys);
+    # default = every module whose config file exists. Each module
+    # bootstraps independently — one failing (or its config missing) just
+    # leaves it "under development" on the landing page.
+    import sys
+    requested = [k.strip() for k in os.environ.get(
+        "GABORA_AQUIFERS", ",".join(AQUIFER_MODULES)).split(",") if k.strip()]
+    for key in requested:
+        spec = AQUIFER_MODULES.get(key)
+        if spec is None:
+            print(f"[startup] unknown aquifer module {key!r} — skipped", file=sys.stderr)
+            continue
+        config_path = Path(spec["config"])
+        if not config_path.exists():
+            print(f"[startup] {key}: config {config_path} missing — skipped", file=sys.stderr)
+            continue
+        token = _ACTIVE.set(key)
+        _STATES[key] = _State()
+        try:
+            t0 = time.time()
+            print(f"[startup] bootstrapping {key} ({config_path}) …", file=sys.stderr)
+            _bootstrap_module(key, config_path)
+            print(f"[startup] {key} ready in {time.time() - t0:.0f}s", file=sys.stderr)
+        except Exception as exc:
+            del _STATES[key]
+            print(f"[startup] {key} FAILED to bootstrap — shown as under "
+                  f"development. {type(exc).__name__}: {exc}", file=sys.stderr)
+        finally:
+            _ACTIVE.reset(token)
+
+    if not _STATES:
+        raise RuntimeError("no aquifer module could be bootstrapped")
+
+    # Landing-page layer is shared; 'ready' reflects what actually booted.
+    aquifers = _build_aquifers_geojson()
+    for st in _STATES.values():
+        st.aquifers_geojson = aquifers
     yield
 
 
 app = FastAPI(
-    title="Precipice Sandstone — Water Licence Impact API",
-    version="0.3.0",
+    title="GABORA — Water Licence Impact API",
+    version="0.4.0",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def _bind_aquifer(request, call_next):
+    """Bind the request (and the threadpool it runs sync endpoints in) to
+    one aquifer module. Selected by ?aquifer=<key> or X-Aquifer header;
+    unknown/absent falls back to the default module."""
+    requested = request.query_params.get("aquifer") or request.headers.get("x-aquifer")
+    token = _ACTIVE.set(_resolve_aquifer_key(requested))
+    try:
+        return await call_next(request)
+    finally:
+        _ACTIVE.reset(token)
 
 
 def _df_to_year_results(combined: pd.DataFrame, threshold: float) -> list[YearResults]:
@@ -452,6 +563,9 @@ def healthz() -> HealthResponse:
         n_spring_complexes=_n_complexes(),
         regulatory_threshold_m=state.cfg.assessment.regulatory_threshold_m,
         baseline_cached=state.baseline is not None,
+        aquifer=_ACTIVE.get(),
+        aquifer_title=AQUIFER_MODULES.get(_ACTIVE.get(), {}).get(
+            "title", _ACTIVE.get().title()),
     )
 
 
@@ -747,6 +861,9 @@ def _execute_scenario(
 
 def _run_job(job: _ScenarioJob) -> None:
     """Worker-thread entry: serialise MF6 runs behind run_lock."""
+    # Fresh thread, fresh context — bind it to the job's aquifer module.
+    _ACTIVE.set(job.aquifer)
+
     def progress(msg: str) -> None:
         job.progress = msg
 
@@ -778,7 +895,7 @@ def submit_scenario(req: ScenarioRequest) -> ScenarioJobStatus:
     # now with a 400 rather than minutes later inside the job.
     _build_wells_from_request(req)
 
-    job = _ScenarioJob(uuid.uuid4().hex[:12], req)
+    job = _ScenarioJob(uuid.uuid4().hex[:12], req, aquifer=_ACTIVE.get())
     with state.jobs_lock:
         state.jobs[job.id] = job
     threading.Thread(target=_run_job, args=(job,), daemon=True).start()
@@ -1360,10 +1477,10 @@ def _cells_to_geojson(mask: np.ndarray, props_fn=None) -> dict:
 
 
 # GAB aquifer subareas (53 polygons in Data/Aquifers/GABORA_units_subareas.shp).
-# Currently only this label routes to a runnable assessment; everything else
-# falls back to coming-soon.html with the LABEL as a query string.
+# A LABEL routes to a runnable assessment when a bootstrapped module in
+# _STATES claims it; everything else falls back to coming-soon.html with
+# the LABEL as a query string.
 AQUIFER_SHAPEFILE = Path("Data/Aquifers/GABORA_units_subareas.shp")
-READY_AQUIFER_LABELS: set[str] = {"Surat Precipice"}
 
 
 def _build_aquifers_geojson() -> dict | None:
@@ -1392,13 +1509,19 @@ def _build_aquifers_geojson() -> dict | None:
     gdf["geometry"] = gdf.geometry.simplify(0.001, preserve_topology=True)
 
     from urllib.parse import quote as urlquote
+    # Shapefile LABEL -> bootstrapped module key.
+    ready_by_label = {
+        AQUIFER_MODULES[k]["label"]: k for k in _STATES if k in AQUIFER_MODULES
+    }
     features = []
     for _, row in gdf.iterrows():
         label = str(row.get("LABEL", "")).strip()
-        ready = label in READY_AQUIFER_LABELS
-        # Precipice (ready) routes into the runnable module; everything
-        # else goes to the coming-soon page with the label preserved.
-        href = "precipice.html" if ready else f"coming-soon.html?aquifer={urlquote(label)}"
+        module_key = ready_by_label.get(label)
+        ready = module_key is not None
+        # Ready labels route into the assessment module bound to their
+        # aquifer; everything else goes to the coming-soon page.
+        href = (f"precipice.html?aquifer={urlquote(module_key)}" if ready
+                else f"coming-soon.html?aquifer={urlquote(label)}")
         features.append({
             "type": "Feature",
             "geometry": shapely_mapping(row.geometry),
@@ -1410,6 +1533,8 @@ def _build_aquifers_geojson() -> dict | None:
                 "status_zone": str(row.get("STATUS", "")).strip(),
                 "ready": ready,
                 "href": href,
+                "module": module_key or "",
+                "module_title": AQUIFER_MODULES[module_key]["title"] if ready else "",
             },
         })
     return {"type": "FeatureCollection", "features": features}

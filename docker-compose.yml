@@ -18,8 +18,14 @@ services:
       # Live source mount so edits on the host take effect without rebuilds.
       - ./src:/app/src
       - ./config.yaml:/app/config.yaml:ro
+      - ./config_hutton.yaml:/app/config_hutton.yaml:ro
+      - ./config_gubberamunda.yaml:/app/config_gubberamunda.yaml:ro
     environment:
       - PYTHONUNBUFFERED=1
+      # The API bootstraps every module whose config exists (precipice,
+      # hutton, gubberamunda) — each runs its MF6 baseline on first start.
+      # Limit for a faster boot, e.g.: GABORA_AQUIFERS=precipice
+      - GABORA_AQUIFERS
 
   api:
     extends:

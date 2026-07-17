@@ -149,7 +149,7 @@ function buildMap(geojson) {
       // directly; the map popup gives a confirmation step + context.
       const isReady = p.ready === true || p.ready === "true";
       const cta = isReady
-        ? `<a href="${p.href}" style="color:#86efac;font-weight:600;text-decoration:none">Open Precipice module →</a>`
+        ? `<a href="${p.href}" style="color:#86efac;font-weight:600;text-decoration:none">Open ${GABORA.escapeHtml(p.module_title || p.label)} module →</a>`
         : `<a href="${p.href}" style="color:#cbd5e1;text-decoration:none">View status →</a>`;
       const html =
         `<div><strong>${GABORA.escapeHtml(p.label)}</strong></div>` +
@@ -259,7 +259,7 @@ function flyToLabel(label) {
     const p = f.properties || {};
     const isReady = p.ready === true || p.ready === "true";
     const cta = isReady
-      ? `<a href="${p.href}" style="color:#86efac;font-weight:600;text-decoration:none">Open Precipice module →</a>`
+      ? `<a href="${p.href}" style="color:#86efac;font-weight:600;text-decoration:none">Open ${GABORA.escapeHtml(p.module_title || p.label)} module →</a>`
       : `<a href="${p.href}" style="color:#cbd5e1;text-decoration:none">View status →</a>`;
     new maplibregl.Popup({ closeButton: true })
       .setLngLat(center)
