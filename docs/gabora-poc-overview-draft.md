@@ -77,9 +77,11 @@ The architecture generalises: standing up a further aquifer requires a data extr
 
 The assessing officer works from a web map. A proposed bore is placed by clicking the map, or several bores for a multi-bore application, or a trade in which extraction is removed at a source bore and added at one or more destinations. Rates are entered in ML/year. Results return in minutes as impact tables, a stacked chart per spring complex separating licensed from S&D impact, drawdown maps, and a recommendation against the threshold. Every scenario also reports a Theis analytical estimate (Theis 1935) beside the numerical result, so divergence between the two, arising from heterogeneity, boundaries or storage, is visible to the officer rather than hidden.
 
-### 4.3  Auditability and provenance
+### 4.3  Decision tracking and provenance
 
-Approve and reject decisions are recorded in an append-only register together with the scenario definition, the headline results, hashes of the configuration and input datasets, and the model version. Every number in an assessment can consequently be reproduced later from its recorded provenance. This is intended to support the defensibility of decisions informed by the tool.
+Every approve or reject decision is recorded as an event in an append-only register, together with the officer's name, a free-text reason, the timestamp, the full scenario change set, the headline results, hashes of the configuration and input datasets, and the model version. Rollbacks are themselves recorded events attributed to a named officer; the current status of each decision (active, rolled back or rejected) is derived by replaying the event history, so nothing is ever rewritten or deleted. Because the full scenario definition travels with each event, any past decision can be re-run and its numbers reproduced exactly from the recorded provenance. The register is stored as durable runtime data, separate from regenerable model outputs, and is intended to support internal review, audit and information-access processes.
+
+In the proof of concept the register is a record of decisions rather than an input to the modelling: extraction approved through the tool is not yet fed back into the cached baseline, which continues to reflect the ingested water-use dataset. The event format already carries the information needed for that integration, which is identified as a next step (section 7).
 
 ## 5  Verification
 
@@ -103,6 +105,7 @@ The following bounds the proof of concept and indicates where it is and is not a
 - A comparison exercise running a set of historical licence decisions through the tool against the assessments made at the time.
 - Engagement with OGIA to confirm the parent-model extraction approach and to obtain calibrated boundary conductances where the tool currently estimates them.
 - Production hardening: authentication, hosting, records integration, and a data refresh pathway for each new UWIR and water-use dataset.
+- Integration of the decision register with the modelled baseline, so that extraction approved through the tool is reflected in the approved-take layer of subsequent assessments within a licensing cycle. The event format already records the required change sets.
 - Development of simple but fast-running models for the other GAB aquifers in the plan area, calibrated or inherited from regional modelling where available, and progressively added to the tool as modules. This would extend the same assessment capability across the plan area and would represent a significant improvement over the superposition of Theis solutions currently used where no regional model product is available.
 - Quantification of predictive uncertainty by Monte Carlo simulation. Ensembles of calibrated parameter sets are now routinely obtained as part of model calibration and uncertainty analysis. Running the assessment scenarios across such an ensemble would gauge the uncertainty in the key impact metrics; that uncertainty, together with a quantified risk appetite, would support more informed water management decisions than a single deterministic estimate. The computational cost would be modest: ensemble members are independent and parallelise naturally, and could be run cheaply on transient (spot) cloud computing instances.
 ## 8  Conclusions
