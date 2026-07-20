@@ -1,0 +1,120 @@
+# GABORA: a proof-of-concept tool for cumulative impact assessment of water licence applications in the Surat Basin
+
+**A proof-of-concept overview** · Version 0.1 (draft) · July 2026 · Document ID: [to be confirmed]
+
+> The work presented in this document provides an update on a component of ongoing work to support the assessment and management of water resource development impacts. It is not a statutory document. Conclusions are subject to further review and changes ahead of any operational deployment and other reporting as needed.
+
+*Citation:* Schoning, G (2026), GABORA: a proof-of-concept tool for cumulative impact assessment of water licence applications in the Surat Basin. A proof-of-concept overview, Department of Local Government, Water and Volunteers, Queensland Government, Australia. July 2026.
+
+*Contributors:* [to be confirmed]
+
+---
+
+## 1  Introduction
+
+### 1.1  Primary target audience
+
+This overview is prepared for departmental officers involved in water licensing and groundwater assessment, and for technical reviewers of the proof of concept. A basic understanding of Great Artesian Basin (GAB) hydrogeology and of groundwater licensing in Queensland is implied. This paper summarises the approach and its benefits; the full technical detail, configuration and test suite sit with the tool's repository documentation.
+
+### 1.2  Background
+
+When a water licence application is assessed, the material question is not only what the proposed bore will do, but what it will do in addition to the extraction that is already approved. Answering that question defensibly in GAB aquifers has generally required either a scenario run of a regional groundwater model, which is rigorous but requires specialist modellers and turnaround times measured in weeks, or a simplified analytical calculation, which is fast but does not represent aquifer geometry, spatially variable properties, boundaries or recharge, and is difficult to reconcile with regional model predictions.
+
+The Office of Groundwater Impact Assessment (OGIA) maintains the calibrated regional model that underpins the Underground Water Impact Report (UWIR) for the Surat Cumulative Management Area (OGIA 2025). That model is the State's established representation of the flow system. A licensing tool that is consistent with it, rather than parallel to it, avoids introducing a second and potentially conflicting basis for impact predictions.
+
+### 1.3  Purpose of this paper
+
+This paper describes a proof-of-concept decision-support tool, GABORA, that predicts the drawdown impact of a proposed bore or licence trade at every spring complex and neighbouring water bore, separates that impact from the impact of currently approved extraction, and compares the result against a regulatory trigger threshold at 10, 50 and 100 years. The paper outlines the approach (section 3), the delivered proof of concept (section 4), its verification (section 5), and its current limitations and suggested next steps (sections 6 and 7).
+
+## 2  The assessment problem
+
+An assessing officer needs three numbers for each receptor: the impact of extraction that is already approved, the additional impact attributable to the application in front of them, and the combined total against the trigger threshold. Producing these from a regional model requires re-running large scenarios for every application, and attributing the applicant's share by differencing two large and nearly equal results. Producing them analytically sacrifices the calibrated spatial detail that makes the numbers defensible. GABORA is designed to occupy the gap between these pathways: regional-model fidelity at interactive speed, packaged so that a licensing officer rather than a modeller can run it.
+
+## 3  Approach
+
+### 3.1  Inheritance from the regional model
+
+Each aquifer is represented as a single-layer MODFLOW 6 model (Langevin et al 2017) whose grid, hydraulic properties, recharge, boundary conditions and spring-discharge cells are extracted directly from OGIA's UWIR 2025 regional model. The tool does not introduce a new conceptualisation and it has not been separately calibrated; it carries the regional model's calibrated parameters into a faster, single-aquifer frame. Impact predictions are therefore traceable to the same calibrated property fields that support the UWIR, which is the principal basis of the tool's defensibility.
+
+### 3.2  Scenario design and superposition
+
+The model is kept strictly linear: cells are confined-equivalent, and all boundary conditions are linear. Drawdowns from separate stresses therefore add, and the tool exploits this directly. The baseline scenarios, comprising all existing extraction (scenario A) and the licensed entitlement subset of that extraction (scenario L), are computed once per aquifer and cached. Only the proposed change (scenario C) is modelled per assessment, and the total impact is obtained by addition rather than by re-modelling. An assessment consequently costs one small model run, completing in minutes, and the applicant's contribution is isolated exactly rather than estimated by differencing near-equal totals.
+
+The linearity on which this relies is verified rather than assumed. The automated test suite runs a directly modelled combined scenario and confirms that it matches the sum of the separately modelled scenarios to solver precision, with differences of the order of 10-9 m, and that the residual does not grow as pumping rates are scaled (section 5).
+
+### 3.3  Twin-run drawdown
+
+Every scenario is evaluated as the difference between two otherwise identical model runs, with and without its wells. Components common to both runs, including the initial condition, recharge and boundary influences, cancel by construction, so the reported drawdown is purely the response to pumping. This formulation is robust to imperfections in the initial head field, which are a common and difficult-to-detect error mode in impact modelling.
+
+### 3.4  Representation of the outcrop and springs
+
+A conventional unconfined treatment of the outcrop would make the model non-linear and invalidate superposition. The tool instead reproduces the parent model's linearisation: outcrop cells carry water-table-scale storage, and spring discharge and rejected recharge are represented at the parent model's calibrated drain cells. The linearisation can locally under-predict drawdown where sustained pumping would lower heads below a drain that a real system would have shut off; rather than leaving that assumption silent, every run counts and reports such cells as a quality metric, and the interface warns when the count is non-zero.
+
+### 3.5  Impact layers and threshold classification
+
+Results are reported per spring complex and per output year in four layers: the impact of all currently approved extraction (approved), the subset of that impact attributable to entitlement holders (licensed), the impact of the proposed change alone (additional), and their combined total. The default trigger threshold is 0.4 m, the water bore threshold; this is deliberately distinct from the 0.2 m spring threshold that applies to coal seam gas (CSG) assessments under the UWIR. Each complex is classified as already exceeding the threshold from approved take, which is advisory and not attributable to the applicant, or as triggered by the proposal, which is the decision-relevant case. The spring complex is the unit of analysis, and the worst-affected member spring sets the complex's reported drawdown, which is the conservative choice for trigger reporting.
+
+## 4  The proof of concept
+
+### 4.1  Aquifer modules
+
+Three aquifers are currently live as independent modules: the Precipice Sandstone, the Hutton Sandstone and the Gubberamunda Sandstone. Each module carries its own configuration, extracted datasets and cached baseline. Current extraction represented in the modules, from the 2024 OGIA water-use dataset, is summarised in Table 1. In total the three modules represent about 6,700 bores and around 37,500 ML/year of take, of which about 74% is licensed entitlement take and the remainder is stock and domestic (S&D) use.
+
+
+**Table 1  Extraction represented in the three aquifer modules (2024 OGIA water-use dataset)**
+
+| Aquifer | Bores | Total take (ML/year) | Licensed take (ML/year) | S&D take (ML/year) |
+|---|---|---|---|---|
+| Precipice Sandstone | 919 | 13,316 | 11,893 (89 bores) | 1,423 (830 bores) |
+| Hutton Sandstone | 4,574 | 15,003 | 9,967 (404 bores) | 5,037 (4,170 bores) |
+| Gubberamunda Sandstone | 1,215 | 9,162 | 5,791 (100 bores) | 3,371 (1,115 bores) |
+
+The architecture generalises: standing up a further aquifer requires a data extraction from the parent regional model and one configuration file.
+
+### 4.2  Assessment workflow
+
+The assessing officer works from a web map. A proposed bore is placed by clicking the map, or several bores for a multi-bore application, or a trade in which extraction is removed at a source bore and added at one or more destinations. Rates are entered in ML/year. Results return in minutes as impact tables, a stacked chart per spring complex separating licensed from S&D impact, drawdown maps, and a recommendation against the threshold. Every scenario also reports a Theis analytical estimate (Theis 1935) beside the numerical result, so divergence between the two, arising from heterogeneity, boundaries or storage, is visible to the officer rather than hidden.
+
+### 4.3  Auditability and provenance
+
+Approve and reject decisions are recorded in an append-only register together with the scenario definition, the headline results, hashes of the configuration and input datasets, and the model version. Every number in an assessment can consequently be reproduced later from its recorded provenance. This is intended to support the defensibility of decisions informed by the tool.
+
+## 5  Verification
+
+The tool carries an automated test suite of 30 tests that runs on every change. Superposition is verified against a directly modelled combined scenario, both on an idealised model and with the full boundary and storage machinery active, with agreement at solver precision. The numerical engine is verified against the Theis analytical solution for a single bore in a uniform aquifer. End-to-end pipeline tests run on a synthetic case. The engine is MODFLOW 6 (currently version 6.7.0), a United States Geological Survey code in wide international use, invoked unmodified through the FloPy interface (Bakker et al 2016).
+
+## 6  Current scope and limitations
+
+The following bounds the proof of concept and indicates where it is and is not appropriate to rely on:
+
+- Single-layer modules. Each aquifer is modelled alone and inter-aquifer leakage through aquitards is not represented. For assessments where vertical connectivity is material, the regional model remains the appropriate instrument.
+- Inherited calibration. The tool carries OGIA's calibrated properties but has not itself been history-matched; predictions should be read as consistent-with-UWIR estimates rather than as an independent calibration.
+- Linearisation limits. The confined linearised treatment is exact for superposition but approximate for large water-table declines in the outcrop; the per-run reversal metric flags where this matters, and refinement can be investigated as usage patterns emerge.
+- Near-bore accuracy. Drawdown within about two grid cells (about 3 km) of a pumped bore is mesh-dependent; affected receptors are flagged in results, with the Theis estimate as the cross-check.
+- Water-use data vintage. The extraction dataset is the 2024 OGIA dataset and carries no licence commencement dates, so take cannot be filtered by approval date; licensed take is defined by authority number and use class.
+- Constant-rate scenarios. Extraction is modelled as constant over the assessment period, the standard conservative licensing assumption; time-varying regimes are not yet supported.
+- Prototype security posture. The login is a mock-up for demonstration; operational deployment would require departmental authentication, hosting and records-management integration.
+## 7  Suggested next steps
+
+- Departmental review of the assessment logic, including threshold values, horizons and the complex aggregation rule, against policy settings.
+- A comparison exercise running a set of historical licence decisions through the tool against the assessments made at the time.
+- Engagement with OGIA to confirm the parent-model extraction approach and to obtain calibrated boundary conductances where the tool currently estimates them.
+- Production hardening: authentication, hosting, records integration, and a data refresh pathway for each new UWIR and water-use dataset.
+- Additional aquifer modules as demand requires.
+## 8  Conclusions
+
+- A working proof of concept demonstrates that licence-application impact assessment can be performed at interactive speed while remaining consistent with OGIA's calibrated regional modelling.
+- Superposition with cached baselines isolates the applicant's contribution exactly and reduces an assessment to one small model run; the linearity this relies on is verified to solver precision, not assumed.
+- Impacts are reported in four layers so that approved, licensed and proposed contributions are visible separately, and threshold exceedances are attributed to the correct cause.
+- Every result and decision carries reproducible provenance, supporting the defensibility of decisions informed by the tool.
+- Known limitations are bounded and reported by the tool itself; the suggested next steps (section 7) address them in order of consequence.
+## References
+
+Bakker, M, Post, V, Langevin, CD, Hughes, JD, White, JT, Starn, JJ & Fienen, MN 2016, 'Scripting MODFLOW model development using Python and FloPy', Groundwater, vol. 54, no. 5, pp. 733-739.
+
+Langevin, CD, Hughes, JD, Banta, ER, Niswonger, RG, Panday, S & Provost, AM 2017, Documentation for the MODFLOW 6 Groundwater Flow Model, Techniques and Methods 6-A55, United States Geological Survey, Reston, Virginia.
+
+OGIA 2025, Underground Water Impact Report for the Surat Cumulative Management Area, Office of Groundwater Impact Assessment, Department of Local Government, Water and Volunteers, Queensland Government, Australia.
+
+Theis, CV 1935, 'The relation between the lowering of the piezometric surface and the rate and duration of discharge of a well using ground-water storage', Transactions of the American Geophysical Union, vol. 16, pp. 519-524.
+
