@@ -1,10 +1,10 @@
-# GABORA: a proof-of-concept tool for cumulative impact assessment of water licence applications in the Surat Basin
+# A proof-of-concept tool for cumulative impact assessment of water licence applications in the GABORA water plan area
 
 **A proof-of-concept overview** · Version 0.1 (draft) · July 2026 · Document ID: [to be confirmed]
 
 > The work presented in this document provides an update on a component of ongoing work to support the assessment and management of water resource development impacts. It is not a statutory document. Conclusions are subject to further review and changes ahead of any operational deployment and other reporting as needed.
 
-*Citation:* Schoning, G (2026), GABORA: a proof-of-concept tool for cumulative impact assessment of water licence applications in the Surat Basin. A proof-of-concept overview, Department of Local Government, Water and Volunteers, Queensland Government, Australia. July 2026.
+*Citation:* Schoning, G (2026), A proof-of-concept tool for cumulative impact assessment of water licence applications in the GABORA water plan area. A proof-of-concept overview, Department of Local Government, Water and Volunteers, Queensland Government, Australia. July 2026.
 
 *Contributors:* [to be confirmed]
 
@@ -24,11 +24,11 @@ The Office of Groundwater Impact Assessment (OGIA) maintains the calibrated regi
 
 ### 1.3  Purpose of this paper
 
-This paper describes a proof-of-concept decision-support tool, GABORA, that predicts the drawdown impact of a proposed bore or licence trade at every spring complex and neighbouring water bore, separates that impact from the impact of currently approved extraction, and compares the result against a regulatory trigger threshold at 10, 50 and 100 years. The paper outlines the approach (section 3), the delivered proof of concept (section 4), its verification (section 5), and its current limitations and suggested next steps (sections 6 and 7).
+This paper describes a proof-of-concept decision-support tool for assessing water licence applications in aquifers of the Great Artesian Basin and other regional aquifers (GABORA) water plan area. The tool predicts the drawdown impact of a proposed bore or licence trade at every spring complex and neighbouring water bore, separates that impact from the impact of currently approved extraction, and compares the result against a regulatory trigger threshold at 10, 50 and 100 years. The paper outlines the approach (section 3), the delivered proof of concept (section 4), its verification (section 5), and its current limitations and suggested next steps (sections 6 and 7).
 
 ## 2  The assessment problem
 
-An assessing officer needs three numbers for each receptor: the impact of extraction that is already approved, the additional impact attributable to the application in front of them, and the combined total against the trigger threshold. Producing these from a regional model requires re-running large scenarios for every application, and attributing the applicant's share by differencing two large and nearly equal results. Producing them analytically sacrifices the calibrated spatial detail that makes the numbers defensible. GABORA is designed to occupy the gap between these pathways: regional-model fidelity at interactive speed, packaged so that a licensing officer rather than a modeller can run it.
+An assessing officer needs three numbers for each receptor: the impact of extraction that is already approved, the additional impact attributable to the application in front of them, and the combined total against the trigger threshold. Producing these from a regional model requires re-running large scenarios for every application, and attributing the applicant's share by differencing two large and nearly equal results. Producing them analytically sacrifices the calibrated spatial detail that makes the numbers defensible. The tool is designed to occupy the gap between these pathways: regional-model fidelity at interactive speed, packaged so that a licensing officer rather than a modeller can run it.
 
 ## 3  Approach
 

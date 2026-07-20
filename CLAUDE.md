@@ -1,9 +1,13 @@
-# GABORA — Water Licence Impact Assessment Tool
+# Water Licence Impact Assessment Tool — GABORA water plan area
+
+*(GABORA = Great Artesian Basin and Other Regional Aquifers, the water
+plan area — it is the name of the plan area, not of this tool.)*
 
 ## 1. What this is
 
 A regulatory decision-support tool that models the **cumulative drawdown
-impact** of licensed water extraction from Great Artesian Basin aquifers.
+impact** of licensed water extraction from aquifers in the GABORA water
+plan area.
 The core question: what is the additional impact of a *proposed* new bore
 (or licence trade) on top of the *currently approved* take, evaluated at
 springs and neighbouring water bores?
