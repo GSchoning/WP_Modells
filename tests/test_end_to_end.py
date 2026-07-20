@@ -75,6 +75,7 @@ def _make_inputs() -> Inputs:
         properties=pd.DataFrame(),
         pumping_bores=bores,
         receptor_bores=bores.copy(),
+        licensed_bores=bores.copy(),
         springs=springs,
     )
 

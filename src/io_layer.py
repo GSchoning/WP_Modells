@@ -23,6 +23,7 @@ class Inputs:
     properties: pd.DataFrame              # per-cell grid + properties
     pumping_bores: gpd.GeoDataFrame       # all bores with extraction (Scenario A)
     receptor_bores: gpd.GeoDataFrame      # non-S&D subset for impact reporting
+    licensed_bores: gpd.GeoDataFrame      # entitlement (auth + non-S&D) subset — s_licensed
     springs: gpd.GeoDataFrame | None      # may be None until shapefile supplied
 
 
@@ -34,13 +35,16 @@ ML_PER_YEAR_TO_M3_PER_DAY = 1000.0 / 365.25
 SPRINGS_OUTCROP_BUFFER_M = 1000.0
 
 
-def _read_water_use(cfg: Config) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
-    """Return (pumping_bores, receptor_bores) as GeoDataFrames in project CRS.
+def _read_water_use(cfg: Config) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """Return (pumping_bores, receptor_bores, licensed_bores) in project CRS.
 
     Pumping bores = all rows with a positive rate in the configured rate column,
     optionally filtered to the configured formation. Receptor bores = pumping
     bores excluding the values listed in `receptor_filter.exclude_values`
-    (e.g. Stock_Domestic).
+    (e.g. Stock_Domestic). Licensed bores = the entitlement subset per
+    `licensed_filter` (holds an authority number AND non-S&D); used for the
+    separate s_licensed impact layer. Falls back to the receptor set when
+    `licensed_filter` is unset.
     """
     wu_cfg = cfg.inputs.water_use
     df = pd.read_csv(wu_cfg.path)
@@ -68,7 +72,32 @@ def _read_water_use(cfg: Config) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
         excl = wu_cfg.receptor_filter.get("exclude_values", [])
         receptors = pumping[~pumping[col].isin(excl)].copy()
 
-    return pumping, receptors
+    licensed = _filter_licensed(pumping, wu_cfg.licensed_filter, receptors)
+
+    return pumping, receptors, licensed
+
+
+def _filter_licensed(
+    pumping: gpd.GeoDataFrame,
+    licensed_filter: dict | None,
+    receptors: gpd.GeoDataFrame,
+) -> gpd.GeoDataFrame:
+    """Entitlement subset of `pumping`: holds an authority number AND is not
+    in the excluded (Stock&Domestic) classes. Falls back to `receptors`
+    (the non-S&D set) when no licensed_filter is configured."""
+    if not licensed_filter:
+        return receptors.copy()
+    auth_col = licensed_filter.get("auth_col")
+    has_auth = pd.Series(True, index=pumping.index)
+    if auth_col and auth_col in pumping.columns:
+        s = pumping[auth_col].astype(str).str.strip()
+        has_auth = pumping[auth_col].notna() & ~s.isin(("", "nan", "None"))
+    keep = has_auth
+    excl_col = licensed_filter.get("exclude_column")
+    excl_vals = licensed_filter.get("exclude_values", [])
+    if excl_col and excl_col in pumping.columns and excl_vals:
+        keep = keep & ~pumping[excl_col].isin(excl_vals)
+    return pumping[keep].copy()
 
 
 def load_recharge_by_inode(cfg: Config) -> dict[int, float] | None:
@@ -148,7 +177,7 @@ def load_inputs(cfg: Config) -> Inputs:
     outcrop = gpd.read_file(cfg.inputs.outcrop).to_crs(cfg.project.crs)
     properties = pd.read_csv(cfg.inputs.properties_csv)
     formation = _polygonize_extent(formation_raw, properties, cfg.project.crs)
-    pumping, receptors = _read_water_use(cfg)
+    pumping, receptors, licensed = _read_water_use(cfg)
     springs = _read_springs(cfg)
 
     if springs is not None and len(springs):
@@ -188,6 +217,7 @@ def load_inputs(cfg: Config) -> Inputs:
         properties=properties,
         pumping_bores=pumping,
         receptor_bores=receptors,
+        licensed_bores=licensed,
         springs=springs,
     )
 

@@ -36,6 +36,23 @@ function setStatus(msg, level = "") {
   el.className = level;
 }
 
+// Pumping-bore marker radius as a function of extraction rate (m³/day).
+// Area grows ~ with rate: stops are on a compressed (sqrt-like) scale so the
+// median stock-and-domestic bore is a small dot and large licensed bores read
+// clearly; rates above the top stop clamp to its radius (no monster dots).
+const BORE_RADIUS_BY_RATE = [
+  "interpolate", ["linear"], ["coalesce", ["get", "rate_m3_per_day"], 0],
+  0, 2,  5, 3,  25, 5,  100, 8,  400, 12,
+];
+
+function borePopupHtml(p) {
+  const m3d = Number(p.rate_m3_per_day) || 0;
+  const mlyr = m3d * 365.25 / 1000;
+  const id = p.bore_id != null ? GABORA.escapeHtml(String(p.bore_id)) : "(bore)";
+  return `<strong>${id}</strong><br/>extraction: ${mlyr.toFixed(1)} ML/yr` +
+    `<br/><span style="color:#64748b;font-size:0.8em">${m3d.toFixed(1)} m³/day</span>`;
+}
+
 async function projForward(lng, lat) {
   if (!STATE.cachedTransform) {
     if (!window.proj4) {
@@ -227,10 +244,21 @@ function buildLayers(map, mapData) {
     map.addSource("pumping", { type: "geojson", data: mapData.pumping_bores });
     map.addLayer({ id: "pumping-circles", type: "circle", source: "pumping",
       paint: {
-        "circle-radius": 2.5, "circle-color": "#ef4444",
+        // Radius encodes extraction rate (area ~ rate): stops are chosen so
+        // the median S&D bore stays a small dot and large licensed bores
+        // stand out, with the biggest clamped at the top stop.
+        "circle-radius": BORE_RADIUS_BY_RATE,
+        "circle-color": "#ef4444",
         "circle-opacity": 0.6, "circle-stroke-color": "#7f1d1d",
         "circle-stroke-width": 0.4,
       } });
+    map.on("click", "pumping-circles", (e) => {
+      const p = e.features[0].properties || {};
+      new maplibregl.Popup().setLngLat(e.lngLat)
+        .setHTML(borePopupHtml(p)).addTo(map);
+    });
+    map.on("mouseenter", "pumping-circles", () => { map.getCanvas().style.cursor = "pointer"; });
+    map.on("mouseleave", "pumping-circles", () => { map.getCanvas().style.cursor = ""; });
   }
   if (mapData.spring_complexes) {
     for (const f of mapData.spring_complexes.features) {
@@ -652,8 +680,11 @@ function selectComplex(id) {
           : c.already_exceeded
             ? '<div style="color:#6d28d9;font-weight:600">already exceeded</div>'
             : "";
+        const licLine = (c.s_licensed_m != null && c.s_licensed_m > 0)
+          ? `<br/>&nbsp;&nbsp;of which licensed take: ${fmt(c.s_licensed_m)} m`
+          : "";
         popupHtml += `<br/>${c.n_springs} spring${c.n_springs == 1 ? "" : "s"}` +
-          `<br/>existing: ${fmt(c.s_approved_m)} m` +
+          `<br/>existing: ${fmt(c.s_approved_m)} m` + licLine +
           `<br/>proposed: +${fmt(c.s_additional_m)} m` +
           `<br/><strong>total: ${fmt(c.s_total_m)} m</strong>${flag}`;
       }
@@ -1273,13 +1304,35 @@ function renderBarChart(result) {
     const baseY = yScale(0);
 
     if (c.s_approved_m > 0) {
-      const fill = already ? "#7c3aed" : "#475569";
+      // Split the existing (Scenario A) segment into licensed take (bottom,
+      // dark) and S&D/other (top, light). s_licensed <= s_approved. When a
+      // complex already exceeds the threshold, keep the purple flag colour
+      // for the whole existing segment rather than splitting.
+      const sLic = Math.min(c.s_licensed_m || 0, c.s_approved_m);
+      const yLic = yScale(sLic);
+      if (!already && sLic > 0) {
+        const rL = make("rect", {
+          x, y: yLic, width: barW, height: Math.max(0, baseY - yLic), fill: "#334155",
+          "data-id": c.complex_id,
+        });
+        rL.appendChild(make_title(
+          `${c.complex_id} · licensed take: ${fmt(sLic)} m of ${fmt(c.s_approved_m)} m existing`
+        ));
+        rL.addEventListener("click", () => selectComplex(c.complex_id));
+        svg.appendChild(rL);
+      }
+      // Upper part: S&D/other existing (or the whole existing bar if already
+      // exceeding, or no licensed split available).
+      const yTop = (!already && sLic > 0) ? yLic : baseY;
+      const fill = already ? "#7c3aed" : "#94a3b8";
       const r = make("rect", {
-        x, y: yApp, width: barW, height: Math.max(0, baseY - yApp), fill,
+        x, y: yApp, width: barW, height: Math.max(0, yTop - yApp), fill,
         "data-id": c.complex_id,
       });
       r.appendChild(make_title(
-        `${c.complex_id} · existing: ${fmt(c.s_approved_m)} m${already ? " (already exceeds)" : ""}`
+        `${c.complex_id} · existing: ${fmt(c.s_approved_m)} m` +
+        (!already && sLic > 0 ? ` (S&D/other ${fmt(c.s_approved_m - sLic)} m)` : "") +
+        (already ? " (already exceeds)" : "")
       ));
       r.addEventListener("click", () => selectComplex(c.complex_id));
       svg.appendChild(r);
@@ -1318,7 +1371,8 @@ function renderBarChart(result) {
   });
   caption.textContent =
     `top ${complexes.length} of ${allComplexes.length} complexes at t = ${lastYear} yr · ` +
-    `slate = existing, amber = proposed, red = triggered by proposal, purple = already exceeded`;
+    `dark slate = licensed take, light slate = S&D/other existing, ` +
+    `amber = proposed, red = triggered by proposal, purple = already exceeded`;
   svg.appendChild(caption);
 
   function make_title(text) {
@@ -1334,9 +1388,11 @@ function renderTable(result) {
   const all = [...yearBlock.complexes].sort((a, b) => b.s_total_m - a.s_total_m);
   const hasTheis = all.some(c => c.s_additional_theis_m != null);
 
+  const hasLicensed = all.some(c => c.s_licensed_m != null && c.s_licensed_m > 0);
   let html = "<table><thead><tr>";
   html += "<th>complex</th>";
   html += "<th class=\"num\">existing (m)</th>";
+  if (hasLicensed) html += "<th class=\"num\" title=\"Impact from licensed/entitlement take only (a subset of existing)\">licensed (m)</th>";
   html += "<th class=\"num\">proposed (m)</th>";
   if (hasTheis) html += "<th class=\"num\" title=\"Theis analytical estimate of proposed-bore drawdown, using formation-averaged T (geometric mean) and S (arithmetic mean) over active cells\">Theis (m)</th>";
   html += "<th class=\"num\">total (m)</th>";
@@ -1353,6 +1409,7 @@ function renderTable(result) {
     html += `<tr${cls} data-id="${safeId}">`;
     html += `<td>${safeId}${meshMark}</td>`;
     html += `<td class="num">${fmt(c.s_approved_m)}</td>`;
+    if (hasLicensed) html += `<td class="num">${fmt(c.s_licensed_m)}</td>`;
     html += `<td class="num">${fmt(c.s_additional_m)}</td>`;
     if (hasTheis) html += `<td class="num">${fmt(c.s_additional_theis_m)}</td>`;
     html += `<td class="num"><strong>${fmt(c.s_total_m)}</strong></td>`;
@@ -1372,14 +1429,14 @@ function exportResultCsv(result) {
   // the machine-readable version of what the regulator signs off on.
   const rows = [[
     "complex_id", "n_springs", "time_years",
-    "s_approved_m", "s_additional_m", "s_total_m", "s_additional_theis_m",
+    "s_approved_m", "s_licensed_m", "s_additional_m", "s_total_m", "s_additional_theis_m",
     "exceeds_threshold", "already_exceeded", "triggered_by_proposed",
   ]];
   for (const yr of result.by_year) {
     for (const c of yr.complexes) {
       rows.push([
         c.complex_id, c.n_springs, yr.time_years,
-        c.s_approved_m, c.s_additional_m, c.s_total_m,
+        c.s_approved_m, c.s_licensed_m ?? "", c.s_additional_m, c.s_total_m,
         c.s_additional_theis_m ?? "",
         c.exceeds_threshold, c.already_exceeded, c.triggered_by_proposed,
       ]);

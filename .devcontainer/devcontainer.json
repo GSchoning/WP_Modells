@@ -13,8 +13,9 @@
     "PATH": "/home/modeller/.local/bin:${containerEnv:PATH}",
     "PYTHONUNBUFFERED": "1"
   },
-  "forwardPorts": [8888],
+  "forwardPorts": [8000, 8888],
   "portsAttributes": {
+    "8000": { "label": "GABORA API", "onAutoForward": "notify" },
     "8888": { "label": "JupyterLab", "onAutoForward": "notify" }
   },
   "customizations": {

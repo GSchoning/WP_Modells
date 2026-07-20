@@ -258,6 +258,12 @@ def run_scenario(
     """
     if scenario == "A":
         wells, _accepted, _rejected = _bores_to_wells(inputs.pumping_bores, grid)
+    elif scenario == "L":
+        # Licensed-take layer: Scenario A restricted to the entitlement
+        # (auth-holding, non-S&D) subset. Structurally identical to A —
+        # a subset of the same wells — so it composes linearly and
+        # s_licensed <= s_approved everywhere.
+        wells, _accepted, _rejected = _bores_to_wells(inputs.licensed_bores, grid)
     elif scenario == "C":
         if proposed_wells is None:
             pb = cfg.inputs.proposed_bore

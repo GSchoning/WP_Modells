@@ -87,18 +87,37 @@ async function init() {
       });
     }
 
-    // Pumping bores (vector layer from /map-data).
+    // Pumping bores (vector layer from /map-data). Marker radius encodes
+    // extraction rate (area ~ rate) on a compressed scale so small S&D bores
+    // stay dots and large licensed bores stand out; big rates clamp at the
+    // top stop.
     if (mapData.pumping_bores) {
       map.addSource("pumping", { type: "geojson", data: mapData.pumping_bores });
       map.addLayer({
         id: "pumping", type: "circle", source: "pumping",
         paint: {
-          "circle-radius": 3, "circle-color": "#ef4444",
+          "circle-radius": [
+            "interpolate", ["linear"], ["coalesce", ["get", "rate_m3_per_day"], 0],
+            0, 2,  5, 3,  25, 5,  100, 8,  400, 12,
+          ],
+          "circle-color": "#ef4444",
           "circle-opacity": 0.85, "circle-stroke-color": "#7f1d1d",
           "circle-stroke-width": 0.5,
         },
         layout: { visibility: $("toggle-bores").checked ? "visible" : "none" },
       });
+      map.on("click", "pumping", (e) => {
+        const p = e.features[0].properties || {};
+        const m3d = Number(p.rate_m3_per_day) || 0;
+        const mlyr = m3d * 365.25 / 1000;
+        const id = p.bore_id != null ? GABORA.escapeHtml(String(p.bore_id)) : "(bore)";
+        new maplibregl.Popup().setLngLat(e.lngLat)
+          .setHTML(`<strong>${id}</strong><br/>extraction: ${mlyr.toFixed(1)} ML/yr`
+                   + `<br/><span style="color:#64748b;font-size:0.8em">${m3d.toFixed(1)} m³/day</span>`)
+          .addTo(map);
+      });
+      map.on("mouseenter", "pumping", () => { map.getCanvas().style.cursor = "pointer"; });
+      map.on("mouseleave", "pumping", () => { map.getCanvas().style.cursor = ""; });
     }
     // Spring complex centroids.
     if (mapData.spring_complexes) {

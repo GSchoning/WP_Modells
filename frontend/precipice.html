@@ -50,7 +50,7 @@
     <section id="map-pane">
       <div id="map"></div>
       <div id="map-legend">
-        <div><span class="dot pumping"></span> existing licensed bore</div>
+        <div><span class="dot pumping"></span> existing bore (sized by extraction rate)</div>
         <div><span class="dot complex"></span> spring complex (sized by member count)</div>
         <div><span class="dot exceed"></span> complex exceeding threshold</div>
         <div><span class="dot proposed"></span> proposed bore (click map to place)</div>
@@ -135,7 +135,7 @@
       </div>
       <div id="chart-header">
         <h2>Impact by spring complex</h2>
-        <span class="muted">stacked: existing (Scenario A) + proposed (Scenario C). Threshold dashed. Click a bar to focus on the map.</span>
+        <span class="muted">stacked: existing (Scenario A, split into licensed take + S&amp;D/other) + proposed (Scenario C). Threshold dashed. Click a bar to focus on the map.</span>
       </div>
       <svg id="bars" width="100%" height="260" preserveAspectRatio="none"></svg>
       <div id="lower-split">

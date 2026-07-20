@@ -30,8 +30,9 @@ CACHE_DIR = Path("outputs/cache")
 # series persisted alongside output-year aggregates. v7 = stress periods
 # aligned to output years + cached no-pump twin heads. v8 = negative-SS
 # decoded as dimensionless Sy, recharge fallback, UWIR-2025 W-only GHBs
-# with calibrated pilot heads.
-CACHE_SCHEMA_VERSION = "v8"
+# with calibrated pilot heads. v9 = cached licensed-take layer
+# (s_licensed) alongside the Scenario A baseline.
+CACHE_SCHEMA_VERSION = "v9"
 
 
 @dataclass
@@ -44,6 +45,11 @@ class BaselineCache:
     # Persisting it means Scenario C requests only run MF6 once.
     nopump_times_days: np.ndarray | None = None
     nopump_heads: np.ndarray | None = None              # (nt, nrow, ncol)
+    # Licensed-take layer: Scenario A over the entitlement (auth + non-S&D)
+    # subset. Invariant like A, so cached alongside it. Older caches lack
+    # these — load() leaves them None and the API degrades gracefully.
+    licensed_receptors_df: pd.DataFrame | None = None
+    licensed_drawdown_by_year: dict[float, np.ndarray] | None = None
 
 
 def _file_sha256(path: Path) -> str:
@@ -95,6 +101,7 @@ def baseline_key(cfg: Config, config_path: Path) -> str:
         f"ostor={cfg.assessment.outcrop_storage}",
         f"rfall={cfg.inputs.recharge_fallback_m_per_day}",
         f"chdq={','.join(cfg.assessment.chd_quadrants or [])}",
+        f"lic={sorted((cfg.inputs.water_use.licensed_filter or {}).items())}",
     ]
     if cfg.inputs.springs is not None and Path(cfg.inputs.springs).exists():
         parts.append(_file_sha256(Path(cfg.inputs.springs)))
@@ -123,7 +130,7 @@ def baseline_key(cfg: Config, config_path: Path) -> str:
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 
-def cache_paths(key: str) -> tuple[Path, Path, Path, Path, Path]:
+def cache_paths(key: str) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
     base = CACHE_DIR / key
     return (
         base / "receptors.parquet",
@@ -131,11 +138,14 @@ def cache_paths(key: str) -> tuple[Path, Path, Path, Path, Path]:
         base / "manifest.json",
         base / "complex_series.parquet",
         base / "nopump.npz",
+        base / "licensed_receptors.parquet",
+        base / "licensed_drawdown_by_year.npz",
     )
 
 
 def load(key: str) -> BaselineCache | None:
-    receptors_p, drawdown_p, manifest_p, series_p, nopump_p = cache_paths(key)
+    (receptors_p, drawdown_p, manifest_p, series_p, nopump_p,
+     lic_receptors_p, lic_drawdown_p) = cache_paths(key)
     if not (receptors_p.exists() and drawdown_p.exists() and manifest_p.exists() and series_p.exists()):
         return None
     receptors = pd.read_parquet(receptors_p)
@@ -146,15 +156,25 @@ def load(key: str) -> BaselineCache | None:
     if nopump_p.exists():
         nz = np.load(nopump_p)
         nopump_times, nopump_heads = nz["times_days"], nz["heads"]
+    licensed_receptors = None
+    if lic_receptors_p.exists():
+        licensed_receptors = pd.read_parquet(lic_receptors_p)
+    licensed_drawdown = None
+    if lic_drawdown_p.exists():
+        lz = np.load(lic_drawdown_p)
+        licensed_drawdown = {float(name.removeprefix("y")): lz[name] for name in lz.files}
     return BaselineCache(
         key=key, receptors_df=receptors, drawdown_by_year=drawdown,
         complex_series_df=series,
         nopump_times_days=nopump_times, nopump_heads=nopump_heads,
+        licensed_receptors_df=licensed_receptors,
+        licensed_drawdown_by_year=licensed_drawdown,
     )
 
 
 def save(cache: BaselineCache, cfg: Config, config_path: Path) -> None:
-    receptors_p, drawdown_p, manifest_p, series_p, nopump_p = cache_paths(cache.key)
+    (receptors_p, drawdown_p, manifest_p, series_p, nopump_p,
+     lic_receptors_p, lic_drawdown_p) = cache_paths(cache.key)
     receptors_p.parent.mkdir(parents=True, exist_ok=True)
     cache.receptors_df.to_parquet(receptors_p)
     cache.complex_series_df.to_parquet(series_p)
@@ -162,6 +182,13 @@ def save(cache: BaselineCache, cfg: Config, config_path: Path) -> None:
         drawdown_p,
         **{f"y{y}": arr for y, arr in cache.drawdown_by_year.items()},
     )
+    if cache.licensed_receptors_df is not None:
+        cache.licensed_receptors_df.to_parquet(lic_receptors_p)
+    if cache.licensed_drawdown_by_year is not None:
+        np.savez_compressed(
+            lic_drawdown_p,
+            **{f"y{y}": arr for y, arr in cache.licensed_drawdown_by_year.items()},
+        )
     if cache.nopump_times_days is not None and cache.nopump_heads is not None:
         # float32 halves the file; drawdown differences at receptor scale
         # are well above float32 resolution (~1e-7 of head magnitude).

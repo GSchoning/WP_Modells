@@ -296,6 +296,36 @@ header h1 { margin: 0; font-size: 1.25rem; font-weight: 600; letter-spacing: -0.
   letter-spacing: 0.04em;
 }
 
+/* Per-aquifer stat block under ready list items: licensed-vs-S&D split
+   bar (length = total take vs largest ready aquifer), chip-labelled
+   numbers, and the springs-over-threshold line. Series colours are the
+   validated dark-mode pair (blue #3987e5 / yellow #c98500); the warning
+   uses the status yellow #fab219 with an icon so colour never carries
+   the state alone. */
+.aq-stats {
+  margin: -0.15rem 0.55rem 0.45rem 1.55rem;   /* indent under the dot */
+  font-size: 0.68rem; color: var(--ink-2);
+}
+.aq-stats .split-bar {
+  display: flex; gap: 2px;                     /* 2px surface gap between segments */
+  height: 6px; margin: 0.15rem 0 0.25rem;
+  border-radius: 3px; overflow: hidden;
+  min-width: 34px;
+}
+.aq-stats .seg { display: block; height: 100%; }
+.aq-stats .seg.lic { background: #3987e5; }
+.aq-stats .seg.sd  { background: #c98500; flex: 1; }
+.aq-stats .chip {
+  display: inline-block; width: 7px; height: 7px; border-radius: 2px;
+  margin: 0 0.28rem 0 0; vertical-align: baseline;
+}
+.aq-stats .chip.sd { margin-left: 0.55rem; }
+.aq-stats .chip.lic { background: #3987e5; }
+.aq-stats .chip.sd  { background: #c98500; }
+.aq-stats .aq-total { color: var(--ink-3); margin-left: 0.3rem; }
+.aq-stats .aq-springs { margin-top: 0.18rem; color: var(--ink-3); }
+.aq-stats .aq-springs.warn { color: #fab219; }
+
 .legend {
   display: flex; gap: 1rem; padding: 0.55rem 1rem 0.7rem;
   border-top: 1px solid var(--line); font-size: 0.72rem; color: var(--ink-3);

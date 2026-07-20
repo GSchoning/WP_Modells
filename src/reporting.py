@@ -60,7 +60,11 @@ def _mf6_version() -> str:
 def _top_n_table(combined: pd.DataFrame, time_years: float, n: int) -> pd.DataFrame:
     sub = combined[combined["time_years"] == time_years].copy()
     sub = sub.sort_values("s_total", ascending=False).head(n)
-    return sub[["receptor_id", "s_approved", "s_additional", "s_total"]]
+    cols = ["receptor_id", "s_approved"]
+    if "s_licensed" in sub.columns:
+        cols.append("s_licensed")
+    cols += ["s_additional", "s_total"]
+    return sub[cols]
 
 
 def _df_to_md(df: pd.DataFrame, float_cols: list[str], precision: int = 2) -> str:
@@ -173,10 +177,14 @@ def write_impact_report(
         top_df = top_df.rename(columns={
             "receptor_id": "complex",
             "s_approved": "s_approved (m)",
+            "s_licensed": "s_licensed (m)",
             "s_additional": "s_additional (m)",
             "s_total": "s_total (m)",
         })
-        lines.append(_df_to_md(top_df, ["s_approved (m)", "s_additional (m)", "s_total (m)"]))
+        float_cols = [c for c in
+                      ["s_approved (m)", "s_licensed (m)", "s_additional (m)", "s_total (m)"]
+                      if c in top_df.columns]
+        lines.append(_df_to_md(top_df, float_cols))
         lines.append("")
 
     fig_dir = Path("reports/figures")
@@ -214,11 +222,14 @@ def write_impact_report(
     for rid, group in combined.groupby("receptor_id"):
         per_year: dict[str, dict[str, float]] = {}
         for _, row in group.iterrows():
-            per_year[f"{row['time_years']:.0f}"] = {
+            entry = {
                 "s_approved_m": float(row["s_approved"]),
                 "s_additional_m": float(row["s_additional"]),
                 "s_total_m": float(row["s_total"]),
             }
+            if "s_licensed" in row.index:
+                entry["s_licensed_m"] = float(row["s_licensed"])
+            per_year[f"{row['time_years']:.0f}"] = entry
         receptors_payload.append({"id": str(rid), "drawdown_by_year": per_year})
 
     bundle = {

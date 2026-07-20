@@ -70,6 +70,7 @@ class ComplexDrawdown(BaseModel):
     complex_id: str
     n_springs: int = 1
     s_approved_m: float
+    s_licensed_m: float = 0.0             # entitlement-take subset of s_approved (<= s_approved_m)
     s_additional_m: float
     s_total_m: float
     s_additional_theis_m: float | None = None

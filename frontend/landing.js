@@ -151,17 +151,89 @@ function buildMap(geojson) {
       const cta = isReady
         ? `<a href="${p.href}" style="color:#86efac;font-weight:600;text-decoration:none">Open ${GABORA.escapeHtml(p.module_title || p.label)} module →</a>`
         : `<a href="${p.href}" style="color:#cbd5e1;text-decoration:none">View status →</a>`;
+      // Same stats as the list card, compact form. MapLibre may hand
+      // properties back as strings — popupStatsHtml coerces.
       const html =
         `<div><strong>${GABORA.escapeHtml(p.label)}</strong></div>` +
         `<div style="color:#cbd5e1;font-size:0.72rem;margin-top:2px">
            ${GABORA.escapeHtml(p.unit || "")}${p.unit && p.basin ? " · " : ""}${GABORA.escapeHtml(p.basin || "")}
          </div>` +
+        popupStatsHtml(p) +
         `<div style="margin-top:0.45rem">${cta}</div>`;
       new maplibregl.Popup({ closeButton: true })
         .setLngLat(e.lngLat).setHTML(html).addTo(map);
       highlightInList(p.label);
     });
   });
+}
+
+const fmtML = (v) => Number(v).toLocaleString("en-AU", { maximumFractionDigits: 0 });
+
+// Compact stats fragment for the map popup — same numbers as the list
+// card. Coerces via Number() because MapLibre can stringify properties.
+function popupStatsHtml(p) {
+  const total = Number(p.stats_total_ML);
+  if (!Number.isFinite(total) || total <= 0) return "";
+  const lic = Number(p.stats_licensed_ML) || 0;
+  const sd = Number(p.stats_sd_ML) || 0;
+  const licPct = Math.round(100 * lic / total);
+  let rows =
+    `<div style="margin-top:0.45rem;font-size:0.72rem;color:#cbd5e1">
+       total take <strong style="color:#f1f5f9">${fmtML(total)} ML/yr</strong><br/>
+       <span style="color:#3987e5">■</span> licensed ${fmtML(lic)} (${licPct}%) ·
+       <span style="color:#c98500">■</span> S&amp;D ${fmtML(sd)}
+     </div>`;
+  if (Number.isFinite(Number(p.stats_n_complexes))) {
+    const over = Number(p.stats_n_over_threshold) || 0;
+    const n = Number(p.stats_n_complexes);
+    const thr = Number(p.stats_threshold_m);
+    const style = over > 0 ? "color:#fab219" : "color:#94a3b8";
+    const icon = over > 0 ? "⚠ " : "";
+    rows += `<div style="font-size:0.72rem;margin-top:2px;${style}">` +
+      `${icon}${over}/${n} complexes ≥ ${thr} m (approved take)</div>`;
+  }
+  return rows;
+}
+
+// Compact stat block for a ready aquifer's list card: a licensed-vs-S&D
+// split bar (length = total take relative to the largest ready aquifer,
+// fill = mix), a chip-labelled numbers line, and a springs-over-threshold
+// line (warning-coloured only when non-zero). Returns "" when the module
+// has no stats (coming-soon polygons).
+function aquiferStatsHtml(p, maxTotalML) {
+  const total = Number(p.stats_total_ML);
+  if (!p.ready || !Number.isFinite(total) || total <= 0) return "";
+  const lic = Number(p.stats_licensed_ML) || 0;
+  const sd = Number(p.stats_sd_ML) || 0;
+  const barPct = Math.max(8, 100 * total / maxTotalML);   // floor so small aquifers stay visible
+  const licPct = 100 * lic / total;
+
+  let springs = "";
+  if (Number.isFinite(Number(p.stats_n_complexes))) {
+    const over = Number(p.stats_n_over_threshold) || 0;
+    const n = Number(p.stats_n_complexes);
+    const thr = Number(p.stats_threshold_m);
+    const yrs = Number(p.stats_horizon_years);
+    const text = `${over}/${n} spring complexes ≥ ${thr} m at ${yrs} yr (approved take)`;
+    springs = over > 0
+      ? `<div class="aq-springs warn" title="Complexes whose modelled drawdown from currently-approved extraction meets the regulatory threshold">⚠ ${text}</div>`
+      : `<div class="aq-springs" title="No complex reaches the threshold under currently-approved extraction">${text}</div>`;
+  }
+
+  return `<div class="aq-stats" data-label="${escapeAttr(p.label)}">
+    <div class="split-bar" style="width:${barPct.toFixed(1)}%">
+      <span class="seg lic" style="width:${licPct.toFixed(1)}%"
+        title="licensed take: ${fmtML(lic)} ML/yr (${p.stats_n_licensed_bores} bores)"></span>
+      <span class="seg sd"
+        title="stock &amp; domestic: ${fmtML(sd)} ML/yr (${p.stats_n_sd_bores} bores)"></span>
+    </div>
+    <div class="aq-numbers">
+      <span class="chip lic"></span>licensed ${fmtML(lic)}
+      <span class="chip sd"></span>S&amp;D ${fmtML(sd)}
+      <span class="aq-total">ML/yr</span>
+    </div>
+    ${springs}
+  </div>`;
 }
 
 function bboxOfFeatures(features) {
@@ -206,6 +278,12 @@ function renderList(filterText) {
     return a.localeCompare(b);
   });
 
+  // Scale the extraction split bars against the largest ready aquifer so
+  // bar length encodes total take and the fill split encodes the
+  // licensed-vs-S&D mix.
+  const maxTotalML = Math.max(1, ...STATE.features
+    .map(f => Number(f.properties.stats_total_ML) || 0));
+
   let html = "";
   for (const basin of basinKeys) {
     const items = grouped.get(basin).slice().sort((a, b) => a.label.localeCompare(b.label));
@@ -218,6 +296,7 @@ function renderList(filterText) {
         <span class="label-text">${GABORA.escapeHtml(p.label)}</span>
         <span class="badge-mini ${cls}">${status}</span>
       </div>`;
+      html += aquiferStatsHtml(p, maxTotalML);
     }
     html += `</div>`;
   }

@@ -148,17 +148,28 @@ def top_springs_bar(
     out_path: Path,
     *,
     top_n: int = 20,
+    receptors_l: pd.DataFrame | None = None,
 ) -> None:
     a = receptors_a.query("time_years == @time_years").set_index("receptor_id")["drawdown_m"]
     c = receptors_c.query("time_years == @time_years").set_index("receptor_id")["drawdown_m"]
     common = a.index.intersection(c.index)
     df = pd.DataFrame({"s_approved": a.loc[common], "s_additional": c.loc[common]})
+    if receptors_l is not None:
+        l = receptors_l.query("time_years == @time_years").set_index("receptor_id")["drawdown_m"]
+        # Licensed take is a subset of A; clamp to s_approved defensively.
+        df["s_licensed"] = l.reindex(common).fillna(0.0).clip(upper=df["s_approved"])
     df["s_total"] = df["s_approved"] + df["s_additional"]
     df = df.sort_values("s_total", ascending=False).head(top_n)
 
     fig, ax = plt.subplots(figsize=(11, 6))
     x = np.arange(len(df))
-    ax.bar(x, df["s_approved"], color="steelblue", label="s_approved (Scenario A)")
+    if "s_licensed" in df.columns:
+        # Split the existing bar: licensed take (dark) + S&D/other (light).
+        ax.bar(x, df["s_licensed"], color="#334155", label="licensed take (subset of A)")
+        ax.bar(x, df["s_approved"] - df["s_licensed"], bottom=df["s_licensed"],
+               color="#94a3b8", label="S&D / other existing")
+    else:
+        ax.bar(x, df["s_approved"], color="steelblue", label="s_approved (Scenario A)")
     ax.bar(x, df["s_additional"], bottom=df["s_approved"],
            color="darkorange", label="s_additional (Scenario C)")
     ax.set_xticks(x)
@@ -203,6 +214,7 @@ def make_all(
         top_springs_bar(
             results["A"].receptors_df, results["C"].receptors_df,
             time_years=100.0, out_path=p,
+            receptors_l=results["L"].receptors_df if "L" in results else None,
         )
         written.append(p)
 

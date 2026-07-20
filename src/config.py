@@ -18,6 +18,15 @@ class WaterUseCfg(BaseModel):
     formation_col: str | None = None
     formation_value: str | None = None
     receptor_filter: dict | None = None
+    # Identifies "licensed take" — bores holding an entitlement/authority,
+    # reported as a separate impact layer (s_licensed) alongside the full
+    # existing take (s_approved). A bore is licensed when its `auth_col`
+    # value is non-empty AND it is not in `exclude_values` of `exclude_column`
+    # (i.e. non-Stock&Domestic). When unset, io_layer falls back to the
+    # non-S&D receptor set. Shape:
+    #   {auth_col: "AUTH_REFS", exclude_column: "OGIA_P3",
+    #    exclude_values: ["Stock_Domestic"]}
+    licensed_filter: dict | None = None
 
 
 class ProposedBoreCfg(BaseModel):
@@ -113,7 +122,7 @@ class SolverCfg(BaseModel):
 
 
 class RunCfg(BaseModel):
-    scenarios: list[Literal["A", "C"]] = Field(default_factory=lambda: ["A", "C"])
+    scenarios: list[Literal["A", "C", "L"]] = Field(default_factory=lambda: ["A", "C", "L"])
     workspace_root: Path = Path("/tmp/mf6_workspaces")
 
 

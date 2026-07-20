@@ -238,12 +238,24 @@ def _bootstrap_baseline(force: bool = False) -> cache_mod.BaselineCache:
         if hit is not None:
             return hit
 
+    ghb_all = (state.boundary_ghb or []) + (state.ghb_cells or [])
     result = run_scenario(
         state.cfg, state.grid, state.inputs, "A",
         state.ic_head, state.workspace_root / "scen_A",
         chd_cells=state.chd_cells,
-        ghb_cells=(state.boundary_ghb or []) + (state.ghb_cells or []),
+        ghb_cells=ghb_all,
         drain_ghb_cells=state.ghb_cells or [],
+    )
+    # Licensed-take layer: Scenario A over the entitlement subset. Invariant
+    # like A, so computed once here and cached. Reuse A's no-pump twin so
+    # this adds only ONE extra MF6 run (the pumped licensed subset).
+    licensed_result = run_scenario(
+        state.cfg, state.grid, state.inputs, "L",
+        state.ic_head, state.workspace_root / "scen_L",
+        chd_cells=state.chd_cells,
+        ghb_cells=ghb_all,
+        drain_ghb_cells=state.ghb_cells or [],
+        nopump_twin=(result.times_days, result.heads_nopump),
     )
     cache = cache_mod.BaselineCache(
         key=key,
@@ -252,6 +264,8 @@ def _bootstrap_baseline(force: bool = False) -> cache_mod.BaselineCache:
         complex_series_df=result.complex_series_df.copy(),
         nopump_times_days=result.times_days,
         nopump_heads=result.heads_nopump,
+        licensed_receptors_df=licensed_result.receptors_df.copy(),
+        licensed_drawdown_by_year=licensed_result.drawdown_at_output_years,
     )
     cache_mod.save(cache, state.cfg, state.config_path)
     return cache
@@ -506,6 +520,7 @@ def _df_to_year_results(combined: pd.DataFrame, threshold: float) -> list[YearRe
     has_theis = "drawdown_m_theis" in combined.columns
     has_r = "r_m" in combined.columns
     has_n = "n_springs" in combined.columns
+    has_licensed = "s_licensed" in combined.columns
     # Receptors closer than ~2 cells to a proposed well get a mesh-
     # dependence flag: the FD solution in/next to the well cell is biased
     # by the point-sink-in-a-finite-cell treatment (CLAUDE.md §10).
@@ -520,10 +535,15 @@ def _df_to_year_results(combined: pd.DataFrame, threshold: float) -> list[YearRe
             exceeds = s_tot >= threshold
             triggered = exceeds and not already
             r_m = float(r["r_m"]) if has_r and not pd.isna(r["r_m"]) else None
+            # Licensed take is a subset of the approved set, so clamp to
+            # s_approved to absorb any solver-noise overshoot.
+            s_lic = (min(float(r["s_licensed"]), s_appr)
+                     if has_licensed and not pd.isna(r["s_licensed"]) else 0.0)
             complexes.append(ComplexDrawdown(
                 complex_id=str(r["receptor_id"]),
                 n_springs=int(r["n_springs"]) if has_n and not pd.isna(r["n_springs"]) else 1,
                 s_approved_m=s_appr,
+                s_licensed_m=s_lic,
                 s_additional_m=float(r["s_additional"]),
                 s_total_m=s_tot,
                 s_additional_theis_m=float(r["drawdown_m_theis"]) if has_theis and not pd.isna(r["drawdown_m_theis"]) else None,
@@ -591,6 +611,13 @@ def baseline() -> BaselineResponse:
     df = state.baseline.receptors_df.rename(columns={"drawdown_m": "s_approved"})
     df["s_additional"] = 0.0
     df["s_total"] = df["s_approved"]
+    if state.baseline.licensed_receptors_df is not None:
+        lic = state.baseline.licensed_receptors_df.rename(
+            columns={"drawdown_m": "s_licensed"}
+        )[["receptor_id", "time_years", "s_licensed"]]
+        df = df.merge(lic, on=["receptor_id", "time_years"], how="left").fillna(
+            {"s_licensed": 0.0}
+        )
     threshold = state.cfg.assessment.regulatory_threshold_m
     return BaselineResponse(
         cache_key=state.baseline.key,
@@ -738,6 +765,7 @@ def _execute_scenario(
     combined = combine_receptor_tables(
         state.baseline.receptors_df,
         c_result.receptors_df,
+        scen_l=state.baseline.licensed_receptors_df,
     )
 
     # Theis comparison: sum the analytical drawdown contribution from every
@@ -1513,6 +1541,7 @@ def _build_aquifers_geojson() -> dict | None:
     ready_by_label = {
         AQUIFER_MODULES[k]["label"]: k for k in _STATES if k in AQUIFER_MODULES
     }
+    stats_by_key = {k: _module_landing_stats(k) for k in _STATES}
     features = []
     for _, row in gdf.iterrows():
         label = str(row.get("LABEL", "")).strip()
@@ -1535,9 +1564,54 @@ def _build_aquifers_geojson() -> dict | None:
                 "href": href,
                 "module": module_key or "",
                 "module_title": AQUIFER_MODULES[module_key]["title"] if ready else "",
+                # Landing-page stats (extraction split + baseline exceedances);
+                # {} for coming-soon polygons.
+                **(stats_by_key.get(module_key) or {}),
             },
         })
     return {"type": "FeatureCollection", "features": features}
+
+
+def _module_landing_stats(key: str) -> dict:
+    """Headline stats for one bootstrapped module, flattened into GeoJSON
+    feature properties (stats_* prefix).
+
+    Extraction split comes from the ingested water-use table (licensed =
+    entitlement subset, S&D = the rest). The springs number is complexes
+    whose *baseline* (currently-approved take) drawdown meets the regulatory
+    threshold at the assessment horizon — deliberately not called
+    "triggered", which in this tool means tipped over by a proposal.
+    """
+    st = _STATES.get(key)
+    if st is None or st.inputs is None:
+        return {}
+    out: dict = {}
+    pump = st.inputs.pumping_bores
+    lic = st.inputs.licensed_bores
+    lic_ids = set(lic["bore_id"]) if "bore_id" in lic.columns else None
+    total_ml = float(pump["rate_m3_per_day"].sum()) / ML_PER_YEAR_TO_M3_PER_DAY
+    lic_ml = float(lic["rate_m3_per_day"].sum()) / ML_PER_YEAR_TO_M3_PER_DAY
+    out.update({
+        "stats_total_ML": round(total_ml),
+        "stats_licensed_ML": round(lic_ml),
+        "stats_sd_ML": round(total_ml - lic_ml),
+        "stats_n_licensed_bores": int(len(lic)),
+        "stats_n_sd_bores": int(len(pump) - len(lic)) if lic_ids is None
+            else int((~pump["bore_id"].isin(lic_ids)).sum()),
+    })
+    if st.baseline is not None and len(st.baseline.receptors_df):
+        df = st.baseline.receptors_df
+        horizon = float(df["time_years"].max())
+        at_h = df[df["time_years"] == horizon]
+        threshold = float(st.cfg.assessment.regulatory_threshold_m)
+        out.update({
+            "stats_n_complexes": int(at_h["receptor_id"].nunique()),
+            "stats_n_over_threshold": int(
+                (at_h.groupby("receptor_id")["drawdown_m"].max() >= threshold).sum()),
+            "stats_threshold_m": threshold,
+            "stats_horizon_years": horizon,
+        })
+    return out
 
 
 def _mask_from_records(records, nrc=None) -> np.ndarray:

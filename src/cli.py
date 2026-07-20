@@ -233,6 +233,7 @@ def run(
         combined = combine_receptor_tables(
             results["A"].receptors_df,
             results["C"].receptors_df,
+            scen_l=results["L"].receptors_df if "L" in results else None,
         )
         out_csv = out_dir / "receptors_combined.csv"
         combined.to_csv(out_csv, index=False)

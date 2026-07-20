@@ -62,6 +62,12 @@ inputs:
     receptor_filter:
       column: "OGIA_P3"
       exclude_values: ["Stock_Domestic"]
+    # Licensed take = entitlement bores (hold an authority number) that are
+    # not Stock&Domestic. Reported as the separate s_licensed impact layer.
+    licensed_filter:
+      auth_col: "AUTH_REFS"
+      exclude_column: "OGIA_P3"
+      exclude_values: ["Stock_Domestic"]
 
   # Springs shapefile. CRS is WGS84 Web Mercator (EPSG:3857); io_layer
   # reprojects to the project CRS on ingest.
@@ -101,7 +107,7 @@ solver:
   complexity: "MODERATE"        # MODERATE | COMPLEX
 
 run:
-  scenarios: ["A", "C"]         # B is computed by superposition
+  scenarios: ["A", "C", "L"]    # B = A + C by superposition; L = licensed-take subset of A
   workspace_root: "/tmp/mf6_workspaces"
 
 assessment:
