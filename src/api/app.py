@@ -55,6 +55,7 @@ from . import cache as cache_mod
 from . import decisions as decisions_mod
 from .schemas import (
     BaselineResponse,
+    BoreDrawdown,
     ComplexDrawdown,
     Decision,
     DecisionsResponse,
@@ -266,6 +267,9 @@ def _bootstrap_baseline(force: bool = False) -> cache_mod.BaselineCache:
         nopump_heads=result.heads_nopump,
         licensed_receptors_df=licensed_result.receptors_df.copy(),
         licensed_drawdown_by_year=licensed_result.drawdown_at_output_years,
+        bores_df=result.bores_df.copy() if result.bores_df is not None else None,
+        licensed_bores_df=(licensed_result.bores_df.copy()
+                           if licensed_result.bores_df is not None else None),
     )
     cache_mod.save(cache, state.cfg, state.config_path)
     return cache
@@ -563,6 +567,56 @@ def _df_to_year_results(combined: pd.DataFrame, threshold: float) -> list[YearRe
     return out
 
 
+def _attach_bores(year_results: list[YearResults], combined_bores: pd.DataFrame | None,
+                  wells_xy: list[tuple[float, float]] | None = None) -> None:
+    """Populate YearResults.bores from a combined bores table.
+
+    `combined_bores` columns: receptor_id, time_years, s_approved,
+    s_additional, s_total (+ optional s_licensed). Report-only — no
+    threshold classification (the bore trigger criterion is not yet
+    confirmed). r/mesh flags come from distance to the nearest
+    positive-rate proposed well, matching the complex treatment.
+    """
+    if combined_bores is None or not len(combined_bores):
+        return
+    has_licensed = "s_licensed" in combined_bores.columns
+
+    # bore_id -> (x, y) for distance flags.
+    xy: dict[str, tuple[float, float]] = {}
+    if state.inputs is not None and state.inputs.receptor_bores is not None:
+        rb = state.inputs.receptor_bores
+        if "bore_id" in rb.columns:
+            xy = {str(b): (float(x), float(y))
+                  for b, x, y in zip(rb["bore_id"], rb.geometry.x, rb.geometry.y)}
+    mesh_limit_m = 2.0 * float(state.grid.delr[0]) if state.grid is not None else 3000.0
+
+    def _r_m(bore_id: str) -> float | None:
+        if not wells_xy or bore_id not in xy:
+            return None
+        bx, by = xy[bore_id]
+        return min(((bx - wx) ** 2 + (by - wy) ** 2) ** 0.5 for wx, wy in wells_xy)
+
+    by_year: dict[float, list[BoreDrawdown]] = {}
+    for _, r in combined_bores.iterrows():
+        s_appr = float(r["s_approved"])
+        s_lic = (min(float(r["s_licensed"]), s_appr)
+                 if has_licensed and not pd.isna(r["s_licensed"]) else 0.0)
+        bore_id = str(r["receptor_id"])
+        r_m = _r_m(bore_id)
+        by_year.setdefault(float(r["time_years"]), []).append(BoreDrawdown(
+            bore_id=bore_id,
+            s_approved_m=s_appr,
+            s_licensed_m=s_lic,
+            s_additional_m=float(r["s_additional"]),
+            s_total_m=float(r["s_total"]),
+            r_to_proposed_m=r_m,
+            mesh_dependent=(r_m is not None and r_m < mesh_limit_m),
+        ))
+    for yr in year_results:
+        bores = by_year.get(yr.time_years, [])
+        yr.bores = sorted(bores, key=lambda b: b.s_total_m, reverse=True)
+
+
 def _n_complexes() -> int:
     if state.inputs is None or state.inputs.springs is None:
         return 0
@@ -619,11 +673,24 @@ def baseline() -> BaselineResponse:
             {"s_licensed": 0.0}
         )
     threshold = state.cfg.assessment.regulatory_threshold_m
+    year_results = _df_to_year_results(df, threshold)
+    if state.baseline.bores_df is not None:
+        bores = state.baseline.bores_df.rename(columns={"drawdown_m": "s_approved"})
+        bores["s_additional"] = 0.0
+        bores["s_total"] = bores["s_approved"]
+        if state.baseline.licensed_bores_df is not None:
+            lic = state.baseline.licensed_bores_df.rename(
+                columns={"drawdown_m": "s_licensed"}
+            )[["receptor_id", "time_years", "s_licensed"]]
+            bores = bores.merge(lic, on=["receptor_id", "time_years"], how="left").fillna(
+                {"s_licensed": 0.0}
+            )
+        _attach_bores(year_results, bores)
     return BaselineResponse(
         cache_key=state.baseline.key,
         regulatory_threshold_m=threshold,
         output_years=sorted(df["time_years"].unique().tolist()),
-        by_year=_df_to_year_results(df, threshold),
+        by_year=year_results,
     )
 
 
@@ -767,6 +834,15 @@ def _execute_scenario(
         c_result.receptors_df,
         scen_l=state.baseline.licensed_receptors_df,
     )
+    # Receptor-bore impacts: cached A/L bores + this scenario's C bores.
+    # None when the cache predates v10 (rebuilds on next bootstrap).
+    combined_bores = None
+    if state.baseline.bores_df is not None and c_result.bores_df is not None:
+        combined_bores = combine_receptor_tables(
+            state.baseline.bores_df,
+            c_result.bores_df,
+            scen_l=state.baseline.licensed_bores_df,
+        )
 
     # Theis comparison: sum the analytical drawdown contribution from every
     # well in the change set (linear superposition). Signs follow rate.
@@ -834,6 +910,10 @@ def _execute_scenario(
 
     threshold = state.cfg.assessment.regulatory_threshold_m
     year_results = _df_to_year_results(combined, threshold)
+    _attach_bores(
+        year_results, combined_bores,
+        wells_xy=[(w["x"], w["y"]) for w in positive] if positive else None,
+    )
     last_year = max(combined["time_years"].unique())
     last_complexes = [yr for yr in year_results if yr.time_years == last_year][0].complexes
     top_n = last_complexes[:10]

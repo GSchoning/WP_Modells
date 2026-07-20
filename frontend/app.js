@@ -1416,9 +1416,37 @@ function renderTable(result) {
     html += `</tr>`;
   }
   html += "</tbody></table>";
+
+  // Receptor-bore impacts (report-only — no threshold classification;
+  // the bore trigger criterion is not yet confirmed). s_approved at an
+  // extraction bore includes its own drawdown; the proposed column is
+  // the decision-relevant number.
+  const bores = yearBlock.bores || [];
+  if (bores.length) {
+    const hasLicB = bores.some(b => b.s_licensed_m != null && b.s_licensed_m > 0);
+    html += `<h3 class="bores-heading">Receptor bores at ${lastYear} yr</h3>`;
+    html += "<table><thead><tr><th>bore</th>";
+    html += "<th class=\"num\">existing (m)</th>";
+    if (hasLicB) html += "<th class=\"num\" title=\"Impact from licensed/entitlement take only\">licensed (m)</th>";
+    html += "<th class=\"num\" title=\"Impact of the proposed change alone — no self-impact; the decision-relevant number\">proposed (m)</th>";
+    html += "<th class=\"num\">total (m)</th></tr></thead><tbody>";
+    for (const b of bores) {
+      const meshMark = b.mesh_dependent
+        ? ` <span class="mesh-flag" title="Within ~2 grid cells of a proposed bore — value is mesh-dependent">†</span>`
+        : "";
+      html += `<tr><td>${GABORA.escapeHtml(b.bore_id)}${meshMark}</td>`;
+      html += `<td class="num">${fmt(b.s_approved_m)}</td>`;
+      if (hasLicB) html += `<td class="num">${fmt(b.s_licensed_m)}</td>`;
+      html += `<td class="num">${fmt(b.s_additional_m)}</td>`;
+      html += `<td class="num"><strong>${fmt(b.s_total_m)}</strong></td></tr>`;
+    }
+    html += "</tbody></table>";
+    html += `<div class="muted" style="margin-top:0.3rem">existing impact at an extraction bore includes its own drawdown; the proposed column carries no self-impact.</div>`;
+  }
+
   $("results-tables").innerHTML =
     `<button type="button" id="csv-export-btn" class="csv-btn">Download CSV (all years)</button>` + html;
-  $("results-tables").querySelectorAll("tbody tr").forEach(tr => {
+  $("results-tables").querySelectorAll("tbody tr[data-id]").forEach(tr => {
     tr.addEventListener("click", () => selectComplex(tr.getAttribute("data-id")));
   });
   $("csv-export-btn").addEventListener("click", () => exportResultCsv(result));
@@ -1428,17 +1456,24 @@ function exportResultCsv(result) {
   // Every complex × output year, all three reporting layers + flags —
   // the machine-readable version of what the regulator signs off on.
   const rows = [[
-    "complex_id", "n_springs", "time_years",
+    "receptor_type", "receptor_id", "n_springs", "time_years",
     "s_approved_m", "s_licensed_m", "s_additional_m", "s_total_m", "s_additional_theis_m",
     "exceeds_threshold", "already_exceeded", "triggered_by_proposed",
   ]];
   for (const yr of result.by_year) {
     for (const c of yr.complexes) {
       rows.push([
-        c.complex_id, c.n_springs, yr.time_years,
+        "spring_complex", c.complex_id, c.n_springs, yr.time_years,
         c.s_approved_m, c.s_licensed_m ?? "", c.s_additional_m, c.s_total_m,
         c.s_additional_theis_m ?? "",
         c.exceeds_threshold, c.already_exceeded, c.triggered_by_proposed,
+      ]);
+    }
+    for (const b of (yr.bores || [])) {
+      rows.push([
+        "receptor_bore", b.bore_id, "", yr.time_years,
+        b.s_approved_m, b.s_licensed_m ?? "", b.s_additional_m, b.s_total_m,
+        "", "", "", "",
       ]);
     }
   }

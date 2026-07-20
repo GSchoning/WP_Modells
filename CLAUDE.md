@@ -165,10 +165,14 @@ Module responsibilities:
   `GET /api/scenarios/jobs/{id}` polls. Only Scenario C runs MF6 (twice,
   or once when the cached no-pump twin matches). Response: per-year
   per-complex `s_approved / s_licensed / s_additional / s_total`, threshold
-  classifications (`already_exceeded`, `triggered_by_proposed`), Theis
+  classifications (`already_exceeded`, `triggered_by_proposed`), a per-year
+  `bores` list (drawdown at every in-domain receptor bore — report-only,
+  no threshold classification until the bore trigger criterion is
+  confirmed; `s_approved` at an extraction bore includes its own
+  cell-averaged drawdown, `s_additional` carries no self-impact), Theis
   comparison, QA block, provenance hashes.
-- `GET /api/baseline` — cached Scenario A (+ licensed layer) without a
-  proposal.
+- `GET /api/baseline` — cached Scenario A (+ licensed layer and bores)
+  without a proposal.
 - `GET /api/map-data`, `/api/aquifers`, `/api/existing-bores`,
   `/api/spring-series`, drawdown raster PNG endpoints, decision endpoints.
 - Module selection: `?aquifer=<key>` or `X-Aquifer` header (middleware
@@ -180,8 +184,9 @@ Module responsibilities:
   `setup.html` — model-setup layer viewer; `scenario.html` — drawdown
   raster maps.
 - **Baseline cache** (`outputs/cache/<key>/`): receptors, drawdown
-  rasters, per-complex series, the no-pump twin heads, and the licensed
-  layer. Cache key = schema version + a fingerprint of the model source
+  rasters, per-complex series, the no-pump twin heads, the licensed
+  layer, and the receptor-bore tables (A and L).
+  Cache key = schema version + a fingerprint of the model source
   files + config + input file hashes, so code or data changes rebuild
   automatically. Bump `CACHE_SCHEMA_VERSION` when the cached shape or
   meaning changes.

@@ -31,8 +31,10 @@ CACHE_DIR = Path("outputs/cache")
 # aligned to output years + cached no-pump twin heads. v8 = negative-SS
 # decoded as dimensionless Sy, recharge fallback, UWIR-2025 W-only GHBs
 # with calibrated pilot heads. v9 = cached licensed-take layer
-# (s_licensed) alongside the Scenario A baseline.
-CACHE_SCHEMA_VERSION = "v9"
+# (s_licensed) alongside the Scenario A baseline. v10 = drawdown sampled
+# at receptor water bores (bores_df / licensed_bores_df) cached alongside
+# the spring-complex tables.
+CACHE_SCHEMA_VERSION = "v10"
 
 
 @dataclass
@@ -50,6 +52,10 @@ class BaselineCache:
     # these — load() leaves them None and the API degrades gracefully.
     licensed_receptors_df: pd.DataFrame | None = None
     licensed_drawdown_by_year: dict[float, np.ndarray] | None = None
+    # Drawdown at receptor water bores for A and L (tidy receptor_id /
+    # time_years / drawdown_m), same shape as the spring tables.
+    bores_df: pd.DataFrame | None = None
+    licensed_bores_df: pd.DataFrame | None = None
 
 
 def _file_sha256(path: Path) -> str:
@@ -130,7 +136,7 @@ def baseline_key(cfg: Config, config_path: Path) -> str:
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 
-def cache_paths(key: str) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
+def cache_paths(key: str) -> tuple[Path, ...]:
     base = CACHE_DIR / key
     return (
         base / "receptors.parquet",
@@ -140,12 +146,14 @@ def cache_paths(key: str) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
         base / "nopump.npz",
         base / "licensed_receptors.parquet",
         base / "licensed_drawdown_by_year.npz",
+        base / "bores.parquet",
+        base / "licensed_bores.parquet",
     )
 
 
 def load(key: str) -> BaselineCache | None:
     (receptors_p, drawdown_p, manifest_p, series_p, nopump_p,
-     lic_receptors_p, lic_drawdown_p) = cache_paths(key)
+     lic_receptors_p, lic_drawdown_p, bores_p, lic_bores_p) = cache_paths(key)
     if not (receptors_p.exists() and drawdown_p.exists() and manifest_p.exists() and series_p.exists()):
         return None
     receptors = pd.read_parquet(receptors_p)
@@ -163,18 +171,21 @@ def load(key: str) -> BaselineCache | None:
     if lic_drawdown_p.exists():
         lz = np.load(lic_drawdown_p)
         licensed_drawdown = {float(name.removeprefix("y")): lz[name] for name in lz.files}
+    bores = pd.read_parquet(bores_p) if bores_p.exists() else None
+    licensed_bores = pd.read_parquet(lic_bores_p) if lic_bores_p.exists() else None
     return BaselineCache(
         key=key, receptors_df=receptors, drawdown_by_year=drawdown,
         complex_series_df=series,
         nopump_times_days=nopump_times, nopump_heads=nopump_heads,
         licensed_receptors_df=licensed_receptors,
         licensed_drawdown_by_year=licensed_drawdown,
+        bores_df=bores, licensed_bores_df=licensed_bores,
     )
 
 
 def save(cache: BaselineCache, cfg: Config, config_path: Path) -> None:
     (receptors_p, drawdown_p, manifest_p, series_p, nopump_p,
-     lic_receptors_p, lic_drawdown_p) = cache_paths(cache.key)
+     lic_receptors_p, lic_drawdown_p, bores_p, lic_bores_p) = cache_paths(cache.key)
     receptors_p.parent.mkdir(parents=True, exist_ok=True)
     cache.receptors_df.to_parquet(receptors_p)
     cache.complex_series_df.to_parquet(series_p)
@@ -189,6 +200,10 @@ def save(cache: BaselineCache, cfg: Config, config_path: Path) -> None:
             lic_drawdown_p,
             **{f"y{y}": arr for y, arr in cache.licensed_drawdown_by_year.items()},
         )
+    if cache.bores_df is not None:
+        cache.bores_df.to_parquet(bores_p)
+    if cache.licensed_bores_df is not None:
+        cache.licensed_bores_df.to_parquet(lic_bores_p)
     if cache.nopump_times_days is not None and cache.nopump_heads is not None:
         # float32 halves the file; drawdown differences at receptor scale
         # are well above float32 resolution (~1e-7 of head magnitude).

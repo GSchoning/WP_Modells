@@ -84,9 +84,29 @@ class ComplexDrawdown(BaseModel):
     mesh_dependent: bool = False
 
 
+class BoreDrawdown(BaseModel):
+    """Drawdown at a receptor water bore (non-S&D licensed bore).
+
+    Report-only: no threshold classification, because the bore trigger
+    criterion (unlike the 0.4 m spring value) has not been confirmed by
+    the department. Note that s_approved_m at an extraction bore includes
+    that bore's own cell-averaged drawdown; s_additional_m carries no
+    self-impact and is the decision-relevant number for a proposal.
+    """
+    bore_id: str
+    s_approved_m: float
+    s_licensed_m: float = 0.0
+    s_additional_m: float
+    s_total_m: float
+    r_to_proposed_m: float | None = None
+    # Within ~2 grid cells of a proposed well — mesh-dependent value.
+    mesh_dependent: bool = False
+
+
 class YearResults(BaseModel):
     time_years: float
     complexes: list[ComplexDrawdown]
+    bores: list[BoreDrawdown] = []
     n_exceedances: int = 0
     n_triggered: int = 0
     n_already_exceeded: int = 0

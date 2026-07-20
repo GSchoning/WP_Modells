@@ -30,6 +30,13 @@ class ScenarioResult:
     drawdown_at_output_years: dict[float, np.ndarray]  # year -> (nrow, ncol)
     receptors_df: pd.DataFrame        # tidy (receptor_id, time_years, drawdown_m)
     complex_series_df: pd.DataFrame   # (complex_id, time_days, drawdown_m) — every timestep
+    # Drawdown sampled at receptor water bores (non-S&D), tidy
+    # (receptor_id, time_years, drawdown_m). NOTE: receptor bores are also
+    # pumping bores in scenarios A/L, so the value at a bore's own cell
+    # includes its own (cell-averaged) drawdown — fine for the cumulative
+    # picture; the decision-relevant number for a proposal is s_additional,
+    # which contains no self-impact.
+    bores_df: pd.DataFrame | None = None
     heads_nopump: np.ndarray | None = None   # twin-run heads, reusable across scenarios
     # QA metrics ----------------------------------------------------------
     # Worst volumetric-budget percent discrepancy across both MF6 runs.
@@ -400,6 +407,23 @@ def run_scenario(
         complex_col if inputs.springs is not None else None,
     )
 
+    # Drawdown at receptor water bores (non-S&D), same sampling machinery
+    # as springs. Bores in inactive cells are skipped by _sample_receptors.
+    bore_frames: list[pd.DataFrame] = []
+    if inputs.receptor_bores is not None and len(inputs.receptor_bores):
+        bore_id_col = "bore_id" if "bore_id" in inputs.receptor_bores.columns \
+            else _pick_id_column(inputs.receptor_bores, ("bore_id", "RN", "ID"))
+        for y, idx in year_idx.items():
+            bore_frames.append(
+                _sample_receptors(drawdown[idx], inputs.receptor_bores, bore_id_col, grid, y)
+            )
+    bores_df = (pd.concat(bore_frames, ignore_index=True) if bore_frames
+                else pd.DataFrame(columns=["receptor_id", "time_years", "drawdown_m"]))
+    if len(bores_df):
+        # Normalise bore ids to strings: merges can upcast int ids to float
+        # ("107775" -> 107775.0), which breaks id-keyed lookups downstream.
+        bores_df["receptor_id"] = bores_df["receptor_id"].astype(str)
+
     return ScenarioResult(
         name=name,
         times_days=times_days,
@@ -408,6 +432,7 @@ def run_scenario(
         drawdown_at_output_years=drawdown_by_year,
         receptors_df=receptors_df,
         complex_series_df=complex_series_df,
+        bores_df=bores_df,
         heads_nopump=heads_nopump,
         max_pct_discrepancy=pct_disc,
         chd_max_drawdown_m=chd_max_dd,

@@ -224,10 +224,16 @@ def run(
             results[scen].receptors_df.to_csv(recv_csv, index=False)
             n_springs = results[scen].receptors_df["receptor_id"].nunique() if len(results[scen].receptors_df) else 0
             typer.echo(f"  springs sampled: {n_springs} → {recv_csv}")
+            if results[scen].bores_df is not None and len(results[scen].bores_df):
+                bores_csv = out_dir / f"scenario_{scen}_bores.csv"
+                results[scen].bores_df.to_csv(bores_csv, index=False)
+                n_bores = results[scen].bores_df["receptor_id"].nunique()
+                typer.echo(f"  receptor bores sampled: {n_bores} → {bores_csv}")
         except (RuntimeError, ValueError) as exc:
             typer.echo(f"  Scenario {scen} skipped: {exc}")
 
     combined = None
+    combined_bores = None
     if "A" in results and "C" in results:
         typer.echo("\nCombining via superposition (B = A + C)…")
         combined = combine_receptor_tables(
@@ -238,6 +244,15 @@ def run(
         out_csv = out_dir / "receptors_combined.csv"
         combined.to_csv(out_csv, index=False)
         typer.echo(f"  combined receptor table → {out_csv}")
+        if results["A"].bores_df is not None and results["C"].bores_df is not None:
+            combined_bores = combine_receptor_tables(
+                results["A"].bores_df,
+                results["C"].bores_df,
+                scen_l=results["L"].bores_df if "L" in results else None,
+            )
+            bores_csv = out_dir / "bores_combined.csv"
+            combined_bores.to_csv(bores_csv, index=False)
+            typer.echo(f"  combined receptor-bore table → {bores_csv}")
 
     if figures and results:
         typer.echo("\nWriting diagnostic figures…")
@@ -254,6 +269,7 @@ def run(
             cfg=cfg, grid=grid, inputs=inputs, results=results,
             combined=combined, config_path=config,
             md_path=report_md, json_path=report_json,
+            combined_bores=combined_bores,
         )
         typer.echo(f"  → {report_md}")
         typer.echo(f"  → {report_json}")

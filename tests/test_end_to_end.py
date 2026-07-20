@@ -133,6 +133,20 @@ def test_synthetic_pipeline_runs(tmp_path):
         combined["s_total"], combined["s_approved"] + combined["s_additional"],
     )
 
+    # Receptor-bore impacts sampled for every scenario: every in-domain
+    # bore appears at every output year, with positive drawdown in A
+    # (the bores pump in A, so at minimum their own impact registers).
+    for result in (a, c):
+        assert result.bores_df is not None and len(result.bores_df)
+        assert set(result.bores_df["time_years"]) == {2.0, 5.0, 10.0}
+        assert set(result.bores_df["receptor_id"]) == set(inputs.receptor_bores["bore_id"])
+    assert (a.bores_df["drawdown_m"] > 0).all()
+    combined_bores = combine_receptor_tables(a.bores_df, c.bores_df)
+    assert np.allclose(
+        combined_bores["s_total"],
+        combined_bores["s_approved"] + combined_bores["s_additional"],
+    )
+
     # QA metrics populated and sane on a healthy little model.
     assert a.max_pct_discrepancy < 1.0
     assert c.max_pct_discrepancy < 1.0

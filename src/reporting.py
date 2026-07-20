@@ -92,6 +92,7 @@ def write_impact_report(
     md_path: Path,
     json_path: Path,
     top_n: int = 10,
+    combined_bores: pd.DataFrame | None = None,
 ) -> None:
     md_path.parent.mkdir(parents=True, exist_ok=True)
     json_path.parent.mkdir(parents=True, exist_ok=True)
@@ -185,6 +186,25 @@ def write_impact_report(
                       ["s_approved (m)", "s_licensed (m)", "s_additional (m)", "s_total (m)"]
                       if c in top_df.columns]
         lines.append(_df_to_md(top_df, float_cols))
+        if combined_bores is not None and len(combined_bores):
+            lines.append("")
+            lines.append(f"### Top {top_n} most-impacted receptor bores at t = {y:.0f} yr")
+            lines.append("")
+            bores_df = _top_n_table(combined_bores, y, top_n).rename(columns={
+                "receptor_id": "bore",
+                "s_approved": "s_approved (m)",
+                "s_licensed": "s_licensed (m)",
+                "s_additional": "s_additional (m)",
+                "s_total": "s_total (m)",
+            })
+            bf_cols = [c for c in
+                       ["s_approved (m)", "s_licensed (m)", "s_additional (m)", "s_total (m)"]
+                       if c in bores_df.columns]
+            lines.append(_df_to_md(bores_df, bf_cols))
+            lines.append("")
+            lines.append("_Note: s_approved at an extraction bore includes that bore's "
+                         "own cell-averaged drawdown; s_additional carries no self-impact "
+                         "and is the decision-relevant number for a proposal._")
         lines.append("")
 
     fig_dir = Path("reports/figures")
@@ -232,6 +252,21 @@ def write_impact_report(
             per_year[f"{row['time_years']:.0f}"] = entry
         receptors_payload.append({"id": str(rid), "drawdown_by_year": per_year})
 
+    bores_payload: list[dict] = []
+    if combined_bores is not None and len(combined_bores):
+        for rid, group in combined_bores.groupby("receptor_id"):
+            per_year = {}
+            for _, row in group.iterrows():
+                entry = {
+                    "s_approved_m": float(row["s_approved"]),
+                    "s_additional_m": float(row["s_additional"]),
+                    "s_total_m": float(row["s_total"]),
+                }
+                if "s_licensed" in row.index:
+                    entry["s_licensed_m"] = float(row["s_licensed"])
+                per_year[f"{row['time_years']:.0f}"] = entry
+            bores_payload.append({"id": str(rid), "drawdown_by_year": per_year})
+
     bundle = {
         "metadata": metadata,
         "scenarios": {
@@ -250,5 +285,6 @@ def write_impact_report(
         },
         "output_years": [float(y) for y in output_years],
         "springs": receptors_payload,
+        "receptor_bores": bores_payload,
     }
     json_path.write_text(json.dumps(bundle, indent=2))
