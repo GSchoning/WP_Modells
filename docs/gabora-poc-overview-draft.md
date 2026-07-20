@@ -28,7 +28,9 @@ This paper describes a proof-of-concept decision-support tool for assessing wate
 
 ## 2  The assessment problem
 
-An assessing officer needs three numbers for each receptor: the impact of extraction that is already approved, the additional impact attributable to the application in front of them, and the combined total against the trigger threshold. Producing these from a regional model requires re-running large scenarios for every application, and attributing the applicant's share by differencing two large and nearly equal results. Producing them analytically sacrifices the calibrated spatial detail that makes the numbers defensible. The tool is designed to occupy the gap between these pathways: regional-model fidelity at interactive speed, packaged so that a licensing officer rather than a modeller can run it.
+An assessing officer needs three numbers for each receptor: the impact of extraction that is already approved, the additional impact attributable to the application in front of them, and the combined total against the trigger threshold. Producing these from a regional model requires re-running large scenarios for every application, and attributing the applicant's share by differencing two large and nearly equal results. Producing them analytically, as in the superposition of Theis solutions currently used to support assessments, sacrifices the calibrated spatial detail that makes the numbers defensible. The tool is designed to occupy the gap between these pathways: regional-model fidelity at interactive speed, packaged so that a licensing officer rather than a modeller can run it.
+
+The benefits described in this paper are realised by combining two properties that have not previously been available together in the licensing context: a fast-running tool, and one that leverages a calibrated groundwater model. Neither property alone is sufficient. A fast analytical method without the calibrated spatial detail cannot represent aquifer geometry, heterogeneity or boundaries, while a calibrated regional model without interactive speed cannot support assessment at licensing timeframes. Compared to the current practice of superposing Theis solutions, this represents a significant improvement in both the fidelity and the traceability of the impact estimates behind licensing decisions.
 
 ## 3  Approach
 
@@ -93,6 +95,7 @@ The following bounds the proof of concept and indicates where it is and is not a
 - Near-bore accuracy. Drawdown within about two grid cells (about 3 km) of a pumped bore is mesh-dependent; affected receptors are flagged in results, with the Theis estimate as the cross-check.
 - Water-use data vintage. The extraction dataset is the 2024 OGIA dataset and carries no licence commencement dates, so take cannot be filtered by approval date; licensed take is defined by authority number and use class.
 - Constant-rate scenarios. Extraction is modelled as constant over the assessment period, the standard conservative licensing assumption; time-varying regimes are not yet supported.
+- Single parameter realisation. The tool currently evaluates one calibrated parameter set, so predictive uncertainty in the impact metrics is not yet quantified. Ensembles of calibrated parameter sets are now routinely produced during model calibration and uncertainty analysis, and section 7 identifies their use in Monte Carlo simulation as a key next step.
 - Prototype security posture. The login is a mock-up for demonstration; operational deployment would require departmental authentication, hosting and records-management integration.
 ## 7  Suggested next steps
 
@@ -100,14 +103,16 @@ The following bounds the proof of concept and indicates where it is and is not a
 - A comparison exercise running a set of historical licence decisions through the tool against the assessments made at the time.
 - Engagement with OGIA to confirm the parent-model extraction approach and to obtain calibrated boundary conductances where the tool currently estimates them.
 - Production hardening: authentication, hosting, records integration, and a data refresh pathway for each new UWIR and water-use dataset.
-- Additional aquifer modules as demand requires.
+- Development of simple but fast-running models for the other GAB aquifers in the plan area, calibrated or inherited from regional modelling where available, and progressively added to the tool as modules. This would extend the same assessment capability across the plan area and would represent a significant improvement over the superposition of Theis solutions currently used where no regional model product is available.
+- Quantification of predictive uncertainty by Monte Carlo simulation. Ensembles of calibrated parameter sets are now routinely obtained as part of model calibration and uncertainty analysis. Running the assessment scenarios across such an ensemble would gauge the uncertainty in the key impact metrics; that uncertainty, together with a quantified risk appetite, would support more informed water management decisions than a single deterministic estimate. The computational cost would be modest: ensemble members are independent and parallelise naturally, and could be run cheaply on transient (spot) cloud computing instances.
 ## 8  Conclusions
 
-- A working proof of concept demonstrates that licence-application impact assessment can be performed at interactive speed while remaining consistent with OGIA's calibrated regional modelling.
+- A working proof of concept demonstrates that licence-application impact assessment can be performed at interactive speed while remaining consistent with OGIA's calibrated regional modelling. The combination of a fast-running tool with a calibrated model is what realises the benefits, and is a significant improvement over the superposition of Theis solutions currently used to support assessments.
 - Superposition with cached baselines isolates the applicant's contribution exactly and reduces an assessment to one small model run; the linearity this relies on is verified to solver precision, not assumed.
 - Impacts are reported in four layers so that approved, licensed and proposed contributions are visible separately, and threshold exceedances are attributed to the correct cause.
 - Every result and decision carries reproducible provenance, supporting the defensibility of decisions informed by the tool.
 - Known limitations are bounded and reported by the tool itself; the suggested next steps (section 7) address them in order of consequence.
+- The most consequential extensions are fast-running models for the remaining GAB aquifers in the plan area, and Monte Carlo simulation across the routinely produced calibrated parameter ensembles so that impact metrics carry quantified uncertainty for risk-based decision making.
 ## References
 
 Bakker, M, Post, V, Langevin, CD, Hughes, JD, White, JT, Starn, JJ & Fienen, MN 2016, 'Scripting MODFLOW model development using Python and FloPy', Groundwater, vol. 54, no. 5, pp. 733-739.
