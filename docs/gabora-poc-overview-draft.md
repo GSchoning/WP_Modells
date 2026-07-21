@@ -4,7 +4,7 @@
 
 > The work presented in this document provides an update on a component of ongoing work to support the assessment and management of water resource development impacts. It is not a statutory document. Conclusions are subject to further review and changes ahead of any operational deployment and other reporting as needed.
 
-*Citation:* Schoning, G (2026), A proof-of-concept tool for cumulative impact assessment of water licence applications in the GABORA water plan area. A proof-of-concept overview, Department of Local Government, Water and Volunteers, Queensland Government, Australia. July 2026.
+*Citation:* X (2026), A proof-of-concept tool for cumulative impact assessment of water licence applications in the GABORA water plan area. A proof-of-concept overview, Department of Local Government, Water and Volunteers, Queensland Government, Australia. July 2026.
 
 *Contributors:* [to be confirmed]
 
