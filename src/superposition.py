@@ -35,6 +35,21 @@ def combine_receptor_tables(
     return out
 
 
+def subtract_receptor_tables(scen_b: pd.DataFrame, scen_a: pd.DataFrame) -> pd.DataFrame:
+    """B − A on tidy (receptor_id, time_years, drawdown_m) tables.
+
+    Used in drn transient mode, where the combined scenario B is modelled
+    directly (head-dependent drains respond to the true total stress) and
+    the additional layer is the marginal impact B − A. Receptors missing
+    from A subtract zero.
+    """
+    key = ["receptor_id", "time_years"]
+    a = scen_a.rename(columns={"drawdown_m": "_a"})[key + ["_a"]]
+    out = scen_b.merge(a, on=key, how="left").fillna({"_a": 0.0})
+    out["drawdown_m"] = out["drawdown_m"] - out["_a"]
+    return out.drop(columns=["_a"])
+
+
 def combine_rasters(
     s_a: np.ndarray, s_c: np.ndarray, s_l: np.ndarray | None = None
 ) -> dict[str, np.ndarray]:

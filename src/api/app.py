@@ -48,7 +48,12 @@ from ..config import Config, load_config
 from ..grid import Grid, build_grid_from_properties, cell_of
 from ..io_layer import Inputs, ML_PER_YEAR_TO_M3_PER_DAY, load_inputs, load_recharge_by_inode
 from ..model_builder import active_boundary_chd_cells, boundary_ghb_for_config
-from ..scenarios import ScenarioResult, run_scenario, run_steady_state
+from ..scenarios import (
+    ScenarioResult,
+    _boundary_drawdown_stats,
+    run_scenario,
+    run_steady_state,
+)
 from ..superposition import combine_receptor_tables
 from ..theis import formation_avg_T_S, theis_at_springs
 from . import cache as cache_mod
@@ -239,13 +244,11 @@ def _bootstrap_baseline(force: bool = False) -> cache_mod.BaselineCache:
         if hit is not None:
             return hit
 
-    ghb_all = (state.boundary_ghb or []) + (state.ghb_cells or [])
+    run_kwargs = _scenario_run_kwargs()
     result = run_scenario(
         state.cfg, state.grid, state.inputs, "A",
         state.ic_head, state.workspace_root / "scen_A",
-        chd_cells=state.chd_cells,
-        ghb_cells=ghb_all,
-        drain_ghb_cells=state.ghb_cells or [],
+        **run_kwargs,
     )
     # Licensed-take layer: Scenario A over the entitlement subset. Invariant
     # like A, so computed once here and cached. Reuse A's no-pump twin so
@@ -253,10 +256,8 @@ def _bootstrap_baseline(force: bool = False) -> cache_mod.BaselineCache:
     licensed_result = run_scenario(
         state.cfg, state.grid, state.inputs, "L",
         state.ic_head, state.workspace_root / "scen_L",
-        chd_cells=state.chd_cells,
-        ghb_cells=ghb_all,
-        drain_ghb_cells=state.ghb_cells or [],
         nopump_twin=(result.times_days, result.heads_nopump),
+        **run_kwargs,
     )
     cache = cache_mod.BaselineCache(
         key=key,
@@ -270,6 +271,10 @@ def _bootstrap_baseline(force: bool = False) -> cache_mod.BaselineCache:
         bores_df=result.bores_df.copy() if result.bores_df is not None else None,
         licensed_bores_df=(licensed_result.bores_df.copy()
                            if licensed_result.bores_df is not None else None),
+        # DRN-mode capture accounting for the A baseline, so per-request B
+        # runs can report the proposal's MARGINAL capture (B − A).
+        a_n_drains_dried=result.n_drains_dried,
+        a_drain_capture_m3d=result.drain_capture_m3d,
     )
     cache_mod.save(cache, state.cfg, state.config_path)
     return cache
@@ -376,6 +381,33 @@ def _bootstrap_ic() -> None:
     state.chd_cells = chd_unfiltered
     state.boundary_ghb = []
     _linearise_drains(state.ic_head)
+
+
+def _drn_mode() -> bool:
+    """True when transients carry real DRN cells (drains.transient_mode).
+
+    In this mode the per-request scenario is B (existing + change set) run
+    directly, and s_additional is derived as B − A; in the legacy
+    linearised_ghb mode flowing drains ride as fixed-head GHBs and the
+    per-request scenario is C combined by superposition.
+    """
+    return bool(state.cfg.drains.enabled and state.cfg.drains.transient_mode == "drn"
+                and state.drn_cells)
+
+
+def _scenario_run_kwargs() -> dict:
+    """Boundary/drain kwargs for run_scenario, per transient mode."""
+    if _drn_mode():
+        return {
+            "chd_cells": state.chd_cells,
+            "ghb_cells": state.boundary_ghb or [],
+            "drn_cells": state.drn_cells,
+        }
+    return {
+        "chd_cells": state.chd_cells,
+        "ghb_cells": (state.boundary_ghb or []) + (state.ghb_cells or []),
+        "drain_ghb_cells": state.ghb_cells or [],
+    }
 
 
 def _linearise_drains(ss_head: np.ndarray) -> None:
@@ -767,10 +799,66 @@ def _build_wells_from_request(req: ScenarioRequest) -> list[dict]:
     raise HTTPException(400, f"unknown scenario_type: {req.scenario_type}")
 
 
+def _derive_additional_result(b_result):
+    """DRN mode: turn a directly-run Scenario B into a C-equivalent result.
+
+    s_additional = B − A (cached baseline) for receptors, bores, rasters
+    and the per-complex series, so every downstream consumer — which
+    computes total = A + additional — reproduces B exactly. Attribution is
+    the marginal impact of the change set given existing use, which is the
+    regulatory question. QA is restated in marginal terms: capture/dried
+    relative to the A baseline, boundary drawdown from the additional
+    field (does the *proposal's* impact reach the boundary).
+    """
+    import dataclasses
+
+    from ..superposition import subtract_receptor_tables
+
+    base = state.baseline
+
+    def _sub(b_df, a_df):
+        if b_df is None or a_df is None:
+            return b_df
+        return subtract_receptor_tables(b_df, a_df)
+
+    receptors = _sub(b_result.receptors_df, base.receptors_df)
+    bores = _sub(b_result.bores_df, base.bores_df)
+    rasters = {y: b_result.drawdown_at_output_years[y] - base.drawdown_by_year[y]
+               for y in b_result.drawdown_at_output_years
+               if y in base.drawdown_by_year}
+
+    series = b_result.complex_series_df
+    if base.complex_series_df is not None and len(base.complex_series_df) and len(series):
+        a = base.complex_series_df.rename(columns={"drawdown_m": "_a"})
+        series = series.merge(a, on=["complex_id", "time_days"], how="left").fillna({"_a": 0.0})
+        series["drawdown_m"] = series["drawdown_m"] - series["_a"]
+        series = series.drop(columns=["_a"])
+
+    last_y = max(rasters) if rasters else None
+    chd_max, noflow_max = (_boundary_drawdown_stats(rasters[last_y], state.grid, state.chd_cells)
+                           if last_y is not None else (0.0, 0.0))
+
+    return dataclasses.replace(
+        b_result,
+        receptors_df=receptors,
+        bores_df=bores,
+        drawdown_at_output_years=rasters,
+        complex_series_df=series,
+        chd_max_drawdown_m=chd_max,
+        noflow_max_drawdown_m=noflow_max,
+        n_drains_dried=max(0, b_result.n_drains_dried - (base.a_n_drains_dried or 0)),
+        drain_capture_m3d=b_result.drain_capture_m3d - (base.a_drain_capture_m3d or 0.0),
+    )
+
+
 def _execute_scenario(
     req: ScenarioRequest, job_id: str, progress=lambda msg: None,
 ) -> ScenarioResponse:
-    """Run Scenario C for `req` and assemble the full response.
+    """Run the per-request scenario and assemble the full response.
+
+    drn mode: Scenario B (existing + change set) directly, additional
+    derived as B − A. Legacy linearised mode: Scenario C alone, combined
+    with the cached A by superposition.
 
     Called from a job worker thread (holding state.run_lock). Raises
     ValueError for bad requests and RuntimeError for solver failures —
@@ -800,14 +888,15 @@ def _execute_scenario(
         nopump_twin = (state.baseline.nopump_times_days, state.baseline.nopump_heads)
 
     progress("running MODFLOW 6")
-    c_result = run_scenario(
-        state.cfg, state.grid, state.inputs, "C",
-        state.ic_head, workspace, chd_cells=state.chd_cells,
-        ghb_cells=(state.boundary_ghb or []) + (state.ghb_cells or []),
-        drain_ghb_cells=state.ghb_cells or [],
+    scen_key = "B" if _drn_mode() else "C"
+    raw_result = run_scenario(
+        state.cfg, state.grid, state.inputs, scen_key,
+        state.ic_head, workspace,
         proposed_wells=proposed_wells_xy_rate,
         nopump_twin=nopump_twin,
+        **_scenario_run_kwargs(),
     )
+    c_result = _derive_additional_result(raw_result) if scen_key == "B" else raw_result
     runtime = time.time() - t0
     progress("sampling receptors")
 
@@ -946,6 +1035,8 @@ def _execute_scenario(
         mass_balance_warning=c_result.max_pct_discrepancy >= MASS_BALANCE_WARN_PCT,
         n_drain_reversals=c_result.n_drain_reversals,
         drain_warning=c_result.n_drain_reversals > 0,
+        n_drains_dried=c_result.n_drains_dried,
+        drain_capture_ML_per_year=c_result.drain_capture_m3d * 365.25 / 1000.0,
     )
 
     return ScenarioResponse(

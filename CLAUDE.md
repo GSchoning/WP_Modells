@@ -36,14 +36,23 @@ regulatory threshold (default **0.4 m** — the water-bore trigger, NOT the
   **MODFLOW 6** driven from Python via **FloPy**. The grid, per-cell
   properties, boundaries, and stresses are all inherited from OGIA's UWIR
   2025 regional model (extracted by `scripts/extract_uwir2025.py`).
-- **Superposition** is exploited because the system is kept exactly linear
-  (confined `icelltype=0`, linearised outcrop storage, linear BCs only):
-  - Scenario **A**: all existing take → `s_approved` (cached baseline)
-  - Scenario **L**: licensed/entitlement take only (a subset of A) →
-    `s_licensed` (cached alongside A)
-  - Scenario **C**: the proposed change set only → `s_additional`
-    (the only per-request MF6 run)
-  - Scenario **B = A + C** → `s_total`, computed by addition, never re-run
+- **Cached baselines + one MF6 run per request.** Scenario **A** (all
+  existing take → `s_approved`) and Scenario **L** (licensed/entitlement
+  subset → `s_licensed`) are computed once per aquifer and cached. The
+  per-request run depends on `drains.transient_mode`:
+  - **`drn` (default)**: transients carry the parent model's rejected-
+    recharge drains as real MF6 **DRN** cells (head-dependent, shut off
+    below the drain elevation). The request runs Scenario **B** (existing
+    + change set) *directly* and `s_additional` is **derived as B − A** —
+    the marginal impact of the proposal given existing use. Exact drain
+    physics; no fictitious water at the outcrop. Superposition A + C = B
+    becomes a QA property that holds wherever no drain changes state
+    (`tests/test_drains_transient.py`).
+  - **`linearised_ghb` (legacy)**: flowing drains become fixed-head GHBs,
+    the system is exactly linear, the request runs Scenario **C** alone
+    and `s_total = A + C` by addition. Kept for comparability — it clamps
+    outcrop drawdown wherever pumping would dry a drain (the Gubberamunda
+    bug this mode replaced).
 - **Twin-run drawdown**: every scenario runs the same model with and
   without its wells, and drawdown is `s(t) = h_nopump(t) − h_pump(t)`.
   Anything common to both runs (IC, recharge, boundary effects, IC drift)
@@ -105,20 +114,22 @@ Bore classifications from the water-use table:
 └────────────────┘  └───────────────────┘  └──────────┬──────────┘
                                                       ▼
 ┌────────────────────┐  ┌──────────────────────────────────────┐
-│ Linearise flowing  │◀─│ Steady-state pre-run: no wells,      │
-│ drains → GHB       │  │ recharge + REAL DRN cells → IC head  │
-└─────────┬──────────┘  └──────────────────────────────────────┘
+│ Transient drains:  │◀─│ Steady-state pre-run: no wells,      │
+│ real DRN (default) │  │ recharge + REAL DRN cells → IC head  │
+│ or legacy GHB      │  └──────────────────────────────────────┘
+└─────────┬──────────┘
           ▼
 ┌──────────────────────────────────────────────┐
-│ Scenarios A, L (cached) and C (per request), │
-│ each as a TWIN RUN: s = h_nopump − h_pump    │
-│ (the no-pump twin is shared across scenarios)│
+│ Scenarios A, L (cached) and B (per request;  │
+│ C in legacy mode), each as a TWIN RUN:       │
+│ s = h_nopump − h_pump (twin shared/cached)   │
 └─────────────────────┬────────────────────────┘
                       ▼
 ┌──────────────────────────────────────────────┐
-│ Superposition: s_total = A + C; layers       │
-│ s_approved / s_licensed / s_additional /     │
-│ s_total per complex × year + rasters         │
+│ Layers: s_additional = B − A (drn mode) or   │
+│ s_total = A + C (legacy); s_approved /       │
+│ s_licensed / s_additional / s_total per      │
+│ complex × year + bores + rasters             │
 └─────────────────────┬────────────────────────┘
                       ▼
 ┌──────────────────────────────────────────────┐
@@ -162,8 +173,9 @@ Module responsibilities:
 ## 6. API + frontend
 
 - `POST /api/scenarios` — single / multi-well / trade change set → job id;
-  `GET /api/scenarios/jobs/{id}` polls. Only Scenario C runs MF6 (twice,
-  or once when the cached no-pump twin matches). Response: per-year
+  `GET /api/scenarios/jobs/{id}` polls. Only the per-request scenario runs
+  MF6 (B in drn mode, C in legacy; once when the cached no-pump twin
+  matches). Response: per-year
   per-complex `s_approved / s_licensed / s_additional / s_total`, threshold
   classifications (`already_exceeded`, `triggered_by_proposed`), a per-year
   `bores` list (drawdown at every in-domain receptor bore — report-only,
@@ -226,16 +238,21 @@ service mounts it for ad-hoc JupyterLab work).
 
 ## 8. Key technical notes & gotchas
 
-- **Twin-run drawdown is load-bearing.** The steady-state pre-run uses
-  real DRN cells while the transient runs use the linearised GHB form, so
-  `h_initial` is *not* the exact steady state of the transient system.
-  The `h_initial − h(t)` formula leaks that drift into drawdown;
-  `h_nopump(t) − h_pump(t)` cancels it. Do not "simplify" this away.
-- **Linearity / superposition.** Valid because K and Ss are head-independent,
-  every cell is `icelltype=0`, and all BCs are linear (WEL, RCHA, GHB, CHD).
+- **Twin-run drawdown is load-bearing.** `h_initial` is not guaranteed to
+  be the exact steady state of the transient system (legacy mode swaps
+  DRN → GHB between the pre-run and the transients; numerical drift and
+  fallback ICs exist in both modes). The `h_initial − h(t)` formula leaks
+  that drift into drawdown; `h_nopump(t) − h_pump(t)` cancels it. Do not
+  "simplify" this away.
+- **Linearity / superposition.** K and Ss are head-independent, every cell
+  is `icelltype=0`, and all BCs except DRN are linear (WEL, RCHA, GHB,
+  CHD). In legacy linearised mode the whole system is exactly linear and
   `tests/test_superposition.py` verifies `‖(A+C) − B‖` at solver precision
-  on a bare grid AND with the full machinery (outcrop Sy, recharge,
-  boundary GHBs, linearised drains) switched on.
+  with the full machinery on. In drn mode the DRN package is piecewise
+  linear: superposition holds wherever no drain changes state and the
+  direct B run is never *less* than A + C where drains dry
+  (`tests/test_drains_transient.py`) — which is why B is run directly and
+  never assembled by addition.
 - **Boundary placement** follows the UWIR 2025 parent-model design: every
   natural pinch-out edge is **no-flow** (the boundary audit showed the
   perimeter is a thin fringe — thickness p50 6–19 m vs 44 m interior), and
@@ -245,21 +262,24 @@ service mounts it for ad-hoc JupyterLab work).
   twin-differenced drawdown — only conductance matters — but it shapes the
   IC and drain states. Every run reports max boundary drawdown as a QA
   metric and the UI warns when it is non-trivial.
-- **Linearised unconfined outcrop.** True unconfined (`icelltype=1`) would
-  break superposition. Instead the parent model's two-part linearisation is
-  reproduced: (1) outcrop cells carry water-table-scale storage — the
-  properties CSV stores a *negative, dimensionless* Sy in the SS column,
-  decoded as `Ss = |SS|/thickness` so `Ss·b = Sy` exactly (treating it as
-  a 1/m value would inflate outcrop storage by the cell thickness); with
-  `assessment.outcrop_storage: "formation_sy"` all water-table cells carry
-  the formation-wide Sy (UWIR 2025 Table B.2-2). (2) Rejected recharge is
-  simulated with **drains at the parent model's calibrated RIV cells**
-  (stage == rbot ⇒ pure drain, via `drains.riv_cells_csv`); the
-  steady-state pre-run uses real DRN cells, the transient runs replace
-  flowing drains with fixed GHBs at the drain elevation so the system
-  stays exactly linear. `n_drain_reversals` reports cells where pumping
-  pulled the head below a drain elevation — where a real drain would have
-  shut off and the linearisation locally under-predicts drawdown.
+- **Outcrop treatment.** True unconfined (`icelltype=1`) is avoided; the
+  parent model's devices are reproduced instead: (1) outcrop cells carry
+  water-table-scale storage — the properties CSV stores a *negative,
+  dimensionless* Sy in the SS column, decoded as `Ss = |SS|/thickness` so
+  `Ss·b = Sy` exactly (treating it as a 1/m value would inflate outcrop
+  storage by the cell thickness); with `assessment.outcrop_storage:
+  "formation_sy"` all water-table cells carry the formation-wide Sy (UWIR
+  2025 Table B.2-2). (2) Rejected recharge is simulated with **drains at
+  the parent model's calibrated RIV cells** (stage == rbot ⇒ pure drain,
+  via `drains.riv_cells_csv`). In drn mode these are real DRN cells in
+  every run — head-dependent, shutting off when pumped below their
+  elevation, exactly like the parent model — and each scenario reports
+  `n_drains_dried` plus `drain_capture_m3d` (captured rejected-recharge /
+  spring-baseflow discharge, marginal B − A in the API). In legacy mode
+  flowing drains become fixed GHBs and `n_drain_reversals` flags where
+  that under-predicts drawdown; the Gubberamunda outcrop (drains on ~100%
+  of outcrop cells, C/T ≈ 600) showed this clamps drawdown to ~0 across
+  the outcrop — the reason drn mode is the default.
 - **Anchor GHBs.** With a closed no-flow perimeter, an active island with
   no head-dependent BC has a singular steady-state matrix (MF6 dies with a
   floating overflow). Each such component gets one deliberately weak

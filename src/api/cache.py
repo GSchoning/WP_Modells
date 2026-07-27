@@ -33,8 +33,9 @@ CACHE_DIR = Path("outputs/cache")
 # with calibrated pilot heads. v9 = cached licensed-take layer
 # (s_licensed) alongside the Scenario A baseline. v10 = drawdown sampled
 # at receptor water bores (bores_df / licensed_bores_df) cached alongside
-# the spring-complex tables.
-CACHE_SCHEMA_VERSION = "v10"
+# the spring-complex tables. v11 = real-DRN transients (drn transient
+# mode): baselines run with head-dependent drains + capture accounting.
+CACHE_SCHEMA_VERSION = "v11"
 
 
 @dataclass
@@ -56,6 +57,12 @@ class BaselineCache:
     # time_years / drawdown_m), same shape as the spring tables.
     bores_df: pd.DataFrame | None = None
     licensed_bores_df: pd.DataFrame | None = None
+    # DRN-mode capture accounting for the A baseline (persisted in the
+    # manifest): existing take alone dries this many drains / captures this
+    # much discharge. Per-request B runs subtract these to report the
+    # proposal's marginal capture.
+    a_n_drains_dried: int | None = None
+    a_drain_capture_m3d: float | None = None
 
 
 def _file_sha256(path: Path) -> str:
@@ -108,6 +115,7 @@ def baseline_key(cfg: Config, config_path: Path) -> str:
         f"rfall={cfg.inputs.recharge_fallback_m_per_day}",
         f"chdq={','.join(cfg.assessment.chd_quadrants or [])}",
         f"lic={sorted((cfg.inputs.water_use.licensed_filter or {}).items())}",
+        f"dtm={cfg.drains.transient_mode}",
     ]
     if cfg.inputs.springs is not None and Path(cfg.inputs.springs).exists():
         parts.append(_file_sha256(Path(cfg.inputs.springs)))
@@ -173,6 +181,7 @@ def load(key: str) -> BaselineCache | None:
         licensed_drawdown = {float(name.removeprefix("y")): lz[name] for name in lz.files}
     bores = pd.read_parquet(bores_p) if bores_p.exists() else None
     licensed_bores = pd.read_parquet(lic_bores_p) if lic_bores_p.exists() else None
+    manifest = json.loads(manifest_p.read_text())
     return BaselineCache(
         key=key, receptors_df=receptors, drawdown_by_year=drawdown,
         complex_series_df=series,
@@ -180,6 +189,8 @@ def load(key: str) -> BaselineCache | None:
         licensed_receptors_df=licensed_receptors,
         licensed_drawdown_by_year=licensed_drawdown,
         bores_df=bores, licensed_bores_df=licensed_bores,
+        a_n_drains_dried=manifest.get("a_n_drains_dried"),
+        a_drain_capture_m3d=manifest.get("a_drain_capture_m3d"),
     )
 
 
@@ -223,6 +234,8 @@ def save(cache: BaselineCache, cfg: Config, config_path: Path) -> None:
         "output_years": sorted(cache.drawdown_by_year.keys()),
         "n_series_complexes": int(cache.complex_series_df["complex_id"].nunique())
             if len(cache.complex_series_df) else 0,
+        "a_n_drains_dried": cache.a_n_drains_dried,
+        "a_drain_capture_m3d": cache.a_drain_capture_m3d,
     }
     manifest_p.write_text(json.dumps(manifest, indent=2))
 

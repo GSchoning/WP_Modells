@@ -133,9 +133,15 @@ class ScenarioQA(BaseModel):
     mass_balance_warning: bool = False
     # Linearised rejected-recharge drains that a real drain would have
     # shut off (head fell below drain elevation in the pumped run) —
-    # drawdown near those cells is under-predicted.
+    # drawdown near those cells is under-predicted. Legacy linearised_ghb
+    # mode only; always 0 (and no warning) with real DRN transients.
     n_drain_reversals: int = 0
     drain_warning: bool = False
+    # DRN mode: drains dried by the proposal (marginal vs the A baseline)
+    # and the proposal's captured rejected-recharge / spring-baseflow
+    # discharge. Physics information, not an error flag.
+    n_drains_dried: int = 0
+    drain_capture_ML_per_year: float = 0.0
 
 
 class ScenarioResponse(BaseModel):

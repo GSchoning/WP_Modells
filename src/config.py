@@ -103,10 +103,22 @@ class DrainsCfg(BaseModel):
     drains (stage == rbot) with calibrated stage and conductance.
     Fallback: drain elevation = minimum of the DEM within each outcrop
     cell, conductance estimated as K·A/b.
-    The steady state uses real DRN cells; the transient runs use the
-    linearised (GHB) form so superposition stays exact — see src/drains.py.
+    The steady state always uses real DRN cells; `transient_mode` decides
+    how the transient runs treat them — see src/drains.py.
     """
     enabled: bool = False
+    # How the transient runs represent the drains:
+    #   "drn"            — real MF6 DRN cells (head-dependent, shut off when
+    #                      the head drops below the drain elevation). The
+    #                      per-request scenario is then run as B (existing +
+    #                      change set) directly, with s_additional derived
+    #                      as B − A. Exact drain physics; superposition
+    #                      becomes a QA property rather than the mechanism.
+    #   "linearised_ghb" — legacy: flowing drains become fixed-head GHBs so
+    #                      the system is exactly linear (A + C = B), at the
+    #                      cost of fictitious water where pumping would dry
+    #                      a drain (clamped outcrop drawdown).
+    transient_mode: Literal["drn", "linearised_ghb"] = "drn"
     # Parent-model RIV export (ILAY, INODE, ICOL, IROW, X, Y, stage_m,
     # cond_m2_per_day, rbot_m). When set and present it supersedes the DEM.
     riv_cells_csv: Path | None = None

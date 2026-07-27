@@ -50,7 +50,16 @@ class ScenarioResult:
     # Linearised rejected-recharge drains whose head fell below the drain
     # elevation in the pumped run — where a real drain would have shut
     # off. Non-zero → drawdown near those cells is under-predicted.
+    # (Legacy linearised_ghb mode only; always 0 in drn mode.)
     n_drain_reversals: int = 0
+    # DRN mode: drains dried by this scenario's pumping (below elevation in
+    # the pumped run but not the no-pump twin, final time) and the total
+    # reduction in drain discharge — i.e. captured rejected-recharge /
+    # spring/baseflow discharge, in m³/day. Genuine physics, not an error
+    # metric: reported so the regulator can see how much of a proposal's
+    # take comes out of surface discharge.
+    n_drains_dried: int = 0
+    drain_capture_m3d: float = 0.0
 
 
 def _bores_to_wells(
@@ -245,10 +254,21 @@ def run_scenario(
     chd_cells=None,
     ghb_cells=None,
     drain_ghb_cells=None,
+    drn_cells=None,
     proposed_wells: list[tuple[float, float, float]] | None = None,
     nopump_twin: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> ScenarioResult:
-    """Run Scenario A (existing) or C (change set vs baseline) and sample receptors.
+    """Run a scenario and sample receptors.
+
+    Scenarios: "A" (all existing take), "L" (licensed subset), "C" (change
+    set only — legacy linearised mode), "B" (existing take + change set —
+    the per-request scenario in drn mode, where s_additional is derived
+    downstream as B − A).
+
+    `drn_cells`: real MF6 DRN cells for both twins (drains.transient_mode
+    = "drn"). Mutually intended with `ghb_cells` carrying only far-field
+    boundary GHBs; in the legacy mode the linearised drains ride in
+    `ghb_cells` and `drn_cells` is None.
 
     For Scenario C, `proposed_wells` is a list of (x, y, rate_ML_per_year)
     tuples. Positive rate = new extraction; negative rate = removed extraction
@@ -271,17 +291,17 @@ def run_scenario(
         # a subset of the same wells — so it composes linearly and
         # s_licensed <= s_approved everywhere.
         wells, _accepted, _rejected = _bores_to_wells(inputs.licensed_bores, grid)
-    elif scenario == "C":
+    elif scenario in ("C", "B"):
         if proposed_wells is None:
             pb = cfg.inputs.proposed_bore
             if pb.x is None or pb.y is None or pb.rate_ML_per_year is None:
                 raise ValueError(
-                    "Scenario C requires either `proposed_wells` or "
+                    f"Scenario {scenario} requires either `proposed_wells` or "
                     "cfg.inputs.proposed_bore.{x,y,rate_ML_per_year}"
                 )
             proposed_wells = [(float(pb.x), float(pb.y), float(pb.rate_ML_per_year))]
         if not proposed_wells:
-            raise ValueError("Scenario C: proposed_wells list is empty")
+            raise ValueError(f"Scenario {scenario}: proposed_wells list is empty")
         wells = []
         for x, y, rate_ml in proposed_wells:
             rc = cell_of(grid, float(x), float(y))
@@ -289,6 +309,12 @@ def run_scenario(
                 raise ValueError(f"Proposed well at ({x:.0f}, {y:.0f}) falls outside the active domain.")
             rate_m3d = float(rate_ml) * ML_PER_YEAR_TO_M3_PER_DAY
             wells.append((0, rc[0], rc[1], -rate_m3d))
+        if scenario == "B":
+            # Combined scenario: the change set ON TOP of all existing take.
+            # Run directly (not by superposition) so head-dependent drains
+            # respond to the true total stress.
+            existing, _acc, _rej = _bores_to_wells(inputs.pumping_bores, grid)
+            wells = existing + wells
     else:
         raise ValueError(f"unknown scenario: {scenario}")
 
@@ -311,6 +337,7 @@ def run_scenario(
         perioddata=perioddata,
         chd_cells=chd_cells,
         ghb_cells=ghb_cells,
+        drn_cells=drn_cells,
         recharge=True,
         complexity=cfg.solver.complexity,
         recharge_multiplier=cfg.assessment.recharge_multiplier,
@@ -335,6 +362,7 @@ def run_scenario(
             perioddata=perioddata,
             chd_cells=chd_cells,
             ghb_cells=ghb_cells,
+            drn_cells=drn_cells,
             recharge=True,
             complexity=cfg.solver.complexity,
             recharge_multiplier=cfg.assessment.recharge_multiplier,
@@ -354,12 +382,29 @@ def run_scenario(
     # Drain-reversal QA runs only over the *linearised drain* GHBs — a
     # far-field boundary GHB supplying water under drawdown is correct
     # behaviour, not a linearisation error. Callers that mix boundary
-    # GHBs into ghb_cells pass the drain subset separately.
-    reversal_cells = drain_ghb_cells if drain_ghb_cells is not None else ghb_cells
+    # GHBs into ghb_cells pass the drain subset separately. Not meaningful
+    # in drn mode (real drains cannot reverse).
     n_reversals = 0
-    if reversal_cells:
-        from .drains import count_reversals
-        n_reversals = count_reversals(list(reversal_cells), heads[-1])
+    if drn_cells is None:
+        reversal_cells = drain_ghb_cells if drain_ghb_cells is not None else ghb_cells
+        if reversal_cells:
+            from .drains import count_reversals
+            n_reversals = count_reversals(list(reversal_cells), heads[-1])
+
+    # DRN mode QA: drains dried by this scenario's pumping, and the total
+    # reduction in drain discharge (captured rejected recharge / spring and
+    # baseflow discharge) at the final time.
+    n_dried = 0
+    capture_m3d = 0.0
+    if drn_cells:
+        h_p_final = heads[-1]
+        h_np_final = heads_nopump[-1]
+        for (_l, r, c, elev, cond) in drn_cells:
+            d_np = cond * max(float(h_np_final[r, c]) - elev, 0.0)
+            d_p = cond * max(float(h_p_final[r, c]) - elev, 0.0)
+            capture_m3d += d_np - d_p
+            if d_np > 0.0 and float(h_p_final[r, c]) < elev - 1e-3:
+                n_dried += 1
 
     # Sample drawdown at every member spring, then aggregate to complex
     # taking the max — the regulatory unit of analysis is the complex,
@@ -438,6 +483,8 @@ def run_scenario(
         chd_max_drawdown_m=chd_max_dd,
         noflow_max_drawdown_m=noflow_max_dd,
         n_drain_reversals=n_reversals,
+        n_drains_dried=n_dried,
+        drain_capture_m3d=capture_m3d,
     )
 
 

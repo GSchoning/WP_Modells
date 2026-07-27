@@ -38,11 +38,11 @@ The benefits described in this paper are therefore realised by combining two pro
 
 Each aquifer is represented as a single-layer MODFLOW 6 model (Langevin et al 2017) whose grid, hydraulic properties, recharge, boundary conditions and spring-discharge cells are extracted directly from OGIA's UWIR 2025 regional model. Although that model was built for CSG impact assessment, it simulates non-CSG abstraction as part of the same system, so its calibrated representation transfers naturally to the licensing problem; the single-layer reconstruction is what removes its run-time barrier. The tool does not introduce a new conceptualisation and it has not been separately calibrated; it carries the regional model's calibrated parameters into a faster, single-aquifer frame. Impact predictions are therefore traceable to the same calibrated property fields that support the UWIR, which is the principal basis of the tool's defensibility.
 
-### 3.2  Scenario design and superposition
+### 3.2  Scenario design
 
-The model is kept strictly linear: cells are confined-equivalent, and all boundary conditions are linear. Drawdowns from separate stresses therefore add, and the tool exploits this directly. The baseline scenarios, comprising all existing extraction (scenario A) and the licensed entitlement subset of that extraction (scenario L), are computed once per aquifer and cached. Only the proposed change (scenario C) is modelled per assessment, and the total impact is obtained by addition rather than by re-modelling. An assessment consequently costs one small model run, completing in minutes, and the applicant's contribution is isolated exactly rather than estimated by differencing near-equal totals.
+The baseline scenarios, comprising all existing extraction (scenario A) and the licensed entitlement subset of that extraction (scenario L), are computed once per aquifer and cached, together with a no-pumping twin of the same model. Each assessment then costs a single model run: the combined scenario, comprising existing extraction plus the proposed change, is modelled directly against the cached twin, and the applicant's contribution is reported as the difference between the combined and baseline results. This attribution is the marginal impact of the application given all existing use, which is the question the assessment is required to answer. Results return in minutes.
 
-The linearity on which this relies is verified rather than assumed. The automated test suite runs a directly modelled combined scenario and confirms that it matches the sum of the separately modelled scenarios to solver precision, with differences of the order of 10-9 m, and that the residual does not grow as pumping rates are scaled (section 5).
+The near-linearity that this design exploits is verified rather than assumed. For the linear configuration the automated test suite confirms that a directly modelled combined scenario matches the sum of separately modelled scenarios to solver precision, with differences of the order of 10-9 m. Where the head-dependent spring discharge described in section 3.4 responds to pumping, the combined scenario is deliberately modelled directly, because simple addition of separate runs would understate the impact there (section 5).
 
 ### 3.3  Twin-run drawdown
 
@@ -50,7 +50,7 @@ Every scenario is evaluated as the difference between two otherwise identical mo
 
 ### 3.4  Representation of the outcrop and springs
 
-A conventional unconfined treatment of the outcrop would make the model non-linear and invalidate superposition. The tool instead reproduces the parent model's linearisation: outcrop cells carry water-table-scale storage, and spring discharge and rejected recharge are represented at the parent model's calibrated drain cells. The linearisation can locally under-predict drawdown where sustained pumping would lower heads below a drain that a real system would have shut off; rather than leaving that assumption silent, every run counts and reports such cells as a quality metric, and the interface warns when the count is non-zero.
+Outcrop cells carry water-table-scale storage, and spring discharge and rejected recharge are represented at the parent model's calibrated drain cells as head-dependent drains, exactly as in the parent model: a drain discharges in proportion to the head above its elevation and shuts off when pumping draws the head below it. A proposed bore near the outcrop therefore first captures local spring and baseflow discharge, and drawdown grows once that discharge is exhausted, which is the physically expected sequence. Every assessment reports the number of drain cells the proposal dries and the volume of surface discharge it captures, in ML/year, so the depletion of spring flow and baseflow is quantified alongside drawdown rather than left implicit.
 
 ### 3.5  Impact layers and threshold classification
 
@@ -85,7 +85,7 @@ In the proof of concept the register is a record of decisions rather than an inp
 
 ## 5  Verification
 
-The tool carries an automated test suite of 30 tests that runs on every change. Superposition is verified against a directly modelled combined scenario, both on an idealised model and with the full boundary and storage machinery active, with agreement at solver precision. The numerical engine is verified against the Theis analytical solution for a single bore in a uniform aquifer. End-to-end pipeline tests run on a synthetic case. The engine is MODFLOW 6 (currently version 6.7.0), a United States Geological Survey code in wide international use, invoked unmodified through the FloPy interface (Bakker et al 2016).
+The tool carries an automated test suite of 32 tests that runs on every change. Superposition is verified against a directly modelled combined scenario for the linear configuration, both on an idealised model and with the full boundary and storage machinery active, with agreement at solver precision. A dedicated regression test reproduces the spring-discharge behaviour at the outcrop: a bore pumped inside a drain field must first capture the local discharge and then develop a growing cone of depression, and the directly modelled combined scenario is confirmed to never understate impact relative to the added parts. The numerical engine is verified against the Theis analytical solution for a single bore in a uniform aquifer. End-to-end pipeline tests run on a synthetic case. The engine is MODFLOW 6 (currently version 6.7.0), a United States Geological Survey code in wide international use, invoked unmodified through the FloPy interface (Bakker et al 2016).
 
 ## 6  Current scope and limitations
 
@@ -93,7 +93,7 @@ The following bounds the proof of concept and indicates where it is and is not a
 
 - Single-layer modules. Each aquifer is modelled alone and inter-aquifer leakage through aquitards is not represented. For assessments where vertical connectivity is material, the regional model remains the appropriate instrument.
 - Inherited calibration. The tool carries OGIA's calibrated properties but has not itself been history-matched; predictions should be read as consistent-with-UWIR estimates rather than as an independent calibration.
-- Linearisation limits. The confined linearised treatment is exact for superposition but approximate for large water-table declines in the outcrop; the per-run reversal metric flags where this matters, and refinement can be investigated as usage patterns emerge.
+- Outcrop storage approximation. Water-table storage in the outcrop is represented with a fixed specific yield rather than a full unconfined treatment; this is the parent model's own approximation and is appropriate at the drawdowns of regulatory interest, but very large water-table declines would be less well represented. Spring discharge itself is treated without approximation (head-dependent drains, section 3.4).
 - Near-bore accuracy. Drawdown within about two grid cells (about 3 km) of a pumped bore is mesh-dependent; affected receptors are flagged in results, with the Theis estimate as the cross-check.
 - Water-use data vintage. The extraction dataset is the 2024 OGIA dataset and carries no licence commencement dates, so take cannot be filtered by approval date; licensed take is defined by authority number and use class.
 - Constant-rate scenarios. Extraction is modelled as constant over the assessment period, the standard conservative licensing assumption; time-varying regimes are not yet supported.
@@ -111,7 +111,7 @@ The following bounds the proof of concept and indicates where it is and is not a
 ## 8  Conclusions
 
 - A working proof of concept demonstrates that licence-application impact assessment can be performed at interactive speed while remaining consistent with OGIA's calibrated regional modelling. The combination of a fast-running tool with a calibrated model is what realises the benefits, and is a significant improvement over the superposition of Theis solutions currently used to support assessments.
-- Superposition with cached baselines isolates the applicant's contribution exactly and reduces an assessment to one small model run; the linearity this relies on is verified to solver precision, not assumed.
+- Cached baselines and twin runs reduce an assessment to one model run, with the applicant's contribution reported as the marginal impact over existing use; spring and baseflow discharge responds to pumping exactly as in the parent model, and the volume a proposal captures is itself reported in ML/year.
 - Impacts are reported in four layers so that approved, licensed and proposed contributions are visible separately, and threshold exceedances are attributed to the correct cause.
 - Every result and decision carries reproducible provenance, supporting the defensibility of decisions informed by the tool.
 - Known limitations are bounded and reported by the tool itself; the suggested next steps (section 7) address them in order of consequence.

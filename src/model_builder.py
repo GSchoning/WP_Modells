@@ -180,15 +180,22 @@ def build_transient(
     perioddata: list[tuple[float, int, float]],
     chd_cells: Sequence[ChdRecord] | None = None,
     ghb_cells: Sequence[GhbRecord] | None = None,
+    drn_cells: Sequence[DrnRecord] | None = None,
     recharge: bool = True,
     complexity: str = "MODERATE",
     recharge_multiplier: float = 1.0,
 ) -> MFSimulation:
     """One transient stress period, with wells, optionally recharge + CHD.
 
-    `ghb_cells`: linearised rejected-recharge drains (drains flowing at
-    steady state, fixed at their drain elevation). Linear boundary, so
-    superposition across scenarios remains exact.
+    Rejected-recharge drains come in one of two forms:
+    - `drn_cells`: real MF6 DRN cells (head-dependent discharge, shuts off
+      below the drain elevation, re-evaluated every timestep). Piecewise
+      linear, so exact A + C = B superposition no longer holds — the
+      caller runs the combined scenario directly instead.
+    - `ghb_cells` (legacy path): drains flowing at steady state fixed at
+      their elevation as GHBs. Exactly linear, but supplies fictitious
+      water wherever pumping would dry a drain.
+    Far-field boundary GHBs ride in `ghb_cells` in both modes.
     """
     sim, gwf = _make_sim(workspace, name, perioddata=perioddata, complexity=complexity)
     _add_dis(gwf, grid)
@@ -199,6 +206,7 @@ def build_transient(
         _add_rch(gwf, grid, multiplier=recharge_multiplier)
     _add_chd(gwf, chd_cells or [])
     _add_ghb(gwf, ghb_cells or [])
+    _add_drn(gwf, drn_cells or [])
     _add_wel(gwf, list(wells))
     _add_oc(gwf, name, n_periods=len(perioddata))
     return sim

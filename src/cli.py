@@ -191,24 +191,36 @@ def run(
         typer.echo(f"  Falling back to uniform initial head = {mean_top:.1f} m (mean of active top).")
         ic_head = np.full_like(grid.top, mean_top)
 
-    # Linearise flowing drains into GHBs for the transient runs.
+    # Transient drain treatment per drains.transient_mode: real DRN cells
+    # (default — head-dependent, shut off below elevation; the combined
+    # scenario B is run directly), or the legacy linearised-GHB form.
+    drn_mode = bool(drn_cells) and cfg.drains.transient_mode == "drn"
     ghb_cells = []
-    if drn_cells:
+    if drn_cells and not drn_mode:
         from .drains import linearise_drains
         ghb_cells = linearise_drains(drn_cells, ic_head)
         typer.echo(f"  {len(ghb_cells)} of {len(drn_cells)} drains flowing at steady state → GHB.")
+    if drn_mode:
+        run_kwargs = dict(chd_cells=chd_cells, ghb_cells=boundary_ghb, drn_cells=drn_cells)
+        typer.echo("  transient drains: real DRN (head-dependent); per-request scenario is B, "
+                   "s_additional = B − A.")
+    else:
+        run_kwargs = dict(chd_cells=chd_cells, ghb_cells=boundary_ghb + ghb_cells,
+                          drain_ghb_cells=ghb_cells)
+
+    # In drn mode the change-set scenario is run combined (B) instead of
+    # alone (C); the additional layer is derived after the loop.
+    scenario_list = [("B" if s == "C" and drn_mode else s) for s in cfg.run.scenarios]
 
     results = {}
     nopump_twin = None
-    for scen in cfg.run.scenarios:
+    for scen in scenario_list:
         typer.echo(f"\nRunning Scenario {scen}…")
         try:
             results[scen] = run_scenario(
                 cfg, grid, inputs, scen, ic_head, workspace_root / f"scen_{scen}",
-                chd_cells=chd_cells,
-                ghb_cells=boundary_ghb + ghb_cells,
-                drain_ghb_cells=ghb_cells,
                 nopump_twin=nopump_twin,
+                **run_kwargs,
             )
             # The no-pump twin is scenario-independent — reuse it so the
             # remaining scenarios only run MF6 once each.
@@ -231,6 +243,38 @@ def run(
                 typer.echo(f"  receptor bores sampled: {n_bores} → {bores_csv}")
         except (RuntimeError, ValueError) as exc:
             typer.echo(f"  Scenario {scen} skipped: {exc}")
+
+    # drn mode: derive the additional layer C = B − A so everything
+    # downstream (superposition combine, figures, report) is unchanged and
+    # reproduces total = A + (B − A) = B exactly.
+    if drn_mode and "B" in results and "A" in results:
+        import dataclasses
+        from .superposition import subtract_receptor_tables
+        a_res, b_res = results["A"], results["B"]
+        rasters = {y: b_res.drawdown_at_output_years[y] - a_res.drawdown_at_output_years[y]
+                   for y in b_res.drawdown_at_output_years
+                   if y in a_res.drawdown_at_output_years}
+        series = b_res.complex_series_df
+        if len(series) and len(a_res.complex_series_df):
+            _a = a_res.complex_series_df.rename(columns={"drawdown_m": "_a"})
+            series = series.merge(_a, on=["complex_id", "time_days"], how="left").fillna({"_a": 0.0})
+            series["drawdown_m"] = series["drawdown_m"] - series["_a"]
+            series = series.drop(columns=["_a"])
+        results["C"] = dataclasses.replace(
+            b_res,
+            receptors_df=subtract_receptor_tables(b_res.receptors_df, a_res.receptors_df),
+            bores_df=(subtract_receptor_tables(b_res.bores_df, a_res.bores_df)
+                      if b_res.bores_df is not None and a_res.bores_df is not None
+                      else b_res.bores_df),
+            drawdown_at_output_years=rasters,
+            complex_series_df=series,
+            n_drains_dried=max(0, b_res.n_drains_dried - a_res.n_drains_dried),
+            drain_capture_m3d=b_res.drain_capture_m3d - a_res.drain_capture_m3d,
+        )
+        cap_ml = results["C"].drain_capture_m3d * 365.25 / 1000.0
+        typer.echo(f"\nDerived additional layer (B − A). Proposal dries "
+                   f"{results['C'].n_drains_dried} drain cell(s), captures "
+                   f"{cap_ml:,.0f} ML/yr of rejected-recharge discharge.")
 
     combined = None
     combined_bores = None
