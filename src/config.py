@@ -159,21 +159,22 @@ class AssessmentCfg(BaseModel):
     theis_T_m2_per_day: float | None = None
     theis_S: float | None = None
     # Storage formulation for the transient runs:
-    #   - "static" (legacy): every cell keeps its assigned storage forever
-    #     (iconvert=0). Outcrop cells fake water-table yield via the
-    #     Ss = Sy/b decode; confined cells keep elastic Ss even when
-    #     pumping pulls head below the cell top — which over-predicts
-    #     drawdown wherever depressurisation would really convert the
-    #     cell to unconfined (storage jumps ~100x at conversion).
-    #   - "convertible": MF6 STO iconvert=1 with sy = formation outcrop
-    #     Sy, matching the parent model's Ss<->Sy switching. Verified:
-    #     conversion keys off head vs cell top even with icelltype=0, so
-    #     transmissivity stays constant (no Newton, no dry cells) and the
-    #     flow terms stay linear — only storage becomes piecewise. In this
-    #     mode water-table-marked cells carry a real elastic Ss (not the
-    #     Sy/b decode) so the mixed formulation doesn't double-count.
+    #   - "convertible" (default): MF6 STO iconvert=1 with sy = formation
+    #     outcrop Sy, matching the parent model's Ss<->Sy switching.
+    #     Verified: conversion keys off head vs cell top even with
+    #     icelltype=0, so transmissivity stays constant (no Newton, no dry
+    #     cells) and the flow terms stay linear — only storage becomes
+    #     piecewise. Water-table-marked cells carry a real elastic Ss (not
+    #     the Sy/b decode) so the mixed formulation doesn't double-count.
     #     Identical to "static" wherever heads stay above cell tops.
-    storage_mode: Literal["static", "convertible"] = "static"
+    #   - "static" (legacy): every cell keeps its assigned storage forever
+    #     (iconvert=0). Confined cells keep elastic Ss even when pumping
+    #     pulls head below the cell top, over-predicting drawdown wherever
+    #     depressurisation would really convert the cell to unconfined
+    #     (storage jumps ~100x at conversion). Kept for comparability —
+    #     measured on the Precipice A baseline @100 yr it inflates mean
+    #     drawdown 16.7 -> 24.0 m and the p90 26.7 -> 72.4 m.
+    storage_mode: Literal["static", "convertible"] = "convertible"
     # Sensitivity-analysis knob: scales the rch array uniformly. Default
     # 1.0 = use the calibrated values from the properties CSV. 0.5 halves
     # recharge, 2.0 doubles it. Drawdown is theoretically invariant under

@@ -290,13 +290,16 @@ service mounts it for ad-hoc JupyterLab work).
   the outcrop — the reason drn mode is the default.
 - **Storage conversion** (`assessment.storage_mode`). The parent model
   switches cell storage Ss ↔ Sy as heads cross the cell top
-  (desaturation). `"static"` (legacy) never converts: confined cells keep
-  elastic Ss even when pumped below their top, over-predicting drawdown
-  wherever depressurisation would really unconfine a cell.
-  `"convertible"` sets STO `iconvert=1` with `sy` = the formation outcrop
-  Sy; MF6's conversion keys off head vs cell top **even with
-  `icelltype=0`** (verified against a Newton true-unconfined run), so T
-  stays constant and no Newton/dry-cell machinery is needed. Two traps:
+  (desaturation). `"convertible"` (default) reproduces that: STO
+  `iconvert=1` with `sy` = the formation outcrop Sy; MF6's conversion
+  keys off head vs cell top **even with `icelltype=0`** (verified against
+  a Newton true-unconfined run), so T stays constant and no
+  Newton/dry-cell machinery is needed. `"static"` (legacy, kept for
+  comparability + runtime-switchable via `/api/model-settings`) never
+  converts: confined cells keep elastic Ss even when pumped below their
+  top, over-predicting drawdown wherever depressurisation would really
+  unconfine a cell (Precipice A baseline @100 yr: mean 24.0 m static vs
+  16.7 m convertible). Two traps:
   (1) water-table-marked cells must swap their `Ss = Sy/b` decode for a
   real elastic Ss (`grid.ss_elastic`) or the mixed formulation counts the
   yield twice; (2) the convertible outer (Picard) loop does real work, so
