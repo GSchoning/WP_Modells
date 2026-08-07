@@ -225,6 +225,42 @@ class ProjectCfg(BaseModel):
     crs: str
 
 
+class LeakageCfg(BaseModel):
+    """Quasi-3D vertical leakage through the confining bed (Hantush).
+
+    Every active cell gets a head-dependent leakage boundary (GHB) whose
+    source head is the overlying layer's steady-state head and whose
+    conductance is C = (Kv/b') · cell area. This is the missing vertical
+    supply term of the single-layer reconstruction: without it the model
+    is a closed container and late-time drawdown grows linearly forever.
+
+    Properties worth knowing:
+      - The SOURCE HEAD cancels in twin-run drawdown (linear GHB); it
+        shapes the steady-state IC — lifting it toward the parent-model
+        surface — and thereby the drain states and conversion margins.
+      - The CONDUCTANCE is what flattens the drawdown curves.
+      - Hantush assumption: the source layer does not draw down, so late-
+        time drawdown is slightly under-predicted relative to full 3D.
+    """
+    enabled: bool = False
+    # Per-cell source heads: CSV with X, Y and a head column (the
+    # extraction's predev_heads.csv / adjacent_L*_heads.csv schema —
+    # INODE,X,Y[,ILAY],head_predev_m). Cells are matched by X/Y cell
+    # centre, so the file may come from ANY layer: use the overlying
+    # layer's heads when extracted; the aquifer's own pre-development
+    # heads are a serviceable interim (pre-development vertical gradients
+    # are small next to the ~100 m IC errors this corrects).
+    source_heads_csv: Path | None = None
+    head_col: str = "head_predev_m"
+    # Aquitard vertical conductance per unit area, Kv/b' (1/day).
+    # C = kv_over_b · dx·dy per cell. INTERIM: a single formation-wide
+    # sensitivity value until the parent-model Kv arrays are extracted.
+    kv_over_b_per_day: float | None = None
+    conductance_scale: float = 1.0
+    # Cells with no source-head coverage (outside the file's footprint)
+    # simply get no leakage boundary.
+
+
 class Config(BaseModel):
     project: ProjectCfg
     inputs: InputsCfg
@@ -235,6 +271,7 @@ class Config(BaseModel):
     run: RunCfg = RunCfg()
     assessment: AssessmentCfg = AssessmentCfg()
     drains: DrainsCfg = DrainsCfg()
+    leakage: LeakageCfg = LeakageCfg()
 
 
 def load_config(path: str | Path) -> Config:

@@ -110,6 +110,12 @@ assessment:
   storage_mode: "convertible"     # Ss<->Sy switching, as in the parent model (see config.yaml)
   chd_quadrants: ["NW", "SE"]
 
+# Vertical leakage (Hantush) — see config.yaml for the full notes.
+# Interim source: Data/Gubberamunda/predev_heads.csv; overlying-layer
+# heads (adjacent_L6_heads.csv) arrive with the extraction extras.
+leakage:
+  enabled: false
+
 drains:
   enabled: true
   # Calibrated surficial-drain stages/conductances from the parent model's

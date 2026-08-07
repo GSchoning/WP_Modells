@@ -163,16 +163,24 @@ def run(
         except Exception as exc:
             typer.echo(f"  drains disabled — failed to build: {exc}")
 
+    # Quasi-3D vertical leakage (Hantush): per-cell GHBs riding in the
+    # steady state and both transient twins. Disabled → [].
+    from .leakage import leakage_ghb_cells
+    leak, leak_desc = leakage_ghb_cells(cfg, grid)
+    if leak:
+        typer.echo(f"Vertical leakage: {leak_desc}.")
+
     # Weak anchors for active islands that carry no BC — without them the
     # closed-perimeter steady state is singular (see anchor_ghb_cells).
     from .model_builder import anchor_ghb_cells
     bc_cells = {(rec[1], rec[2]) for rec in chd_cells}
     bc_cells |= {(rec[1], rec[2]) for rec in boundary_ghb}
     bc_cells |= {(rec[1], rec[2]) for rec in drn_cells}
+    bc_cells |= {(rec[1], rec[2]) for rec in leak}
     anchors = anchor_ghb_cells(grid, bc_cells)
     if anchors:
         typer.echo(f"  {len(anchors)} weak anchor GHBs for BC-less active islands.")
-    boundary_ghb = list(boundary_ghb) + anchors
+    boundary_ghb = list(boundary_ghb) + anchors + leak
 
     typer.echo("Running steady-state pre-run (no pumping, recharge on)…")
     try:

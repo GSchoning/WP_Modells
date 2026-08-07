@@ -118,6 +118,13 @@ def baseline_key(cfg: Config, config_path: Path) -> str:
         f"dtm={cfg.drains.transient_mode}",
         f"stor={cfg.assessment.storage_mode}",
     ]
+    # Vertical leakage changes every number a baseline produces: key on
+    # the knobs AND the source-head file content.
+    if cfg.leakage.enabled:
+        parts.append(f"leak={cfg.leakage.kv_over_b_per_day:.6g}"
+                     f"x{cfg.leakage.conductance_scale:.6g}|{cfg.leakage.head_col}")
+        if cfg.leakage.source_heads_csv and Path(cfg.leakage.source_heads_csv).exists():
+            parts.append(_file_sha256(Path(cfg.leakage.source_heads_csv)))
     if cfg.inputs.springs is not None and Path(cfg.inputs.springs).exists():
         parts.append(_file_sha256(Path(cfg.inputs.springs)))
     if cfg.inputs.springs_attr_filter:

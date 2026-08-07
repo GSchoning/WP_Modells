@@ -306,7 +306,18 @@ service mounts it for ad-hoc JupyterLab work).
   `_make_sim` tightens `outer_dvclose` to 1e-6 — the complexity presets'
   loose value silently leaked ~21% of the budget on a stiff test.
   `tests/test_storage_conversion.py` pins all of this.
-- **Anchor GHBs.** With a closed no-flow perimeter, an active island with
+- **Vertical leakage** (`leakage.*`, default off). The single-layer model
+  has no vertical exchange — a closed container whose late-time drawdown
+  grows linearly forever (measured ~0.10–0.12 m/yr at the top Precipice
+  complexes even with convertible storage). The Hantush device restores
+  it: per-cell GHBs with source head from a steady-state head export
+  (`predev_heads.csv` interim; overlying-layer `adjacent_L*_heads.csv`
+  once extracted) and C = (Kv/b′)·cell area, riding in the SS pre-run and
+  both twins. The source head cancels in twin-run drawdown — it lifts the
+  IC toward the parent surface (fixing drain headroom and the below-base
+  fringe); the conductance is what flattens the curves. Off until a
+  defensible Kv/b′ exists (`tests/test_leakage.py` pins the flattening
+  and the head-cancellation properties).
   no head-dependent BC has a singular steady-state matrix (MF6 dies with a
   floating overflow). Each such component gets one deliberately weak
   (1 m²/d) GHB at its highest cell — defines the datum, exchanges

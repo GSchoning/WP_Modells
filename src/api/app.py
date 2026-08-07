@@ -121,6 +121,7 @@ class _State:
     drn_cells: list | None = None                     # outcrop drains (steady state)
     ghb_cells: list | None = None                     # linearised drains (transient)
     boundary_ghb: list | None = None                  # truncation-face far-field GHBs
+    leakage_ghb: list | None = None                   # quasi-3D vertical leakage (Hantush)
     workspace_root: Path | None = None
     baseline: cache_mod.BaselineCache | None = None
     complex_centroids_4326: dict | None = None      # GeoJSON FeatureCollection
@@ -327,6 +328,16 @@ def _bootstrap_ic() -> None:
     chd_unfiltered = active_boundary_chd_cells(grid)
     ghb_ws, ghb_source = boundary_ghb_for_config(state.cfg, grid)
 
+    # Quasi-3D vertical leakage (Hantush): per-cell GHBs riding in every
+    # run — steady state (shapes the IC toward the parent surface) and
+    # both transient twins (the vertical supply term). Configured-but-
+    # broken setups raise; disabled just yields [].
+    from ..leakage import leakage_ghb_cells
+    leak, leak_desc = leakage_ghb_cells(state.cfg, grid)
+    state.leakage_ghb = leak
+    if leak:
+        print(f"[leakage] {leak_desc}")
+
     # Attempt ladder ordered by the configured boundary mode. The boundary
     # audit showed the perimeter is almost entirely a thin pinch-out fringe,
     # and UWIR 2019 Fig A1-14 places GHBs only on the W/S truncation faces —
@@ -359,11 +370,12 @@ def _bootstrap_ic() -> None:
         bc_cells = {(rec[1], rec[2]) for rec in chd}
         bc_cells |= {(rec[1], rec[2]) for rec in bghb}
         bc_cells |= {(rec[1], rec[2]) for rec in drn_cells}
+        bc_cells |= {(rec[1], rec[2]) for rec in leak}
         anchors = anchor_ghb_cells(grid, bc_cells)
         if anchors:
             print(f"[boundary] {len(anchors)} weak anchor GHBs added for "
                   f"BC-less active islands")
-        bghb_eff = list(bghb) + anchors
+        bghb_eff = list(bghb) + anchors + leak
         try:
             ic = run_steady_state(state.cfg, grid, workspace, chd_cells=chd,
                                   drn_cells=drn_cells, ghb_cells=bghb_eff)
@@ -388,7 +400,7 @@ def _bootstrap_ic() -> None:
     state.ic_head = np.full_like(grid.top, mean_top)
     # Use the safer (all-edges) CHD with the uniform IC.
     state.chd_cells = chd_unfiltered
-    state.boundary_ghb = []
+    state.boundary_ghb = list(leak)
     _linearise_drains(state.ic_head)
 
 
