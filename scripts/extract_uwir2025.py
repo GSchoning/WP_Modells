@@ -25,6 +25,17 @@ Conventions verified against the model files / Precipice export:
       - (cell midpoint elevation).
     - Grid: 1500 m, GDA94 / MGA zone 55 (EPSG:28355), IROW 1 = north.
 
+After the validated core export, a best-effort "benchmark / leakage extras"
+pass pulls what the screening tool needs to TEST itself against the parent
+model (each item skips loudly if its source file is absent):
+    stress_periods.csv + wel_history.csv - the parent's staged pumping
+        schedule per aquifer (benchmarks the all-on-at-once assumption)
+    wel_sp_totals.csv / layer_catalogue.csv - shared context (Data/UWIR2025_shared/)
+    adjacent_L*_properties/heads(+sy/kz).csv - sandwich layers for a
+        quasi-3D leakage term through the confining beds
+    parent_heads.npz - the base run's binary heads at the aquifer's nodes,
+        if a *.hds output is on the share (the direct drawdown benchmark)
+
 Run (no arguments; paths are constants below):
     conda run -n OGIApy python scripts/extract_uwir2025.py
 """
@@ -58,6 +69,12 @@ RIV_FILE = MODEL_DIR / "UWIRGen5_usg_TR_Pred.riv"
 
 PRECIPICE_PROPS = DATA_DIR / "Properties_recharge" / "properties.csv"
 PRECIPICE_RCH = DATA_DIR / "Properties_recharge" / "Precipice_L24_SS_recharge.csv"
+
+# --- benchmark / leakage extras (best-effort; each guarded in main) --------
+WEL_FILE = MODEL_DIR / "UWIRGen5_usg_TR_Pred.wel"
+# Directories globbed for USG binary head output (*.hds) of the base run.
+HDS_SEARCH_DIRS = [MODEL_DIR, MODEL_DIR.parent]
+SHARED_DIR = DATA_DIR / "UWIR2025_shared"
 
 CELL = 1500.0
 CRS = "EPSG:28355"  # GDA94 / MGA zone 55
@@ -217,6 +234,215 @@ def read_riv_sp1(path: Path) -> pd.DataFrame:
     df = pd.DataFrame(rows, columns=["INODE", "stage_m", "cond_m2_per_day", "rbot_m"])
     return df.astype({"INODE": int, "stage_m": float,
                       "cond_m2_per_day": float, "rbot_m": float})
+
+
+# ---------------------------------------------------- benchmark extraction
+#
+# Everything the screening tool needs from the parent model to TEST itself
+# (rather than just to be built from it):
+#   stress_periods.csv   - PERLEN/NSTP/TSMULT/SS-TR per SP + cumulative time,
+#                          so the WEL history can be put on a calendar.
+#   wel_history.csv      - per-aquifer, per-SP well cells and rates: the
+#                          parent's actual staged pumping schedule. Feeding
+#                          this to our model gives the like-for-like
+#                          benchmark of the all-on-at-once assumption.
+#   wel_sp_totals.csv    - all-layer per-SP totals (shared) - shows the
+#                          staging and which layers carry the stress.
+#   adjacent_L*_...csv   - properties + predev heads for the layers directly
+#                          above/below each aquifer: the inputs for a
+#                          quasi-3D leakage term (aquitard Kv*A/b' GHBs).
+#   layer_catalogue.csv  - one-line inventory per model layer (n nodes,
+#                          active, thickness/kx stats) to map layer numbers
+#                          onto stratigraphy without guessing.
+#   flat-file inventory  - lists UWIRGen5_usg._* property files present
+#                          (looking for ._sy / ._kz / ._kv: Sy confirms our
+#                          conversion parameter, Kz drives the leakage term);
+#                          any found are exported per aquifer + neighbours.
+#   parent_heads_L*.npz  - if a binary head file of the base run is on the
+#                          share: the parent's own head time series for the
+#                          aquifer's nodes - the direct drawdown benchmark.
+
+
+def read_stress_periods(path: Path) -> pd.DataFrame:
+    """PERLEN NSTP TSMULT SS/TR lines from the tail of the DISU file."""
+    with open(path) as f:
+        header = f.readline().split()
+    nper = int(header[4])                      # NODES NLAY NJAG IVSD NPER ...
+    lines = [ln.split() for ln in path.read_text().splitlines() if ln.strip()]
+    rows = []
+    for tok in lines[-nper:]:
+        perlen, nstp, tsmult = float(tok[0]), int(tok[1]), float(tok[2])
+        flag = tok[3].upper() if len(tok) > 3 else "TR"
+        rows.append((perlen, nstp, tsmult, flag))
+    df = pd.DataFrame(rows, columns=["perlen_days", "nstp", "tsmult", "sstr"])
+    if not ((df.perlen_days > 0).all() and df.sstr.isin(["SS", "TR"]).all()):
+        raise ValueError(f"{path.name}: last {nper} lines do not parse as stress periods")
+    df.insert(0, "iper", np.arange(1, nper + 1))
+    df["t_end_days"] = df.perlen_days.cumsum()
+    df["t_start_days"] = df.t_end_days - df.perlen_days
+    return df
+
+
+def read_wel_history(path: Path, nper: int) -> pd.DataFrame:
+    """All stress periods of the WEL package -> (iper, INODE, q_m3_per_day).
+
+    ITMP < 0 reuses the previous period's list (standard MODFLOW semantics);
+    reused periods are materialised so every SP is explicit in the output.
+    """
+    records: list[tuple[int, int, float]] = []
+    prev: list[tuple[int, float]] = []
+    with open(path) as f:
+        f.readline()                           # MXACTW IWELCB
+        for sp in range(1, nper + 1):
+            line = f.readline()
+            if not line:                       # WEL file ends early: remaining
+                break                          # SPs implicitly reuse... stop.
+            itmp = int(line.split()[0])
+            if itmp < 0:
+                cells = prev
+            else:
+                cells = []
+                for _ in range(itmp):
+                    tok = f.readline().split()
+                    cells.append((int(tok[0]), float(tok[1])))
+                prev = cells
+            records.extend((sp, node, q) for node, q in cells)
+    return pd.DataFrame(records, columns=["iper", "INODE", "q_m3_per_day"])
+
+
+def export_wel_history(model: "Model", sps: pd.DataFrame) -> pd.DataFrame | None:
+    if not WEL_FILE.exists():
+        print(f"  [skip] WEL file not found: {WEL_FILE}")
+        return None
+    print(f"reading WEL history ({WEL_FILE.name}) ...", flush=True)
+    wel = read_wel_history(WEL_FILE, nper=len(sps))
+    lay_of = model.nodes.set_index("INODE").ILAY
+    wel["ILAY"] = lay_of.loc[wel.INODE].values
+
+    SHARED_DIR.mkdir(parents=True, exist_ok=True)
+    sps.to_csv(SHARED_DIR / "stress_periods.csv", index=False)
+    totals = (wel.groupby(["iper", "ILAY"], as_index=False)
+                 .agg(q_m3_per_day=("q_m3_per_day", "sum"),
+                      n_wells=("INODE", "count")))
+    totals.to_csv(SHARED_DIR / "wel_sp_totals.csv", index=False)
+    print(f"  {SHARED_DIR/'stress_periods.csv'}  ({len(sps)} SPs, "
+          f"{sps.t_end_days.iloc[-1]:.0f} model days)")
+    print(f"  {SHARED_DIR/'wel_sp_totals.csv'}  ({len(totals)} rows, "
+          f"{wel.INODE.nunique()} distinct well nodes, all layers)")
+    return wel
+
+
+def export_wel_for_aquifer(name: str, layers: list[int], out_dir: Path,
+                           model: "Model", wel: pd.DataFrame) -> None:
+    sub = wel[wel.ILAY.isin(layers)].copy()
+    if sub.empty:
+        print(f"  wel_history.csv   no WEL cells on layers {layers}")
+        return
+    nodes = model.nodes.set_index("INODE")
+    for c in ("ICOL", "IROW", "X", "Y"):
+        sub[c] = nodes.loc[sub.INODE, c].astype(int).values
+    sub[["iper", "ILAY", "INODE", "ICOL", "IROW", "X", "Y", "q_m3_per_day"]] \
+        .to_csv(out_dir / "wel_history.csv", index=False)
+    print(f"  wel_history.csv   {len(sub):>7} rows "
+          f"({sub.INODE.nunique()} wells, SPs {sub.iper.min()}-{sub.iper.max()})")
+
+
+def flat_file_inventory() -> dict[str, Path]:
+    """List UWIRGen5_usg._* one-value-per-node property files on the share."""
+    found = {p.name.split("._", 1)[1]: p
+             for p in sorted(MODEL_DIR.glob("UWIRGen5_usg._*"))}
+    print("\nflat property files on the share:")
+    for suffix, p in found.items():
+        print(f"  ._{suffix:<16} {p.stat().st_size/1e6:8.1f} MB")
+    for want in ("sy", "kz", "kv"):
+        if want not in found:
+            print(f"  [note] no ._{want} file - check LPF/UPW package for the "
+                  f"{'Sy' if want == 'sy' else 'vertical-K'} arrays instead")
+    return found
+
+
+ADJACENT_LAYERS = {
+    "Gubberamunda": [6, 8],
+    "Hutton": [18, 21],
+    "Precipice": [23, 25],
+}
+
+
+def export_adjacent_layers(name: str, out_dir: Path, model: "Model",
+                           flats: dict[str, Path]) -> None:
+    """Properties + predev heads (+ any Sy/Kz) for the sandwich layers —
+    the raw inputs for a quasi-3D leakage term."""
+    n_nodes = len(model.nodes)
+    extra_cols = {}
+    for suffix in ("sy", "kz", "kv"):
+        if suffix in flats:
+            extra_cols[suffix] = read_flat_array(flats[suffix], n_nodes)
+    base = name.split(" ")[0]
+    for lay in ADJACENT_LAYERS.get(base, []):
+        props = model.properties([lay])
+        heads = model.layer_slice([lay])[["INODE", "X", "Y", "head_predev_m"]]
+        props.to_csv(out_dir / f"adjacent_L{lay}_properties.csv")
+        heads.to_csv(out_dir / f"adjacent_L{lay}_heads.csv", index=False)
+        msg = f"  adjacent_L{lay}_*  {len(props):>7} nodes"
+        if extra_cols:
+            idx = model.layer_slice([lay]).INODE.values - 1
+            ex = pd.DataFrame({"INODE": idx + 1,
+                               **{s: v[idx] for s, v in extra_cols.items()}})
+            ex.to_csv(out_dir / f"adjacent_L{lay}_{'_'.join(extra_cols)}.csv", index=False)
+            msg += f" (+ {', '.join(extra_cols)})"
+        print(msg)
+
+
+def export_layer_catalogue(model: "Model") -> None:
+    rows = []
+    for lay, grp in model.nodes.groupby("ILAY"):
+        act = grp.IBOUND == 1
+        thick = (grp.NTOP - grp.NBOT)[act]
+        rows.append({
+            "ILAY": lay, "n_nodes": len(grp), "n_active": int(act.sum()),
+            "thickness_p50_m": round(float(thick.median()), 1) if act.any() else np.nan,
+            "kx_p50_m_per_day": round(float(grp.kx[act].abs().median()), 4) if act.any() else np.nan,
+            "n_watertable_marked": int((grp.SS < 0).sum()),
+        })
+    SHARED_DIR.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_csv(SHARED_DIR / "layer_catalogue.csv", index=False)
+    print(f"  {SHARED_DIR/'layer_catalogue.csv'}  (35-layer inventory)")
+
+
+def export_parent_heads(name: str, layers: list[int], out_dir: Path,
+                        model: "Model") -> None:
+    """If the base run's binary heads are on the share, pull the aquifer's
+    node heads at every saved time — the direct benchmark target."""
+    hds = None
+    for d in HDS_SEARCH_DIRS:
+        cands = sorted(d.glob("*.hds")) + sorted(d.glob("*.HDS"))
+        if cands:
+            hds = cands[0]
+            break
+    if hds is None:
+        print("  [skip] no *.hds head output found on the share "
+              f"(searched {', '.join(str(d) for d in HDS_SEARCH_DIRS)})")
+        return
+    try:
+        import flopy
+        hf = flopy.utils.HeadUFile(str(hds))
+        times = hf.get_times()
+        node_idx = model.layer_slice(layers).INODE.values - 1
+        # HeadUFile returns a list of per-layer arrays; concatenate to the
+        # global node vector, then take this aquifer's nodes.
+        series = np.empty((len(times), len(node_idx)), dtype=np.float32)
+        for i, t in enumerate(times):
+            full = np.concatenate([np.atleast_1d(a) for a in hf.get_data(totim=t)])
+            series[i] = full[node_idx]
+        np.savez_compressed(
+            out_dir / "parent_heads.npz",
+            times_days=np.asarray(times), inode=node_idx + 1, heads=series,
+            source=str(hds),
+        )
+        print(f"  parent_heads.npz  {len(times)} times x {len(node_idx)} nodes "
+              f"(from {hds.name})")
+    except Exception as exc:
+        print(f"  [skip] parent heads extraction failed: {type(exc).__name__}: {exc}")
 
 
 # ------------------------------------------------------------ model globals
@@ -471,6 +697,31 @@ def main() -> None:
     # Precipice upgrade: calibrated GHB/RIV cells + predev heads only
     export_aquifer("Precipice (upgrade files only)", PRECIPICE_LAYERS,
                    PRECIPICE_DIR, model, rch, ghb, riv, properties=False)
+
+    # ---- benchmark / leakage extras (best-effort: a failure here must not
+    # invalidate the validated core export above) -------------------------
+    print("\n=== benchmark / leakage extras ===")
+    targets = {**{n: (l, d) for n, (l, d) in AQUIFERS.items()},
+               "Precipice": (PRECIPICE_LAYERS, PRECIPICE_DIR)}
+
+    def _guard(label, fn, *args):
+        try:
+            return fn(*args)
+        except Exception as exc:
+            print(f"  [skip] {label}: {type(exc).__name__}: {exc}")
+            return None
+
+    flats = _guard("flat-file inventory", flat_file_inventory) or {}
+    _guard("layer catalogue", export_layer_catalogue, model)
+    sps = _guard("stress periods", read_stress_periods, DISU)
+    wel = _guard("WEL history", export_wel_history, model, sps) if sps is not None else None
+    for name, (layers, out_dir) in targets.items():
+        print(f"\n--- {name} extras -> {out_dir}")
+        if wel is not None:
+            _guard("wel_history", export_wel_for_aquifer, name, layers, out_dir, model, wel)
+        _guard("adjacent layers", export_adjacent_layers, name, out_dir, model, flats)
+        _guard("parent heads", export_parent_heads, name, layers, out_dir, model)
+
     print("\ndone.")
 
 
