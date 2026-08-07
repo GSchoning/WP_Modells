@@ -155,7 +155,7 @@ def _add_oc(gwf: ModflowGwf, name: str, n_periods: int = 1) -> None:
 
 def _make_sim(
     workspace: Path, name: str, perioddata, complexity: str,
-    tight_outer: bool = False,
+    robust_outer_dvclose: float | None = None,
 ) -> tuple[MFSimulation, ModflowGwf]:
     workspace = Path(workspace)
     workspace.mkdir(parents=True, exist_ok=True)
@@ -163,24 +163,30 @@ def _make_sim(
     # nper must match len(perioddata); FloPy's TDIS default is nper=1
     # and silently truncates PERLEN otherwise (mem_set_value size mismatch).
     ModflowTdis(sim, time_units="days", nper=len(perioddata), perioddata=perioddata)
-    # tight_outer: convertible storage makes the outer (Picard) loop do
-    # real work — the complexity presets' loose outer_dvclose then stops
-    # iterating early and leaks mass (measured −21% cumulative budget
-    # discrepancy on a stiff low-storage test; 0.0% with these settings).
-    # Tight closures are unreachable on the regional grids: converting
-    # cells contract slowly under the damped Picard loop (~1%/iteration,
-    # measured on the Precipice), so 1e-4/300 ran out of iterations with
-    # the residual already negligible. 2e-4 with 600 outer iterations
-    # converges there and still reproduces the analytical mass balance
-    # on the stiff test (−0.06%). Linear static runs converge in one
-    # outer pass either way, so none of this is applied to them.
+    # robust_outer_dvclose: give the outer (Picard) loop iteration
+    # headroom (600 vs the presets' 50), closing to the given dvclose.
+    # Two calibrated choices:
+    #   - 2e-4 for CONVERTIBLE transients: the presets' loose closure
+    #     stopped the storage-conversion iteration early and leaked mass
+    #     (−21% cumulative budget on a stiff test; ~0% at 2e-4).
+    #     Tighter (1e-4/1e-6) is unreachable — converting cells contract
+    #     ~1%/iteration on the regional grids.
+    #   - 1e-2 (preset-equivalent) for the STEADY STATE: the DRN cells
+    #     flip-flop at ±3e-4 m amplitude on the Precipice, so a tight
+    #     closure oscillates forever — but the presets' 50-iteration cap
+    #     also sat at the edge (adding leakage GHBs tipped it over).
+    #     A 1 cm head closure is ample for an initial condition.
+    # Deliberately NO backtracking: with the presets' DBD under-relaxation
+    # active, backtracking (BTOL 1.05) kept resetting DBD's adaptive
+    # damping on the Precipice drain flip-flop and the steady state then
+    # failed at ANY closure — the 2026-08-07 boot regression. DBD alone
+    # converges it; headroom is what was actually missing.
+    # None → the bare complexity preset (linear transients converge in
+    # one outer pass; nothing extra needed).
     ims_kwargs = dict(complexity=complexity, print_option="SUMMARY")
-    if tight_outer:
+    if robust_outer_dvclose is not None:
         ims_kwargs.update(
-            outer_dvclose=2e-4, outer_maximum=600,
-            backtracking_number=10, backtracking_tolerance=1.05,
-            backtracking_reduction_factor=0.3,
-            backtracking_residual_limit=100.0,
+            outer_dvclose=float(robust_outer_dvclose), outer_maximum=600,
         )
     ims = ModflowIms(sim, **ims_kwargs)
     gwf = ModflowGwf(sim, modelname=name, save_flows=True)
@@ -208,13 +214,13 @@ def build_steady_state(
     `ghb_cells`: far-field boundary GHBs (truncation faces) — the same
     records are reused unchanged in the transient runs.
     """
-    # tight_outer: the steady state carries real DRN cells, so the outer
-    # loop can flip-flop drain states; the presets' 50-iteration cap sat
-    # right at the edge (adding the tiny calibrated leakage GHBs tipped it
-    # into oscillation at two drain cells). Backtracking + headroom make
-    # the pre-run robust; a purely linear SS still converges in one pass.
+    # Robust-but-loose outer loop: the steady state carries real DRN cells
+    # whose flip-flop needs backtracking + headroom, but its closure must
+    # stay at the preset-equivalent 1e-2 — the Precipice drains oscillate
+    # at ±3e-4 m amplitude forever, so a tight closure never exits (the
+    # regression that broke server boot on 2026-08-07). See _make_sim.
     sim, gwf = _make_sim(workspace, name, perioddata=[(1.0, 1, 1.0)], complexity=complexity,
-                         tight_outer=True)
+                         robust_outer_dvclose=1e-2)
     _add_dis(gwf, grid)
     _add_ic(gwf, initial_head if initial_head is not None else grid.top)
     _add_npf(gwf, grid)
@@ -256,7 +262,7 @@ def build_transient(
     Far-field boundary GHBs ride in `ghb_cells` in both modes.
     """
     sim, gwf = _make_sim(workspace, name, perioddata=perioddata, complexity=complexity,
-                         tight_outer=storage_convertible)
+                         robust_outer_dvclose=2e-4 if storage_convertible else None)
     _add_dis(gwf, grid)
     _add_ic(gwf, initial_head)
     _add_npf(gwf, grid)
