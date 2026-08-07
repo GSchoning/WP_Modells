@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from .config import Config
-from .grid import Grid, cell_of
+from .grid import Grid, cell_of, resolve_receptor_cells
 from .io_layer import Inputs, ML_PER_YEAR_TO_M3_PER_DAY
 from .model_builder import (
     YEAR_DAYS,
@@ -204,17 +204,23 @@ def _sample_receptors(
     id_col: str,
     grid: Grid,
     time_years: float,
+    *,
+    snap_max_m: float = 0.0,
 ) -> pd.DataFrame:
+    cells = resolve_receptor_cells(
+        receptor_points.geometry.x, receptor_points.geometry.y, grid,
+        snap_max_m=snap_max_m,
+    )
     rows = []
-    for _, p in receptor_points.iterrows():
-        rc = cell_of(grid, float(p.geometry.x), float(p.geometry.y))
-        if rc is None or grid.idomain[0, rc[0], rc[1]] != 1:
+    for (_, p), cell in zip(receptor_points.iterrows(), cells):
+        if cell is None:
             continue
+        r, c, _snap_m = cell
         rows.append(
             {
                 "receptor_id": p[id_col],
                 "time_years": time_years,
-                "drawdown_m": float(drawdown[rc[0], rc[1]]),
+                "drawdown_m": float(drawdown[r, c]),
             }
         )
     return pd.DataFrame(rows)
@@ -411,6 +417,7 @@ def run_scenario(
     # and the conservative choice for trigger-threshold reporting is the
     # worst-affected spring within the complex.
     receptor_frames: list[pd.DataFrame] = []
+    spring_snap_m = float(getattr(cfg.assessment, "spring_snap_max_m", 0.0))
     if inputs.springs is not None and len(inputs.springs):
         spring_id_col = cfg.assessment.spring_id_col
         complex_col = cfg.assessment.spring_complex_col
@@ -419,9 +426,21 @@ def run_scenario(
                 inputs.springs,
                 ("spring_id", "SpringID", "Spring_ID", "ID", "OBJECTID", "FID"),
             )
+        cells = resolve_receptor_cells(
+            inputs.springs.geometry.x, inputs.springs.geometry.y, grid,
+            snap_max_m=spring_snap_m,
+        )
+        n_snapped = sum(1 for t in cells if t is not None and t[2] > 0)
+        n_excluded = sum(1 for t in cells if t is None)
+        if n_snapped or n_excluded:
+            import sys
+            print(f"[springs] {n_snapped} spring(s) outside the active domain "
+                  f"snapped to the nearest active cell (≤{spring_snap_m:.0f} m); "
+                  f"{n_excluded} beyond snap range excluded", file=sys.stderr)
         for y, idx in year_idx.items():
             receptor_frames.append(
-                _sample_receptors(drawdown[idx], inputs.springs, spring_id_col, grid, y)
+                _sample_receptors(drawdown[idx], inputs.springs, spring_id_col, grid, y,
+                                  snap_max_m=spring_snap_m)
             )
     if receptor_frames:
         per_spring = pd.concat(receptor_frames, ignore_index=True)
@@ -450,6 +469,7 @@ def run_scenario(
     complex_series_df = _build_complex_series(
         drawdown, times_days, inputs.springs, grid,
         complex_col if inputs.springs is not None else None,
+        snap_max_m=spring_snap_m,
     )
 
     # Drawdown at receptor water bores (non-S&D), same sampling machinery
@@ -494,10 +514,13 @@ def _build_complex_series(
     springs: gpd.GeoDataFrame | None,
     grid: Grid,
     complex_col: str | None,
+    snap_max_m: float = 0.0,
 ) -> pd.DataFrame:
     """Long-form time series per spring complex: (complex_id, time_days, drawdown_m).
 
-    Max-over-member-springs at every timestep. Returns an empty frame if
+    Max-over-member-springs at every timestep, resolving members with the
+    same nearest-active-cell snapping as the output-year tables so the
+    click-through chart agrees with them. Returns an empty frame if
     there's no springs layer or no complex column.
     """
     cols = ["complex_id", "time_days", "drawdown_m"]
@@ -510,12 +533,10 @@ def _build_complex_series(
         cname_str = str(cname).strip()
         if not cname_str or cname_str.lower() in ("nan", "none"):
             continue
-        cells: list[tuple[int, int]] = []
-        for x, y in zip(group.geometry.x, group.geometry.y):
-            rc = cell_of(grid, float(x), float(y))
-            if rc is None or grid.idomain[0, rc[0], rc[1]] != 1:
-                continue
-            cells.append(rc)
+        resolved = resolve_receptor_cells(
+            group.geometry.x, group.geometry.y, grid, snap_max_m=snap_max_m,
+        )
+        cells = [(r, c) for t in resolved if t is not None for r, c in [(t[0], t[1])]]
         if cells:
             complex_cells[cname_str] = cells
 

@@ -174,3 +174,67 @@ def test_per_cell_recharge_by_inode_takes_precedence():
     # per-cell field defines the recharge footprint, not the fallback.
     mask = np.zeros_like(g.rch, dtype=bool); mask[0, 0] = mask[0, 1] = True
     assert np.all(g.rch[~mask] == 0)
+
+
+# ---------------------------------------------------------------------------
+# Nearest-active-cell snapping for receptors just outside the active domain.
+# ---------------------------------------------------------------------------
+
+def test_resolve_receptor_cells_snaps_within_range():
+    from src.grid import resolve_receptor_cells, synthetic_uniform_grid
+
+    grid = synthetic_uniform_grid(nrow=11, ncol=11, dx=500.0, dy=500.0)
+    # Deactivate the left three columns; the active domain starts at col 3.
+    grid.idomain[0, :, :3] = 0
+
+    y_mid = grid.yorigin + grid.delc.sum() / 2.0
+    x_active = grid.xorigin + 3.5 * 500.0        # centre of col 3 (active)
+    x_inactive = grid.xorigin + 2.5 * 500.0      # centre of col 2 (inactive)
+    x_far = grid.xorigin - 5000.0                # 5 km off-grid
+
+    cells = resolve_receptor_cells(
+        [x_active, x_inactive, x_far], [y_mid, y_mid, y_mid],
+        grid, snap_max_m=3000.0,
+    )
+    # In an active cell: direct hit, no snap distance.
+    assert cells[0] is not None and cells[0][2] == 0.0
+    # One cell outside: snapped to the nearest active cell (col 3), ~500 m.
+    assert cells[1] is not None
+    assert cells[1][1] == 3 and 400.0 < cells[1][2] <= 1500.0
+    # Far outside: excluded.
+    assert cells[2] is None
+
+    # Snapping disabled -> only the direct hit resolves.
+    cells_off = resolve_receptor_cells(
+        [x_active, x_inactive], [y_mid, y_mid], grid, snap_max_m=0.0,
+    )
+    assert cells_off[0] is not None and cells_off[1] is None
+
+
+def test_sample_receptors_uses_snapping():
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    from src.grid import synthetic_uniform_grid
+    from src.scenarios import _sample_receptors
+
+    grid = synthetic_uniform_grid(nrow=11, ncol=11, dx=500.0, dy=500.0)
+    grid.idomain[0, :, :3] = 0
+    drawdown = np.zeros((11, 11))
+    drawdown[:, 3] = 2.5                          # impact along the first active column
+
+    y_mid = grid.yorigin + grid.delc.sum() / 2.0
+    springs = gpd.GeoDataFrame(
+        {"site_no": ["IN", "JUST_OUT", "FAR_OUT"]},
+        geometry=[Point(grid.xorigin + 3.5 * 500, y_mid),
+                  Point(grid.xorigin + 2.5 * 500, y_mid),
+                  Point(grid.xorigin - 9000, y_mid)],
+        crs="EPSG:28355",
+    )
+    # Without snapping the just-outside spring is silently dropped.
+    df0 = _sample_receptors(drawdown, springs, "site_no", grid, 10.0)
+    assert set(df0.receptor_id) == {"IN"}
+    # With snapping it reports the nearest active cell's impact.
+    df = _sample_receptors(drawdown, springs, "site_no", grid, 10.0, snap_max_m=3000.0)
+    assert set(df.receptor_id) == {"IN", "JUST_OUT"}
+    assert float(df.set_index("receptor_id").loc["JUST_OUT", "drawdown_m"]) == 2.5

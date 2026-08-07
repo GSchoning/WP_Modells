@@ -144,6 +144,13 @@ class AssessmentCfg(BaseModel):
     regulatory_threshold_m: float = 0.4
     spring_complex_col: str = "complex_na"
     spring_id_col: str = "site_no"
+    # Springs whose point lands just outside the active domain (inactive
+    # cell, or off the grid by less than this distance) are sampled at the
+    # NEAREST ACTIVE CELL instead of being silently dropped — at 1500 m
+    # cells, an on-the-ground spring can easily fall one cell outside the
+    # active footprint. Springs farther than this from any active cell are
+    # still excluded. 0 disables snapping.
+    spring_snap_max_m: float = 3000.0
     # Sensitivity-analysis knob: scales the rch array uniformly. Default
     # 1.0 = use the calibrated values from the properties CSV. 0.5 halves
     # recharge, 2.0 doubles it. Drawdown is theoretically invariant under

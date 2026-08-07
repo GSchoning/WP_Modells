@@ -260,9 +260,20 @@ def validate(inputs: Inputs, cfg: Config, grid=None) -> list[str]:
         if inputs.springs is not None:
             sp_inside = _in_active_domain(inputs.springs, grid)
             if (~sp_inside).any():
+                from .grid import resolve_receptor_cells
+
+                snap_m = float(getattr(cfg.assessment, "spring_snap_max_m", 0.0))
+                cells = resolve_receptor_cells(
+                    inputs.springs.geometry.x, inputs.springs.geometry.y, grid,
+                    snap_max_m=snap_m,
+                )
+                n_snap = sum(1 for t in cells if t is not None and t[2] > 0)
+                n_excl = sum(1 for t in cells if t is None)
                 findings.append(
                     f"{(~sp_inside).sum()} of {len(inputs.springs)} springs fall outside "
-                    "the active model domain (IBOUND=1)."
+                    f"the active model domain (IBOUND=1): {n_snap} will be sampled at the "
+                    f"nearest active cell (≤{snap_m:.0f} m), {n_excl} are beyond snap "
+                    "range and excluded."
                 )
     else:
         extent = inputs.formation_extent.unary_union

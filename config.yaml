@@ -118,6 +118,10 @@ assessment:
   regulatory_threshold_m: 0.4
   spring_complex_col: complex_na
   spring_id_col: site_no
+  # Springs just outside the active domain (inactive cell at 1500 m
+  # resolution) are sampled at the nearest active cell within this
+  # distance instead of being dropped; farther springs are excluded.
+  spring_snap_max_m: 3000.0
   recharge_multiplier: 1.0
   # Lateral boundary treatment, following the UWIR 2025 modelling report
   # (App. F Fig F.1-15): the parent model closes every natural pinch-out

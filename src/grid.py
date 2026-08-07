@@ -316,6 +316,42 @@ def cell_of(grid: Grid, x: float, y: float) -> tuple[int, int] | None:
     return None
 
 
+def resolve_receptor_cells(
+    xs, ys, grid: Grid, *, snap_max_m: float = 0.0,
+) -> list[tuple[int, int, float] | None]:
+    """Map receptor points to active model cells.
+
+    A point in an active cell resolves directly (snap distance 0). A point
+    in an inactive cell — or off the grid entirely — snaps to the NEAREST
+    active cell centre if that centre is within `snap_max_m`; otherwise it
+    resolves to None (excluded). At 1500 m cells a real spring can easily
+    sit one cell outside the active footprint; without snapping it would
+    silently report no impact.
+    """
+    active_xy = None
+    out: list[tuple[int, int, float] | None] = []
+    for x, y in zip(xs, ys):
+        x, y = float(x), float(y)
+        rc = cell_of(grid, x, y)
+        if rc is not None and grid.idomain[0, rc[0], rc[1]] == 1:
+            out.append((rc[0], rc[1], 0.0))
+            continue
+        if snap_max_m <= 0:
+            out.append(None)
+            continue
+        if active_xy is None:
+            rs, cs = np.where(grid.idomain[0] == 1)
+            cx = grid.xorigin + (cs + 0.5) * float(grid.delr[0])
+            cy = (grid.yorigin + float(grid.delc.sum())) - (rs + 0.5) * float(grid.delc[0])
+            active_xy = (rs, cs, cx, cy)
+        rs, cs, cx, cy = active_xy
+        d2 = (cx - x) ** 2 + (cy - y) ** 2
+        i = int(np.argmin(d2))
+        d = float(np.sqrt(d2[i]))
+        out.append((int(rs[i]), int(cs[i]), d) if d <= snap_max_m else None)
+    return out
+
+
 def synthetic_uniform_grid(
     nrow: int = 51,
     ncol: int = 51,
