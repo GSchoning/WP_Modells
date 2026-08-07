@@ -91,6 +91,12 @@ assessment:
   regulatory_threshold_m: 0.4
   spring_complex_col: complex_na
   spring_id_col: site_no
+  # Theis comparison parameters — the department's standard assessment
+  # values, so the Theis columns reproduce current practice (superposition
+  # of Theis solutions). Comment out to fall back to formation-averaged
+  # T (geometric mean) and S (median) over active cells.
+  theis_T_m2_per_day: 50.0
+  theis_S: 5.0e-4
   recharge_multiplier: 1.0
   # Boundary GHBs come from inputs.ghb_cells_csv (calibrated layer-7
   # cells). The face/head settings below apply only if that file goes

@@ -151,6 +151,13 @@ class AssessmentCfg(BaseModel):
     # active footprint. Springs farther than this from any active cell are
     # still excluded. 0 disables snapping.
     spring_snap_max_m: float = 3000.0
+    # Aquifer parameters for the Theis analytical comparison columns.
+    # When set, these OVERRIDE the formation-averaged values — use the
+    # department's standard assessment parameters so the Theis columns
+    # reproduce current practice (superposition of Theis solutions).
+    # None falls back to geometric-mean T / median S over active cells.
+    theis_T_m2_per_day: float | None = None
+    theis_S: float | None = None
     # Sensitivity-analysis knob: scales the rch array uniformly. Default
     # 1.0 = use the calibrated values from the properties CSV. 0.5 halves
     # recharge, 2.0 doubles it. Drawdown is theoretically invariant under

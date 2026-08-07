@@ -55,7 +55,7 @@ from ..scenarios import (
     run_steady_state,
 )
 from ..superposition import combine_receptor_tables
-from ..theis import formation_avg_T_S, theis_at_springs
+from ..theis import formation_avg_T_S, theis_at_springs, theis_cumulative_at_springs
 from . import cache as cache_mod
 from . import decisions as decisions_mod
 from .schemas import (
@@ -554,6 +554,7 @@ def _df_to_year_results(combined: pd.DataFrame, threshold: float) -> list[YearRe
     """
     out: list[YearResults] = []
     has_theis = "drawdown_m_theis" in combined.columns
+    has_theis_cum = "s_approved_theis" in combined.columns
     has_r = "r_m" in combined.columns
     has_n = "n_springs" in combined.columns
     has_licensed = "s_licensed" in combined.columns
@@ -583,6 +584,7 @@ def _df_to_year_results(combined: pd.DataFrame, threshold: float) -> list[YearRe
                 s_additional_m=float(r["s_additional"]),
                 s_total_m=s_tot,
                 s_additional_theis_m=float(r["drawdown_m_theis"]) if has_theis and not pd.isna(r["drawdown_m_theis"]) else None,
+                s_approved_theis_m=float(r["s_approved_theis"]) if has_theis_cum and not pd.isna(r["s_approved_theis"]) else None,
                 r_to_proposed_m=r_m,
                 exceeds_threshold=exceeds,
                 already_exceeded=already,
@@ -597,6 +599,45 @@ def _df_to_year_results(combined: pd.DataFrame, threshold: float) -> list[YearRe
             n_already_exceeded=sum(1 for c in complexes if c.already_exceeded),
         ))
     return out
+
+
+def _theis_params() -> tuple[float | None, float | None]:
+    """(T, S) for the Theis comparison columns: the configured standard
+    assessment parameters when set (so the columns reproduce the
+    department's current practice), else formation-averaged values."""
+    T = state.cfg.assessment.theis_T_m2_per_day
+    S = state.cfg.assessment.theis_S
+    if T is not None and S is not None:
+        return float(T), float(S)
+    try:
+        return formation_avg_T_S(state.grid)
+    except ValueError:
+        return None, None
+
+
+def _theis_cumulative(output_years: list[float]) -> pd.DataFrame | None:
+    """Cumulative Theis over ALL existing pumping bores at every spring
+    complex — the current-practice estimate of the approved-take impact.
+    Returns (receptor_id, time_years, s_approved_theis) or None."""
+    if state.inputs is None or state.inputs.springs is None or not len(state.inputs.springs):
+        return None
+    T, S = _theis_params()
+    if T is None or S is None:
+        return None
+    spring_id_col = state.cfg.assessment.spring_id_col
+    if spring_id_col not in state.inputs.springs.columns:
+        spring_id_col = state.inputs.springs.columns[0]
+    complex_col = state.cfg.assessment.spring_complex_col
+    pb = state.inputs.pumping_bores
+    wells = list(zip(pb.geometry.x, pb.geometry.y, pb["rate_m3_per_day"]))
+    if not wells:
+        return None
+    df = theis_cumulative_at_springs(
+        state.grid, state.inputs.springs, spring_id_col, wells, output_years,
+        T=T, S=S,
+        complex_col=complex_col if complex_col in state.inputs.springs.columns else None,
+    )
+    return df.rename(columns={"drawdown_m_theis": "s_approved_theis"})
 
 
 def _attach_bores(year_results: list[YearResults], combined_bores: pd.DataFrame | None,
@@ -705,6 +746,9 @@ def baseline() -> BaselineResponse:
             {"s_licensed": 0.0}
         )
     threshold = state.cfg.assessment.regulatory_threshold_m
+    cum = _theis_cumulative(sorted(df["time_years"].unique().tolist()))
+    if cum is not None:
+        df = df.merge(cum, on=["receptor_id", "time_years"], how="left")
     year_results = _df_to_year_results(df, threshold)
     if state.baseline.bores_df is not None:
         bores = state.baseline.bores_df.rename(columns={"drawdown_m": "s_approved"})
@@ -942,15 +986,7 @@ def _execute_scenario(
         if spring_id_col not in state.inputs.springs.columns:
             spring_id_col = state.inputs.springs.columns[0]
         output_years_sorted = sorted(combined["time_years"].unique())
-        # Formation-averaged T/S: representative homogeneous-equivalent
-        # values across active cells. Using these (rather than the T/S
-        # at whichever cell the proposed bore lands on) keeps the Theis
-        # column comparable across scenarios and avoids the outlier
-        # behaviour when a bore happens to sit in a low-K cell.
-        try:
-            T_form, S_form = formation_avg_T_S(state.grid)
-        except ValueError:
-            T_form = S_form = None
+        T_form, S_form = _theis_params()
 
         theis_merged = None
         for w in wells_dicts:
@@ -987,8 +1023,14 @@ def _execute_scenario(
                 theis_merged.rename(columns={"r_m_first": "r_m"}),
                 on=["receptor_id", "time_years"], how="left",
             )
-        # Diagnostic T/S = formation-averaged values used for the Theis
-        # column. `well_cell` still reports the first positive-rate well's
+        # Cumulative Theis over ALL existing bores — the department's
+        # current-practice method, shown beside the modelled s_approved.
+        cum = _theis_cumulative(output_years_sorted)
+        if cum is not None:
+            combined = combined.merge(cum, on=["receptor_id", "time_years"], how="left")
+        # Diagnostic T/S = the values used for the Theis columns
+        # (configured assessment parameters, or formation-averaged when
+        # unset). `well_cell` still reports the first positive-rate well's
         # grid cell for traceability.
         if positive and T_form is not None and S_form is not None:
             rc = cell_of(state.grid, float(positive[0]["x"]), float(positive[0]["y"]))

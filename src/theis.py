@@ -106,6 +106,65 @@ def formation_avg_T_S(grid: Grid) -> tuple[float, float]:
     return T_geo, S_median
 
 
+def theis_cumulative_at_springs(
+    grid: Grid,
+    springs: gpd.GeoDataFrame,
+    spring_id_col: str,
+    wells_xyq: list[tuple[float, float, float]],
+    output_years: list[float],
+    T: float,
+    S: float,
+    complex_col: str | None = None,
+) -> pd.DataFrame:
+    """Cumulative Theis drawdown at each spring from MANY wells at once —
+    the department's current-practice method (superposition of Theis
+    solutions over every existing bore), reproduced so the tool can show
+    it beside the modelled cumulative impact.
+
+    `wells_xyq`: (x, y, rate_m3_per_day) per well; rates are extraction
+    magnitudes (sign is ignored). All wells are assumed pumping constantly
+    from t = 0, matching the model's Scenario A framing. Aggregation by
+    complex takes the max over member springs, matching scenarios.py.
+
+    Returns a tidy frame (receptor_id, time_years, drawdown_m_theis).
+    """
+    if T <= 0 or S <= 0:
+        raise ValueError(f"Theis cumulative: non-physical T={T}, S={S}.")
+    sp_x = springs.geometry.x.to_numpy()
+    sp_y = springs.geometry.y.to_numpy()
+    dx = float(np.mean(grid.delr)) if grid.delr.size else 1500.0
+    dy = float(np.mean(grid.delc)) if grid.delc.size else dx
+    r_eq = 0.208 * 0.5 * (dx + dy)
+
+    # (n_wells, n_springs) distance matrix, floored at the Peaceman radius.
+    wx = np.array([w[0] for w in wells_xyq])
+    wy = np.array([w[1] for w in wells_xyq])
+    q = np.abs(np.array([w[2] for w in wells_xyq]))
+    r = np.hypot(sp_x[None, :] - wx[:, None], sp_y[None, :] - wy[:, None])
+    r = np.maximum(r, r_eq)
+
+    spring_ids = springs[spring_id_col].to_numpy()
+    complex_names = (
+        springs[complex_col].to_numpy() if complex_col and complex_col in springs.columns else None
+    )
+    rows = []
+    for y in output_years:
+        t_days = y * YEAR_DAYS
+        u = r * r * S / (4.0 * T * t_days)
+        s = (q[:, None] / (4.0 * math.pi * T) * exp1(u)).sum(axis=0)
+        for i, (sid, si) in enumerate(zip(spring_ids, s)):
+            rows.append({
+                "receptor_id": str(complex_names[i]) if complex_names is not None else sid,
+                "time_years": float(y),
+                "drawdown_m_theis": float(si),
+            })
+    df = pd.DataFrame(rows)
+    if complex_names is not None and not df.empty:
+        df = (df.groupby(["receptor_id", "time_years"], as_index=False)
+                .agg(drawdown_m_theis=("drawdown_m_theis", "max")))
+    return df
+
+
 def theis_at_springs(
     grid: Grid,
     springs: gpd.GeoDataFrame,

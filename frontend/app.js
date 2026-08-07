@@ -1389,9 +1389,11 @@ function renderTable(result) {
   const hasTheis = all.some(c => c.s_additional_theis_m != null);
 
   const hasLicensed = all.some(c => c.s_licensed_m != null && c.s_licensed_m > 0);
+  const hasTheisCum = all.some(c => c.s_approved_theis_m != null);
   let html = "<table><thead><tr>";
   html += "<th>complex</th>";
   html += "<th class=\"num\">existing (m)</th>";
+  if (hasTheisCum) html += "<th class=\"num\" title=\"Cumulative impact of ALL existing bores estimated by superposition of Theis solutions with the standard assessment parameters — the current-practice method, for comparison with the modelled existing column\">Theis existing (m)</th>";
   if (hasLicensed) html += "<th class=\"num\" title=\"Impact from licensed/entitlement take only (a subset of existing)\">licensed (m)</th>";
   html += "<th class=\"num\">proposed (m)</th>";
   if (hasTheis) html += "<th class=\"num\" title=\"Theis analytical estimate of proposed-bore drawdown, using formation-averaged T (geometric mean) and S (arithmetic mean) over active cells\">Theis (m)</th>";
@@ -1409,6 +1411,7 @@ function renderTable(result) {
     html += `<tr${cls} data-id="${safeId}">`;
     html += `<td>${safeId}${meshMark}</td>`;
     html += `<td class="num">${fmt(c.s_approved_m)}</td>`;
+    if (hasTheisCum) html += `<td class="num">${fmt(c.s_approved_theis_m)}</td>`;
     if (hasLicensed) html += `<td class="num">${fmt(c.s_licensed_m)}</td>`;
     html += `<td class="num">${fmt(c.s_additional_m)}</td>`;
     if (hasTheis) html += `<td class="num">${fmt(c.s_additional_theis_m)}</td>`;
@@ -1457,14 +1460,16 @@ function exportResultCsv(result) {
   // the machine-readable version of what the regulator signs off on.
   const rows = [[
     "receptor_type", "receptor_id", "n_springs", "time_years",
-    "s_approved_m", "s_licensed_m", "s_additional_m", "s_total_m", "s_additional_theis_m",
+    "s_approved_m", "s_approved_theis_m", "s_licensed_m", "s_additional_m", "s_total_m",
+    "s_additional_theis_m",
     "exceeds_threshold", "already_exceeded", "triggered_by_proposed",
   ]];
   for (const yr of result.by_year) {
     for (const c of yr.complexes) {
       rows.push([
         "spring_complex", c.complex_id, c.n_springs, yr.time_years,
-        c.s_approved_m, c.s_licensed_m ?? "", c.s_additional_m, c.s_total_m,
+        c.s_approved_m, c.s_approved_theis_m ?? "", c.s_licensed_m ?? "",
+        c.s_additional_m, c.s_total_m,
         c.s_additional_theis_m ?? "",
         c.exceeds_threshold, c.already_exceeded, c.triggered_by_proposed,
       ]);
@@ -1472,7 +1477,7 @@ function exportResultCsv(result) {
     for (const b of (yr.bores || [])) {
       rows.push([
         "receptor_bore", b.bore_id, "", yr.time_years,
-        b.s_approved_m, b.s_licensed_m ?? "", b.s_additional_m, b.s_total_m,
+        b.s_approved_m, "", b.s_licensed_m ?? "", b.s_additional_m, b.s_total_m,
         "", "", "", "",
       ]);
     }

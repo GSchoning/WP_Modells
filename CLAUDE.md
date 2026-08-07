@@ -182,7 +182,10 @@ Module responsibilities:
   no threshold classification until the bore trigger criterion is
   confirmed; `s_approved` at an extraction bore includes its own
   cell-averaged drawdown, `s_additional` carries no self-impact), Theis
-  comparison, QA block, provenance hashes.
+  comparisons (proposal-only AND cumulative-over-all-existing-bores — the
+  current-practice method — using `assessment.theis_T_m2_per_day` /
+  `theis_S` when set, else formation averages), QA block, provenance
+  hashes.
 - `GET /api/baseline` — cached Scenario A (+ licensed layer and bores)
   without a proposal.
 - `GET /api/map-data`, `/api/aquifers`, `/api/existing-bores`,

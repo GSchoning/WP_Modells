@@ -74,3 +74,42 @@ def test_single_well_matches_theis(tmp_path):
 
     for r, err in rel_errors.items():
         assert err < 0.05, f"r={r:.0f} m: relative error {err:.3f} exceeds 5%"
+
+
+def test_theis_cumulative_equals_sum_of_single_wells():
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    from src.grid import synthetic_uniform_grid
+    from src.theis import theis_at_springs, theis_cumulative_at_springs
+
+    grid = synthetic_uniform_grid(nrow=21, ncol=21, dx=500.0, dy=500.0)
+    springs = gpd.GeoDataFrame(
+        {"site_no": ["S1", "S2", "S3"], "complex_na": ["North", "North", "South"]},
+        geometry=[Point(3000, 8000), Point(3500, 8200), Point(7000, 2000)],
+        crs="EPSG:28355",
+    )
+    wells = [(5000.0, 5000.0, 800.0), (6500.0, 4000.0, 300.0)]
+    T, S = 50.0, 5.0e-4
+    years = [10.0, 100.0]
+
+    cum = theis_cumulative_at_springs(
+        grid, springs, "site_no", wells, years, T=T, S=S, complex_col="complex_na",
+    ).set_index(["receptor_id", "time_years"])
+
+    # Per-spring sum of the single-well solution, then max over members.
+    per_spring = None
+    for (x, y, q) in wells:
+        df = theis_at_springs(grid, springs, "site_no", x, y, q, years, T=T, S=S)
+        df = df.set_index(["receptor_id", "time_years"])["drawdown_m_theis"]
+        per_spring = df if per_spring is None else per_spring + df
+    expected = (per_spring.reset_index()
+                .assign(complex=lambda d: d.receptor_id.map(
+                    dict(zip(springs.site_no, springs.complex_na))))
+                .groupby(["complex", "time_years"])["drawdown_m_theis"].max())
+
+    for (cx, yr), want in expected.items():
+        got = float(cum.loc[(cx, yr), "drawdown_m_theis"])
+        assert abs(got - want) < 1e-9, (cx, yr, got, want)
+    # Sanity: with T=50, S=5e-4, drawdown grows with time.
+    assert cum.loc[("North", 100.0), "drawdown_m_theis"] > cum.loc[("North", 10.0), "drawdown_m_theis"]

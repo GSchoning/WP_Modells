@@ -74,6 +74,10 @@ class ComplexDrawdown(BaseModel):
     s_additional_m: float
     s_total_m: float
     s_additional_theis_m: float | None = None
+    # Cumulative Theis-superposition estimate of the approved-take impact
+    # (every existing bore, standard assessment T/S) — the current-practice
+    # method, shown beside the modelled s_approved_m for comparison.
+    s_approved_theis_m: float | None = None
     r_to_proposed_m: float | None = None             # min distance over member springs
     exceeds_threshold: bool = False                   # s_total_m >= regulatory threshold
     already_exceeded: bool = False                    # s_approved_m alone >= threshold
