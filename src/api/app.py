@@ -67,6 +67,8 @@ from .schemas import (
     ExistingBore,
     ExistingBoresResponse,
     HealthResponse,
+    ModelSettingsRequest,
+    ModelSettingsResponse,
     ProposedBore,
     RecordDecisionRequest,
     RollbackRequest,
@@ -126,6 +128,13 @@ class _State:
     decisions_path: Path | None = None                # append-only audit-trail store
     aquifers_geojson: dict | None = None              # GeoJSON FC of GABORA units/subareas
     provenance: dict | None = None                    # config/input hashes + mf6 version
+    # Runtime model-settings switch (storage mode). The config file sets
+    # the default; the UI can override for the session. `settings_target`
+    # is the mode being switched to while the baseline rebuild runs.
+    config_default_storage_mode: str | None = None
+    settings_target: str | None = None
+    settings_rebuilding: bool = False
+    settings_error: str | None = None
 
     def __init__(self):
         # Job registry for background scenario runs. run_lock serialises
@@ -470,6 +479,7 @@ def _bootstrap_module(key: str, config_path: Path) -> None:
     suffix = "" if key == DEFAULT_AQUIFER else f"_{key}"
     state.decisions_path = Path("var") / f"decision_events{suffix}.jsonl"
     state.provenance = _build_provenance()
+    state.config_default_storage_mode = state.cfg.assessment.storage_mode
 
     _bootstrap_ic()
     state.baseline = _bootstrap_baseline()
@@ -714,6 +724,79 @@ def healthz() -> HealthResponse:
         aquifer_title=AQUIFER_MODULES.get(_ACTIVE.get(), {}).get(
             "title", _ACTIVE.get().title()),
     )
+
+
+def _storage_mode_key(mode: str) -> str:
+    """Baseline cache key this module would use under `mode` (no mutation)."""
+    cfg_copy = state.cfg.model_copy(deep=True)
+    cfg_copy.assessment.storage_mode = mode
+    return cache_mod.baseline_key(cfg_copy, state.config_path)
+
+
+def _model_settings_response() -> ModelSettingsResponse:
+    return ModelSettingsResponse(
+        storage_mode=state.settings_target or state.cfg.assessment.storage_mode,
+        config_default=state.config_default_storage_mode
+            or state.cfg.assessment.storage_mode,
+        baseline_cached={
+            mode: cache_mod.exists(_storage_mode_key(mode))
+            for mode in ("static", "convertible")
+        },
+        rebuilding=state.settings_rebuilding,
+        rebuild_error=state.settings_error,
+    )
+
+
+@app.get("/api/model-settings", response_model=ModelSettingsResponse)
+def get_model_settings() -> ModelSettingsResponse:
+    return _model_settings_response()
+
+
+def _apply_storage_mode(aquifer: str, mode: str) -> None:
+    """Worker thread: switch storage mode and rebind the baseline.
+
+    Runs behind run_lock so no scenario is mid-flight when cfg mutates —
+    the same discipline as the recharge-multiplier re-baseline. The
+    steady-state IC does not depend on storage (no storage terms in a
+    steady solve), so only the baseline scenario runs are redone; if the
+    target mode's baseline is already cached this is near-instant.
+    """
+    _ACTIVE.set(aquifer)
+    with state.run_lock:
+        try:
+            state.cfg.assessment.storage_mode = mode
+            state.baseline = _bootstrap_baseline()
+            state.provenance = _build_provenance()
+            state.settings_error = None
+        except Exception as exc:                      # surface to the UI poll
+            state.settings_error = f"{type(exc).__name__}: {exc}"
+        finally:
+            state.settings_target = None
+            state.settings_rebuilding = False
+
+
+@app.post("/api/model-settings", response_model=ModelSettingsResponse)
+def set_model_settings(req: ModelSettingsRequest) -> ModelSettingsResponse:
+    """Switch the storage formulation for this module (session override).
+
+    Baselines are cached per mode (`stor=` in the cache key), so flipping
+    back to a previously used mode is near-instant; a first switch
+    rebuilds the baseline in the background (~minutes). Poll GET until
+    `rebuilding` is false. The config file still sets the boot default.
+    """
+    current = state.settings_target or state.cfg.assessment.storage_mode
+    if req.storage_mode == current:
+        return _model_settings_response()
+    if state.settings_rebuilding:
+        raise HTTPException(status_code=409, detail="a storage-mode switch is already in progress")
+    state.settings_target = req.storage_mode
+    state.settings_rebuilding = True
+    state.settings_error = None
+    threading.Thread(
+        target=_apply_storage_mode, args=(_ACTIVE.get(), req.storage_mode),
+        daemon=True,
+    ).start()
+    return _model_settings_response()
 
 
 @app.get("/api/version")

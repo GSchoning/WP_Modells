@@ -190,6 +190,11 @@ Module responsibilities:
   without a proposal.
 - `GET /api/map-data`, `/api/aquifers`, `/api/existing-bores`,
   `/api/spring-series`, drawdown raster PNG endpoints, decision endpoints.
+- `GET/POST /api/model-settings` — runtime storage-mode switch (session
+  override; the config file sets the boot default). Baselines cache per
+  mode, so flipping back to a previously used mode is near-instant; a
+  first switch rebuilds in a background thread behind `run_lock` while
+  the UI polls. Sidebar "Model settings" control in the scenario UI.
 - Module selection: `?aquifer=<key>` or `X-Aquifer` header (middleware
   binds each request; default precipice).
 - **Frontend** (`frontend/`, static): `index.html`/`landing.js` — mock

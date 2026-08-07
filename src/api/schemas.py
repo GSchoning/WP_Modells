@@ -199,6 +199,23 @@ class ExistingBoresResponse(BaseModel):
     bores: list[ExistingBore]
 
 
+class ModelSettingsRequest(BaseModel):
+    """Runtime model-formulation switch (session override; the config file
+    still sets the default that applies after a restart)."""
+    storage_mode: Literal["static", "convertible"]
+
+
+class ModelSettingsResponse(BaseModel):
+    storage_mode: Literal["static", "convertible"]     # effective (or target while rebuilding)
+    config_default: Literal["static", "convertible"]
+    # Whether a complete baseline for each mode is already on disk —
+    # switching to a cached mode is near-instant; otherwise the baseline
+    # rebuilds (two MF6 runs, minutes).
+    baseline_cached: dict[str, bool]
+    rebuilding: bool = False
+    rebuild_error: str | None = None
+
+
 class HealthResponse(BaseModel):
     status: str
     project: str

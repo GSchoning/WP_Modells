@@ -120,6 +120,8 @@ async function init() {
     runScenario(map);
   });
 
+  initModelSettings();
+
   document.querySelectorAll('input[name="scenario-type"]').forEach((r) => {
     r.addEventListener("change", () => {
       STATE.scenarioType = r.value;
@@ -1603,6 +1605,92 @@ function recolorComplexes(map, result) {
     }
   }
   src.setData(data);
+}
+
+/* ---- Model settings: storage-formulation switch --------------------------
+ * Baselines are cached per mode server-side, so flipping back to a mode
+ * that has run before is near-instant; a first switch rebuilds the
+ * baseline (two MF6 runs) while scenario runs queue behind it. */
+
+function renderStorageInfo(s) {
+  const info = $("storage-mode-info");
+  if (s.rebuild_error) {
+    info.className = "muted error";
+    info.textContent = `switch failed: ${s.rebuild_error}`;
+    return;
+  }
+  if (s.rebuilding) {
+    info.className = "muted rebuilding";
+    info.textContent =
+      `Rebuilding the ${s.storage_mode} baseline… (minutes; scenarios wait for it)`;
+    return;
+  }
+  info.className = "muted";
+  const other = s.storage_mode === "static" ? "convertible" : "static";
+  const note = s.baseline_cached[other]
+    ? "both baselines cached — switching is instant"
+    : `first switch to ${other} rebuilds the baseline (~minutes)`;
+  const override = s.storage_mode !== s.config_default
+    ? ` Session override; config default is ${s.config_default}.` : "";
+  info.textContent = `Convertible lets storage jump to Sy where pumping ` +
+    `desaturates cells, as in the parent model. ${note}.${override}`;
+}
+
+async function initModelSettings() {
+  const sel = $("storage-mode");
+  if (!sel) return;
+  let s;
+  try {
+    s = await (await fetch("/api/model-settings")).json();
+  } catch (e) {
+    $("model-settings").hidden = true;
+    return;
+  }
+  sel.value = s.storage_mode;
+  renderStorageInfo(s);
+  if (s.rebuilding) pollStorageMode();      // a switch was already in flight
+
+  sel.addEventListener("change", async () => {
+    const prev = s.storage_mode;
+    try {
+      const r = await fetch("/api/model-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storage_mode: sel.value }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+      s = await r.json();
+      renderStorageInfo(s);
+      if (s.rebuilding) pollStorageMode();
+      else setStatus(`storage mode: ${s.storage_mode}`);
+    } catch (err) {
+      sel.value = prev;
+      const info = $("storage-mode-info");
+      info.className = "muted error";
+      info.textContent = `switch failed: ${err.message}`;
+    }
+  });
+
+  async function pollStorageMode() {
+    sel.disabled = true;
+    $("run-btn").disabled = true;
+    setStatus("rebuilding baseline…", "busy");
+    for (;;) {
+      await new Promise((res) => setTimeout(res, 4000));
+      try {
+        s = await (await fetch("/api/model-settings")).json();
+      } catch (e) { continue; }
+      renderStorageInfo(s);
+      if (!s.rebuilding) break;
+    }
+    sel.disabled = false;
+    $("run-btn").disabled = false;
+    sel.value = s.storage_mode;
+    setStatus(s.rebuild_error
+      ? "storage-mode switch failed"
+      : `storage mode: ${s.storage_mode} — baseline ready`,
+      s.rebuild_error ? "error" : undefined);
+  }
 }
 
 window.addEventListener("DOMContentLoaded", init);

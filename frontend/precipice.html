@@ -108,6 +108,17 @@
         <button type="submit" id="run-btn">Run scenario</button>
         <p class="muted">A scenario takes ~5 minutes. Existing-bores baseline is cached.</p>
       </form>
+
+      <div id="model-settings">
+        <h2>Model settings</h2>
+        <label>Storage formulation
+          <select id="storage-mode">
+            <option value="static">Static (legacy)</option>
+            <option value="convertible">Convertible (Ss&#8596;Sy)</option>
+          </select>
+        </label>
+        <div id="storage-mode-info" class="muted"></div>
+      </div>
     </aside>
   </div>
 

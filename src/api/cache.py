@@ -160,6 +160,14 @@ def cache_paths(key: str) -> tuple[Path, ...]:
     )
 
 
+def exists(key: str) -> bool:
+    """Cheap on-disk check (no parquet/npz loading) that a complete
+    baseline is cached under `key` — the same four files load() requires."""
+    receptors_p, drawdown_p, manifest_p, series_p, *_rest = cache_paths(key)
+    return (receptors_p.exists() and drawdown_p.exists()
+            and manifest_p.exists() and series_p.exists())
+
+
 def load(key: str) -> BaselineCache | None:
     (receptors_p, drawdown_p, manifest_p, series_p, nopump_p,
      lic_receptors_p, lic_drawdown_p, bores_p, lic_bores_p) = cache_paths(key)
