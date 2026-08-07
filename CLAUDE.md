@@ -283,6 +283,21 @@ service mounts it for ad-hoc JupyterLab work).
   that under-predicts drawdown; the Gubberamunda outcrop (drains on ~100%
   of outcrop cells, C/T ≈ 600) showed this clamps drawdown to ~0 across
   the outcrop — the reason drn mode is the default.
+- **Storage conversion** (`assessment.storage_mode`). The parent model
+  switches cell storage Ss ↔ Sy as heads cross the cell top
+  (desaturation). `"static"` (legacy) never converts: confined cells keep
+  elastic Ss even when pumped below their top, over-predicting drawdown
+  wherever depressurisation would really unconfine a cell.
+  `"convertible"` sets STO `iconvert=1` with `sy` = the formation outcrop
+  Sy; MF6's conversion keys off head vs cell top **even with
+  `icelltype=0`** (verified against a Newton true-unconfined run), so T
+  stays constant and no Newton/dry-cell machinery is needed. Two traps:
+  (1) water-table-marked cells must swap their `Ss = Sy/b` decode for a
+  real elastic Ss (`grid.ss_elastic`) or the mixed formulation counts the
+  yield twice; (2) the convertible outer (Picard) loop does real work, so
+  `_make_sim` tightens `outer_dvclose` to 1e-6 — the complexity presets'
+  loose value silently leaked ~21% of the budget on a stiff test.
+  `tests/test_storage_conversion.py` pins all of this.
 - **Anchor GHBs.** With a closed no-flow perimeter, an active island with
   no head-dependent BC has a singular steady-state matrix (MF6 dies with a
   floating overflow). Each such component gets one deliberately weak

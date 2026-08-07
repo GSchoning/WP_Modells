@@ -107,6 +107,7 @@ assessment:
   ghb_conductance_scale: 1.0
   ghb_heads: "ntop"
   outcrop_storage: "formation_sy" # 2.1985e-2 on the outcrop belt
+  storage_mode: "static"          # "convertible" = Ss<->Sy switching (see config.yaml)
   chd_quadrants: ["NW", "SE"]
 
 drains:

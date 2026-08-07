@@ -116,6 +116,7 @@ def baseline_key(cfg: Config, config_path: Path) -> str:
         f"chdq={','.join(cfg.assessment.chd_quadrants or [])}",
         f"lic={sorted((cfg.inputs.water_use.licensed_filter or {}).items())}",
         f"dtm={cfg.drains.transient_mode}",
+        f"stor={cfg.assessment.storage_mode}",
     ]
     if cfg.inputs.springs is not None and Path(cfg.inputs.springs).exists():
         parts.append(_file_sha256(Path(cfg.inputs.springs)))

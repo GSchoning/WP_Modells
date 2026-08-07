@@ -52,12 +52,41 @@ def _add_npf(gwf: ModflowGwf, grid: Grid) -> None:
     ModflowGwfnpf(gwf, icelltype=0, k=grid.k)
 
 
-def _add_sto(gwf: ModflowGwf, grid: Grid, *, transient: bool, n_periods: int = 1) -> None:
+# Specific yield used for storage conversion when the grid carries no
+# formation value (synthetic grids). Real modules always have one (the
+# decoded UWIR outcrop Sy).
+DEFAULT_SY = 0.02
+
+
+def _add_sto(
+    gwf: ModflowGwf, grid: Grid, *, transient: bool, n_periods: int = 1,
+    convertible: bool = False,
+) -> None:
     # Flag every period the same way; STO defaults to the previous flag
     # if a period isn't listed, but being explicit avoids surprises with
     # multi-period transient runs.
     steady = {i: not transient for i in range(n_periods)}
     trans = {i: transient for i in range(n_periods)}
+    if convertible:
+        # Ss<->Sy conversion, matching the parent model. MF6's STO
+        # conversion keys off head vs the cell TOP even with icelltype=0
+        # (verified against a true-unconfined Newton run), so T stays
+        # constant and only the storage term becomes piecewise. Water-
+        # table-marked cells must carry a real elastic Ss here — their
+        # Sy/b decode would double-count yield under the mixed
+        # formulation (grid.ss_elastic; falls back to grid.ss for
+        # synthetic grids, whose ss is elastic already).
+        ss = grid.ss_elastic if grid.ss_elastic is not None else grid.ss
+        sy = grid.formation_sy if grid.formation_sy is not None else DEFAULT_SY
+        ModflowGwfsto(
+            gwf,
+            iconvert=1,
+            ss=ss,
+            sy=float(sy),
+            steady_state=steady,
+            transient=trans,
+        )
+        return
     ModflowGwfsto(
         gwf,
         iconvert=0,
@@ -124,14 +153,36 @@ def _add_oc(gwf: ModflowGwf, name: str, n_periods: int = 1) -> None:
     )
 
 
-def _make_sim(workspace: Path, name: str, perioddata, complexity: str) -> tuple[MFSimulation, ModflowGwf]:
+def _make_sim(
+    workspace: Path, name: str, perioddata, complexity: str,
+    tight_outer: bool = False,
+) -> tuple[MFSimulation, ModflowGwf]:
     workspace = Path(workspace)
     workspace.mkdir(parents=True, exist_ok=True)
     sim = MFSimulation(sim_name=name, sim_ws=str(workspace), exe_name="mf6")
     # nper must match len(perioddata); FloPy's TDIS default is nper=1
     # and silently truncates PERLEN otherwise (mem_set_value size mismatch).
     ModflowTdis(sim, time_units="days", nper=len(perioddata), perioddata=perioddata)
-    ims = ModflowIms(sim, complexity=complexity, print_option="SUMMARY")
+    # tight_outer: convertible storage makes the outer (Picard) loop do
+    # real work — the complexity presets' loose outer_dvclose then stops
+    # iterating early and leaks mass (measured −21% cumulative budget
+    # discrepancy on a stiff low-storage test; 0.0% with these settings).
+    # Tight closures are unreachable on the regional grids: converting
+    # cells contract slowly under the damped Picard loop (~1%/iteration,
+    # measured on the Precipice), so 1e-4/300 ran out of iterations with
+    # the residual already negligible. 2e-4 with 600 outer iterations
+    # converges there and still reproduces the analytical mass balance
+    # on the stiff test (−0.06%). Linear static runs converge in one
+    # outer pass either way, so none of this is applied to them.
+    ims_kwargs = dict(complexity=complexity, print_option="SUMMARY")
+    if tight_outer:
+        ims_kwargs.update(
+            outer_dvclose=2e-4, outer_maximum=600,
+            backtracking_number=10, backtracking_tolerance=1.05,
+            backtracking_reduction_factor=0.3,
+            backtracking_residual_limit=100.0,
+        )
+    ims = ModflowIms(sim, **ims_kwargs)
     gwf = ModflowGwf(sim, modelname=name, save_flows=True)
     sim.register_ims_package(ims, [gwf.name])
     return sim, gwf
@@ -184,6 +235,7 @@ def build_transient(
     recharge: bool = True,
     complexity: str = "MODERATE",
     recharge_multiplier: float = 1.0,
+    storage_convertible: bool = False,
 ) -> MFSimulation:
     """One transient stress period, with wells, optionally recharge + CHD.
 
@@ -197,11 +249,13 @@ def build_transient(
       water wherever pumping would dry a drain.
     Far-field boundary GHBs ride in `ghb_cells` in both modes.
     """
-    sim, gwf = _make_sim(workspace, name, perioddata=perioddata, complexity=complexity)
+    sim, gwf = _make_sim(workspace, name, perioddata=perioddata, complexity=complexity,
+                         tight_outer=storage_convertible)
     _add_dis(gwf, grid)
     _add_ic(gwf, initial_head)
     _add_npf(gwf, grid)
-    _add_sto(gwf, grid, transient=True, n_periods=len(perioddata))
+    _add_sto(gwf, grid, transient=True, n_periods=len(perioddata),
+             convertible=storage_convertible)
     if recharge:
         _add_rch(gwf, grid, multiplier=recharge_multiplier)
     _add_chd(gwf, chd_cells or [])

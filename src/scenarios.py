@@ -326,6 +326,7 @@ def run_scenario(
 
     # Stress periods end exactly on every output year (see build_perioddata).
     perioddata = build_perioddata(cfg)
+    storage_convertible = cfg.assessment.storage_mode == "convertible"
 
     name = f"scen_{scenario}"
     # Twin-run drawdown: run the same model with and without wells, and
@@ -347,6 +348,7 @@ def run_scenario(
         recharge=True,
         complexity=cfg.solver.complexity,
         recharge_multiplier=cfg.assessment.recharge_multiplier,
+        storage_convertible=storage_convertible,
     )
     sim_pump.write_simulation(silent=True)
     success, _ = sim_pump.run_simulation(silent=False)
@@ -372,6 +374,7 @@ def run_scenario(
             recharge=True,
             complexity=cfg.solver.complexity,
             recharge_multiplier=cfg.assessment.recharge_multiplier,
+            storage_convertible=storage_convertible,
         )
         sim_nopump.write_simulation(silent=True)
         success, _ = sim_nopump.run_simulation(silent=False)

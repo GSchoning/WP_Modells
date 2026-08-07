@@ -111,6 +111,7 @@ assessment:
   ghb_conductance_scale: 1.0
   ghb_heads: "ntop"
   outcrop_storage: "formation_sy" # uniform 5.878e-3 on both Hutton layers
+  storage_mode: "static"          # "convertible" = Ss<->Sy switching (see config.yaml)
   chd_quadrants: ["NW", "SE"]
 
 drains:

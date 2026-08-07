@@ -36,6 +36,17 @@ class Grid:
     rch: np.ndarray            # (nrow, ncol) — masked to outcrop
     outcrop_mask: np.ndarray   # (nrow, ncol) bool
     crs: str
+    # Convertible-storage support (assessment.storage_mode: "convertible").
+    # formation_sy: the formation-wide outcrop Sy (UWIR 2025 Table B.2-2
+    # convention), used as the sy array when STO iconvert=1. wt_mask marks
+    # the parent model's negative-SS water-table cells. ss_elastic is the
+    # ss array with those cells carrying a real elastic Ss (median of the
+    # positive active values) instead of the Sy/b decode — required in
+    # convertible mode so the mixed Ss+Sy formulation doesn't count the
+    # water-table yield twice. All None for synthetic grids unless set.
+    formation_sy: float | None = None
+    wt_mask: np.ndarray | None = None          # (nrow, ncol) bool
+    ss_elastic: np.ndarray | None = None       # (nlay, nrow, ncol)
 
 
 def _merge_layer_rows(
@@ -272,6 +283,14 @@ def build_grid_from_properties(
     else:
         ss = np.where(neg_sy, ss_abs / thickness, ss_abs)
 
+    # Elastic-Ss variant for convertible-storage mode: the negative-marked
+    # water-table cells carry no elastic Ss in the export (the marker
+    # replaced it), so give them the formation-typical (median positive
+    # active) value. Everywhere else it matches `ss`.
+    pos_ss = ss_abs[active & ~neg_ss]
+    elastic_fill = float(np.median(pos_ss)) if pos_ss.size else DEFAULT_SS_1_PER_M
+    ss_elastic = np.where(neg_ss, elastic_fill, ss)
+
     sanitised = {
         "k_negative_abs_taken": int(neg_k.sum()),
         "ss_negative_sy_decoded_as_dimensionless": int(neg_sy.sum()),
@@ -303,6 +322,9 @@ def build_grid_from_properties(
         ss=ss[np.newaxis, :, :],
         rch=rch,
         outcrop_mask=outcrop_mask,
+        formation_sy=formation_sy,
+        wt_mask=neg_ss,
+        ss_elastic=ss_elastic[np.newaxis, :, :],
         crs=crs,
     )
 

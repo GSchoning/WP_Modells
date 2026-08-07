@@ -154,6 +154,15 @@ assessment:
   # Sy is one formation-wide parameter. "as_exported" reverts to the
   # export's mixed per-cell magnitudes.
   outcrop_storage: "formation_sy"
+  # Storage formulation for the transients. "convertible" enables MF6
+  # Ss<->Sy conversion (STO iconvert=1, sy = the formation outcrop Sy):
+  # where pumping pulls confined head below the cell top, storage jumps
+  # to Sy exactly as in the parent model, instead of continuing to drain
+  # elastic storage (which over-predicts drawdown once cells
+  # depressurise). Transmissivity stays constant either way; results are
+  # identical while heads remain above cell tops. "static" is the legacy
+  # always-assigned-storage behaviour.
+  storage_mode: "static"
   # CHD placement used only in "chd_quadrants" mode, and as the final
   # convergence fallback.
   chd_quadrants: ["NW", "SE"]
