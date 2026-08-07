@@ -256,6 +256,10 @@ class LeakageCfg(BaseModel):
     # C = kv_over_b · dx·dy per cell. INTERIM: a single formation-wide
     # sensitivity value until the parent-model Kv arrays are extracted.
     kv_over_b_per_day: float | None = None
+    # Per-cell conductance derived from the parent model's calibrated Kz
+    # (scripts/derive_leakage_conductance.py): CSV with X, Y,
+    # cond_m2_per_day. Takes precedence over kv_over_b_per_day.
+    conductance_csv: Path | None = None
     conductance_scale: float = 1.0
     # Cells with no source-head coverage (outside the file's footprint)
     # simply get no leakage boundary.

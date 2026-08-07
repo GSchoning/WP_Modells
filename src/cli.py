@@ -176,7 +176,9 @@ def run(
     bc_cells = {(rec[1], rec[2]) for rec in chd_cells}
     bc_cells |= {(rec[1], rec[2]) for rec in boundary_ghb}
     bc_cells |= {(rec[1], rec[2]) for rec in drn_cells}
-    bc_cells |= {(rec[1], rec[2]) for rec in leak}
+    # Only anchor-strength leakage cells (>= 1 m²/d) count as BCs for
+    # island-anchor detection — see the note in api/app.py.
+    bc_cells |= {(rec[1], rec[2]) for rec in leak if rec[4] >= 1.0}
     anchors = anchor_ghb_cells(grid, bc_cells)
     if anchors:
         typer.echo(f"  {len(anchors)} weak anchor GHBs for BC-less active islands.")

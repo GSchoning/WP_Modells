@@ -35,10 +35,11 @@ def leakage_ghb_cells(cfg: Config, grid: Grid) -> tuple[list[GhbRecord], str]:
     lk = cfg.leakage
     if not lk.enabled:
         return [], "disabled"
-    if lk.kv_over_b_per_day is None or lk.source_heads_csv is None:
+    if lk.source_heads_csv is None or (lk.kv_over_b_per_day is None
+                                       and lk.conductance_csv is None):
         raise ValueError(
-            "leakage.enabled requires both leakage.kv_over_b_per_day and "
-            "leakage.source_heads_csv")
+            "leakage.enabled requires leakage.source_heads_csv and one of "
+            "leakage.conductance_csv / leakage.kv_over_b_per_day")
     path = Path(lk.source_heads_csv)
     if not path.exists():
         raise FileNotFoundError(f"leakage source heads not found: {path}")
@@ -59,15 +60,43 @@ def leakage_ghb_cells(cfg: Config, grid: Grid) -> tuple[list[GhbRecord], str]:
 
     dx = float(np.mean(grid.delr)) if grid.delr.size else 1500.0
     dy = float(np.mean(grid.delc)) if grid.delc.size else dx
-    cond = float(lk.kv_over_b_per_day) * dx * dy * float(lk.conductance_scale)
+    scale = float(lk.conductance_scale)
+
+    # Per-cell conductance: derived-from-Kz CSV when given (cells absent
+    # from the file get NO leakage boundary), else uniform Kv/b' · area.
+    cond_by_cell: dict[tuple[int, int], float] | None = None
+    if lk.conductance_csv is not None:
+        cpath = Path(lk.conductance_csv)
+        if not cpath.exists():
+            raise FileNotFoundError(f"leakage conductance CSV not found: {cpath}")
+        cdf = pd.read_csv(cpath)
+        if "cond_m2_per_day" not in cdf.columns:
+            raise ValueError(f"{cpath.name}: no 'cond_m2_per_day' column")
+        cond_by_cell = {}
+        for x, y, cv in zip(cdf["X"], cdf["Y"], cdf["cond_m2_per_day"]):
+            rc = cell_of(grid, float(x), float(y))
+            if rc is None or not np.isfinite(cv) or cv <= 0:
+                continue
+            cond_by_cell[rc] = cond_by_cell.get(rc, 0.0) + float(cv)
+        src_desc = f"C from {cpath.name}"
+    else:
+        uniform = float(lk.kv_over_b_per_day) * dx * dy
+        src_desc = f"C={uniform * scale:.3g} m²/d (Kv/b'={lk.kv_over_b_per_day:g}/d)"
 
     records: list[GhbRecord] = []
     for (r, c), hs in heads.items():
         if grid.idomain[0, r, c] != 1:
             continue
-        records.append((0, r, c, float(np.mean(hs)), cond))
+        if cond_by_cell is not None:
+            cond = cond_by_cell.get((r, c))
+            if cond is None:
+                continue
+        else:
+            cond = uniform
+        records.append((0, r, c, float(np.mean(hs)), cond * scale))
 
     n_active = int((grid.idomain[0] == 1).sum())
-    desc = (f"{len(records)}/{n_active} active cells, C={cond:.3g} m²/d "
-            f"(Kv/b'={lk.kv_over_b_per_day:g}/d), heads from {path.name}")
+    total_c = sum(rec[4] for rec in records)
+    desc = (f"{len(records)}/{n_active} active cells, {src_desc}, "
+            f"ΣC={total_c:.3g} m²/d, heads from {path.name}")
     return records, desc

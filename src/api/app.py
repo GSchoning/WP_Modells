@@ -370,7 +370,12 @@ def _bootstrap_ic() -> None:
         bc_cells = {(rec[1], rec[2]) for rec in chd}
         bc_cells |= {(rec[1], rec[2]) for rec in bghb}
         bc_cells |= {(rec[1], rec[2]) for rec in drn_cells}
-        bc_cells |= {(rec[1], rec[2]) for rec in leak}
+        # Leakage cells only count as anchoring BCs when their conductance
+        # is at least anchor-strength (1 m²/d): the calibrated deep-basin
+        # values (~1e-4 m²/d) are far too weak to define an island's
+        # datum, and treating them as BCs starved islands of anchors and
+        # left the steady-state matrix near-singular.
+        bc_cells |= {(rec[1], rec[2]) for rec in leak if rec[4] >= 1.0}
         anchors = anchor_ghb_cells(grid, bc_cells)
         if anchors:
             print(f"[boundary] {len(anchors)} weak anchor GHBs added for "

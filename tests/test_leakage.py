@@ -128,3 +128,33 @@ def test_builder_contract(tmp_path):
     with pytest.raises(FileNotFoundError):
         leakage_ghb_cells(_cfg(enabled=True, kv_over_b_per_day=1e-6,
                                source_heads_csv=str(tmp_path / "nope.csv")), grid)
+
+
+def test_builder_per_cell_conductance(tmp_path):
+    grid = _grid()
+    # source heads for the whole top-left 2x2 block; conductance for only
+    # THREE of those cells — uncovered cells get no leakage boundary.
+    hrows, crows = [], []
+    for r in range(2):
+        for c in range(2):
+            x = grid.xorigin + (c + 0.5) * 500.0
+            y = grid.yorigin + (grid.nrow - r - 0.5) * 500.0
+            hrows.append({"X": x, "Y": y, "head_predev_m": 90.0})
+            if not (r == 1 and c == 1):
+                crows.append({"X": x, "Y": y, "cond_m2_per_day": 0.5 + r + c})
+    src = tmp_path / "heads.csv"; pd.DataFrame(hrows).to_csv(src, index=False)
+    csv = tmp_path / "cond.csv"; pd.DataFrame(crows).to_csv(csv, index=False)
+
+    cfg = _cfg(enabled=True, source_heads_csv=str(src), conductance_csv=str(csv),
+               conductance_scale=2.0)
+    recs, desc = leakage_ghb_cells(cfg, grid)
+    assert len(recs) == 3                              # (1,1) had no conductance row
+    by_cell = {(rec[1], rec[2]): rec for rec in recs}
+    assert (1, 1) not in by_cell
+    assert by_cell[(0, 0)][4] == pytest.approx(0.5 * 2.0)    # scale applies
+    assert by_cell[(1, 0)][4] == pytest.approx(1.5 * 2.0)
+    assert all(rec[3] == 90.0 for rec in recs)
+    # conductance_csv takes precedence: kv_over_b also set changes nothing
+    cfg2 = _cfg(enabled=True, source_heads_csv=str(src), conductance_csv=str(csv),
+                kv_over_b_per_day=1e-3, conductance_scale=2.0)
+    assert leakage_ghb_cells(cfg2, grid)[0] == recs

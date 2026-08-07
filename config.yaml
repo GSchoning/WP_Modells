@@ -179,24 +179,23 @@ assessment:
 # remains the fallback when the file is absent. Steady state uses real
 # DRN cells; transient runs use the linearised (GHB) form so
 # superposition stays exact.
-# Quasi-3D vertical leakage through the confining beds (Hantush): every
-# active cell gets a head-dependent boundary with source head from a
-# steady-state head export and conductance C = (Kv/b')·cell area. This is
-# the single-layer model's missing vertical supply term — without it the
-# system is a closed container and late-time drawdown grows linearly
-# forever. The source head cancels in twin-run drawdown (it shapes the IC,
-# drain states and conversion margins); the conductance flattens the
-# curves. Hantush caveat: the source layer never draws down, so very-late-
-# time drawdown is slightly under-predicted vs full 3D.
-# DISABLED until the parent model's Kv arrays are extracted — enable with
-# a defensible kv_over_b or as an explicit sensitivity run. Interim source
-# heads: the aquifer's own pre-development surface (predev_heads.csv);
-# swap for adjacent_L23_heads.csv (overlying layer) once extracted.
+# Quasi-3D vertical leakage through the confining beds (Hantush): covered
+# cells get a head-dependent boundary with source head from the overlying
+# aquifer and conductance from the series formula through the Evergreen.
+# MEASURED FINDING (2026-08-08, parent-model calibrated Kz): the Precipice
+# is effectively SEALED — Evergreen-sequence harmonic Kz 1.8e-8 m/d gives
+# Kv/b' p50 ~1e-10/d, total conductance 17 m²/d over 31,912 covered cells
+# (scripts/derive_leakage_conductance.py). Enabling the calibrated field
+# moves complex 311 @100 yr only 10.92 -> 10.28 m; the container-draining
+# behaviour is real parent-model physics, NOT a missing-leakage artefact.
+# Left disabled (negligible effect, one more moving part); enable for the
+# calibrated run below, or set kv_over_b_per_day for sensitivity studies.
 leakage:
   enabled: false
-  # source_heads_csv: "Data/Properties_recharge/predev_heads.csv"
+  # source_heads_csv: "Data/Hutton/predev_heads.csv"   # overlying aquifer
   # head_col: "head_predev_m"
-  # kv_over_b_per_day: 1.0e-7    # aquitard Kv/b' (1/day) — sensitivity value
+  # conductance_csv: "Data/Properties_recharge/leakage_conductance.csv"
+  # kv_over_b_per_day: 1.0e-7    # uniform sensitivity alternative
   # conductance_scale: 1.0
 
 drains:

@@ -208,7 +208,13 @@ def build_steady_state(
     `ghb_cells`: far-field boundary GHBs (truncation faces) — the same
     records are reused unchanged in the transient runs.
     """
-    sim, gwf = _make_sim(workspace, name, perioddata=[(1.0, 1, 1.0)], complexity=complexity)
+    # tight_outer: the steady state carries real DRN cells, so the outer
+    # loop can flip-flop drain states; the presets' 50-iteration cap sat
+    # right at the edge (adding the tiny calibrated leakage GHBs tipped it
+    # into oscillation at two drain cells). Backtracking + headroom make
+    # the pre-run robust; a purely linear SS still converges in one pass.
+    sim, gwf = _make_sim(workspace, name, perioddata=[(1.0, 1, 1.0)], complexity=complexity,
+                         tight_outer=True)
     _add_dis(gwf, grid)
     _add_ic(gwf, initial_head if initial_head is not None else grid.top)
     _add_npf(gwf, grid)

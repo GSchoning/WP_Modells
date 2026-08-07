@@ -308,16 +308,25 @@ service mounts it for ad-hoc JupyterLab work).
   `tests/test_storage_conversion.py` pins all of this.
 - **Vertical leakage** (`leakage.*`, default off). The single-layer model
   has no vertical exchange — a closed container whose late-time drawdown
-  grows linearly forever (measured ~0.10–0.12 m/yr at the top Precipice
-  complexes even with convertible storage). The Hantush device restores
-  it: per-cell GHBs with source head from a steady-state head export
-  (`predev_heads.csv` interim; overlying-layer `adjacent_L*_heads.csv`
-  once extracted) and C = (Kv/b′)·cell area, riding in the SS pre-run and
-  both twins. The source head cancels in twin-run drawdown — it lifts the
-  IC toward the parent surface (fixing drain headroom and the below-base
-  fringe); the conductance is what flattens the curves. Off until a
-  defensible Kv/b′ exists (`tests/test_leakage.py` pins the flattening
-  and the head-cancellation properties).
+  grows linearly (~0.10–0.12 m/yr at the top Precipice complexes). The
+  Hantush device restores it: per-cell GHBs with source head from the
+  overlying aquifer's head export and conductance from either a uniform
+  Kv/b′ or the calibrated per-cell field
+  (`scripts/derive_leakage_conductance.py`, series formula through the
+  Evergreen using the parent `._kz`). The source head cancels in twin-run
+  drawdown; the conductance is what would flatten the curves — sweep:
+  Kv/b′ 1e-8/1e-7/1e-6 per day moves complex 311 @100 yr from 10.9 m to
+  2.2/0.4/0.05 m. **Measured with the parent's calibrated Kz, however,
+  the Precipice is effectively sealed** (Evergreen harmonic Kz 1.8e-8 m/d
+  → Kv/b′ p50 ~1e-10/d, ΣC = 17 m²/d; calibrated run shifts 311 only
+  10.92 → 10.28 m): container draining is real parent-model physics, not
+  a missing-leakage artefact, and the drawdown gap vs the regional model
+  must be explained elsewhere (well staging / horizon / what its
+  published maps attribute). Off by default; don't present the uniform
+  knob as calibrated. Leakage cells below anchor strength (1 m²/d) must
+  not count as island-anchoring BCs — that starvation left the SS matrix
+  near-singular. `tests/test_leakage.py` pins flattening, source-head
+  cancellation, and the builder contract.
   no head-dependent BC has a singular steady-state matrix (MF6 dies with a
   floating overflow). Each such component gets one deliberately weak
   (1 m²/d) GHB at its highest cell — defines the datum, exchanges
