@@ -15,7 +15,10 @@
 <div id="setup-app">
   <header>
     <div class="brand">
-      <a href="precipice.html" class="back-link" title="Back to main">←</a>
+      <!-- Prefer history.back() so returning restores the live dashboard
+           instead of stacking a fresh copy in the history chain. -->
+      <a href="precipice.html" class="back-link" title="Back to main"
+         onclick="if (history.length > 1 && document.referrer) { history.back(); return false; }">←</a>
       <div class="logo">GAB</div>
       <div>
         <h1>Model setup</h1>
