@@ -49,8 +49,11 @@ function borePopupHtml(p) {
   const m3d = Number(p.rate_m3_per_day) || 0;
   const mlyr = m3d * 365.25 / 1000;
   const id = p.bore_id != null ? GABORA.escapeHtml(String(p.bore_id)) : "(bore)";
+  const lic = (p.licensed === true || p.licensed === "true")
+    ? `<br/><span style="color:#3987e5;font-size:0.8em">licensed (entitlement)</span>`
+    : `<br/><span style="color:#64748b;font-size:0.8em">S&amp;D / other take</span>`;
   return `<strong>${id}</strong><br/>extraction: ${mlyr.toFixed(1)} ML/yr` +
-    `<br/><span style="color:#64748b;font-size:0.8em">${m3d.toFixed(1)} m³/day</span>`;
+    `<br/><span style="color:#64748b;font-size:0.8em">${m3d.toFixed(1)} m³/day</span>${lic}`;
 }
 
 async function projForward(lng, lat) {
@@ -250,8 +253,10 @@ function buildLayers(map, mapData) {
         // the median S&D bore stays a small dot and large licensed bores
         // stand out, with the biggest clamped at the top stop.
         "circle-radius": BORE_RADIUS_BY_RATE,
-        "circle-color": "#ef4444",
-        "circle-opacity": 0.6, "circle-stroke-color": "#7f1d1d",
+        // Licensed (entitlement) bores in blue, S&D/other take in grey —
+        // matches the licensed/S&D split used in the bar chart.
+        "circle-color": ["case", ["==", ["get", "licensed"], true], "#3987e5", "#94a3b8"],
+        "circle-opacity": 0.75, "circle-stroke-color": "#1e293b",
         "circle-stroke-width": 0.4,
       } });
     map.on("click", "pumping-circles", (e) => {
@@ -273,12 +278,11 @@ function buildLayers(map, mapData) {
           "interpolate", ["linear"], ["coalesce", ["get", "n_springs"], 1],
           1, 4,  10, 7,  50, 11,
         ],
+        // Green = below threshold, red = triggered/exceeding.
         "circle-color": [
           "case",
           ["==", ["get", "exceeds_threshold"], true], "#dc2626",
-          [">", ["coalesce", ["get", "s_total"], 0], STATE.threshold * 0.5], "#f59e0b",
-          [">", ["coalesce", ["get", "s_total"], 0], 0.05], "#fde68a",
-          "#2563eb",
+          "#16a34a",
         ],
         "circle-stroke-color": "#fff", "circle-stroke-width": 1.2,
         "circle-opacity": 0.95,

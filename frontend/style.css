@@ -97,8 +97,9 @@ body.resizing, body.resizing * { cursor: row-resize !important; user-select: non
 #map-legend > div { display: flex; align-items: center; gap: 0.55rem; margin-bottom: 0.25rem; }
 .dot { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 50%;
   box-shadow: 0 0 0 1px rgba(15,23,42,0.08); }
-.dot.pumping { background: var(--bad); }
-.dot.complex { background: var(--accent); }
+.dot.pumping { background: #94a3b8; }
+.dot.licensed { background: #3987e5; }
+.dot.complex { background: #16a34a; }
 .dot.exceed,
 .dot.triggered { background: var(--bad); border: 2px solid #fff; }
 .dot.already { background: var(--already); border: 2px solid #fff; }

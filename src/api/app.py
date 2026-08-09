@@ -1185,6 +1185,23 @@ def _execute_scenario(
         year_results, combined_bores,
         wells_xy=[(w["x"], w["y"]) for w in positive] if positive else None,
     )
+
+    # Per-complex classification into the scenario store, so the
+    # drawdown-maps page can colour the spring complexes per year the
+    # same way the dashboard does.
+    with state.jobs_lock:
+        entry = state.scenario_store.get(job_id)
+        if entry is not None:
+            entry["complexes_by_year"] = {
+                str(yr.time_years): [{
+                    "complex_id": c.complex_id,
+                    "s_total": c.s_total_m,
+                    "exceeds_threshold": c.exceeds_threshold,
+                    "already_exceeded": c.already_exceeded,
+                    "triggered_by_proposed": c.triggered_by_proposed,
+                } for c in yr.complexes]
+                for yr in year_results
+            }
     last_year = max(combined["time_years"].unique())
     last_complexes = [yr for yr in year_results if yr.time_years == last_year][0].complexes
     top_n = last_complexes[:10]
@@ -1466,17 +1483,27 @@ def map_data():
         "regulatory_threshold_m": cfg.assessment.regulatory_threshold_m,
         "formation_extent": _gdf_to_geojson(formation),
         "outcrop": _gdf_to_geojson(outcrop),
-        "pumping_bores": _gdf_to_geojson(
-            pumping[["bore_id", "rate_m3_per_day", "geometry"]]
-            if "bore_id" in pumping.columns
-            else pumping[["rate_m3_per_day", "geometry"]]
-        ),
+        "pumping_bores": _gdf_to_geojson(_pumping_bores_gdf(pumping)),
         "spring_complexes": state.complex_centroids_4326,
     })
 
 
 def _gdf_to_geojson(gdf):
     return json.loads(gdf.to_json())
+
+
+def _pumping_bores_gdf(pumping):
+    """Pumping bores trimmed to map columns, with a `licensed` flag so the
+    frontends can colour entitlement bores apart from S&D/other take."""
+    lic_ids: set[str] = set()
+    lb = state.inputs.licensed_bores
+    if lb is not None and "bore_id" in lb.columns:
+        lic_ids = set(lb["bore_id"].astype(str))
+    out = pumping.copy()
+    if "bore_id" in out.columns:
+        out["licensed"] = out["bore_id"].astype(str).isin(lic_ids)
+    cols = [c for c in ("bore_id", "rate_m3_per_day", "licensed") if c in out.columns]
+    return out[cols + ["geometry"]]
 
 
 _BLUE_RED_CMAP = mcolors.LinearSegmentedColormap.from_list(
@@ -1722,6 +1749,9 @@ def last_scenario_info(job: str | None = None):
         "image_corners_4326": _property_warp_meta()["image_corners_4326"],
         "bbox_4326": bbox["bbox"],
         "threshold_m": state.cfg.assessment.regulatory_threshold_m,
+        # Per-year spring-complex classification (id, s_total, exceedance
+        # flags) so the maps colour complexes like the dashboard does.
+        "complexes_by_year": entry.get("complexes_by_year") or {},
     })
 
 

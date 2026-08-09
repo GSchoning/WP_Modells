@@ -62,6 +62,7 @@ async function init() {
   sel.addEventListener("change", () => {
     updateOverlay("cumulative", sel.value);
     updateOverlay("additional", sel.value);
+    updateSpringImpacts(sel.value);
   });
 
   const opacity = $("opacity-slider");
@@ -141,6 +142,42 @@ function createMap(elementId, layer, year) {
   return map;
 }
 
+// Merge the scenario's per-complex results for `year` into the spring
+// centroid geojson, so the layer paint expressions can classify them.
+function springsWithImpacts(year) {
+  const base = STATE.mapData.spring_complexes;
+  const byYear = (STATE.info && STATE.info.complexes_by_year) || {};
+  // keys are stringified floats ("100.0"); match numerically.
+  const key = Object.keys(byYear).find((k) => Math.abs(Number(k) - Number(year)) < 1e-6);
+  const rows = key ? byYear[key] : [];
+  const lookup = new Map(rows.map((r) => [String(r.complex_id), r]));
+  return {
+    type: "FeatureCollection",
+    features: (base.features || []).map((f) => {
+      const r = lookup.get(String(f.properties?.complex_id));
+      return {
+        ...f,
+        properties: {
+          ...f.properties,
+          s_total: r ? r.s_total : null,
+          exceeds_threshold: r ? r.exceeds_threshold : false,
+          already_exceeded: r ? r.already_exceeded : false,
+          triggered_by_proposed: r ? r.triggered_by_proposed : false,
+        },
+      };
+    }),
+  };
+}
+
+function updateSpringImpacts(year) {
+  const data = springsWithImpacts(year);
+  for (const layer of ["cumulative", "additional"]) {
+    const m = STATE.maps[layer];
+    const src = m && m.getSource && m.getSource("springs");
+    if (src) src.setData(data);
+  }
+}
+
 function addContextLayers(map) {
   const md = STATE.mapData;
   if (!md) return;
@@ -158,9 +195,10 @@ function addContextLayers(map) {
     });
   }
 
-  // Spring complexes — cyan circles, sized by member count if available.
+  // Spring complexes — coloured by scenario impact at the selected year,
+  // exactly like the dashboard (red = exceeds threshold).
   if (md.spring_complexes && md.spring_complexes.features) {
-    map.addSource("springs", { type: "geojson", data: md.spring_complexes });
+    map.addSource("springs", { type: "geojson", data: springsWithImpacts($("year-select").value) });
     map.addLayer({
       id: "springs-pt", type: "circle", source: "springs",
       paint: {
@@ -169,10 +207,16 @@ function addContextLayers(map) {
           ["coalesce", ["get", "n_springs"], 1],
           1, 4, 10, 7, 50, 10,
         ],
-        "circle-color": "#22d3ee",
-        "circle-stroke-color": "#0e7490",
+        // Green = below threshold, red = triggered/exceeding (matches the
+        // dashboard).
+        "circle-color": [
+          "case",
+          ["==", ["get", "exceeds_threshold"], true], "#dc2626",
+          "#16a34a",
+        ],
+        "circle-stroke-color": "#fff",
         "circle-stroke-width": 1.2,
-        "circle-opacity": 0.92,
+        "circle-opacity": 0.95,
       },
     });
     map.on("click", "springs-pt", (e) => {
@@ -181,24 +225,33 @@ function addContextLayers(map) {
       const p = f.properties || {};
       const name = GABORA.escapeHtml(p.complex_id || p.name || "spring complex");
       const n = p.n_springs ? `<div class="muted-pop">${p.n_springs} member spring${p.n_springs === 1 ? "" : "s"}</div>` : "";
+      const s = p.s_total != null
+        ? `<div class="muted-pop">s_total ${Number(p.s_total).toFixed(2)} m @ ${$("year-select").value} yr</div>` : "";
+      const flag = (p.exceeds_threshold === true || p.exceeds_threshold === "true")
+        ? `<div style="color:#dc2626;font-weight:600">exceeds threshold</div>` : "";
       new maplibregl.Popup({ closeButton: true })
         .setLngLat(e.lngLat)
-        .setHTML(`<div><strong>${name}</strong></div>${n}`)
+        .setHTML(`<div><strong>${name}</strong></div>${s}${flag}${n}`)
         .addTo(map);
     });
   }
 
-  // Existing licensed (pumping) bores — small grey dots.
+  // Existing pumping bores — sized by extraction rate; licensed
+  // (entitlement) bores in blue, S&D/other take in grey (as on the
+  // dashboard).
   if (md.pumping_bores && md.pumping_bores.features) {
     map.addSource("pumping", { type: "geojson", data: md.pumping_bores });
     map.addLayer({
       id: "pumping-pt", type: "circle", source: "pumping",
       paint: {
-        "circle-radius": 4,
-        "circle-color": "#1f2937",
-        "circle-stroke-color": "#f8fafc",
-        "circle-stroke-width": 1.1,
-        "circle-opacity": 0.88,
+        "circle-radius": [
+          "interpolate", ["linear"], ["coalesce", ["get", "rate_m3_per_day"], 0],
+          0, 2, 5, 3, 25, 5, 100, 8, 400, 12,
+        ],
+        "circle-color": ["case", ["==", ["get", "licensed"], true], "#3987e5", "#94a3b8"],
+        "circle-stroke-color": "#1e293b",
+        "circle-stroke-width": 0.4,
+        "circle-opacity": 0.75,
       },
     });
     map.on("click", "pumping-pt", (e) => {
@@ -207,10 +260,13 @@ function addContextLayers(map) {
       const p = f.properties || {};
       const id = p.bore_id ? `<strong>${GABORA.escapeHtml(p.bore_id)}</strong>` : "existing bore";
       const rate = p.rate_m3_per_day != null
-        ? `<div class="muted-pop">${(p.rate_m3_per_day * 365 / 1000).toFixed(0)} ML/yr</div>`
+        ? `<div class="muted-pop">${(p.rate_m3_per_day * 365.25 / 1000).toFixed(0)} ML/yr</div>`
         : "";
+      const lic = (p.licensed === true || p.licensed === "true")
+        ? `<div class="muted-pop" style="color:#3987e5">licensed (entitlement)</div>`
+        : `<div class="muted-pop">S&amp;D / other take</div>`;
       new maplibregl.Popup({ closeButton: true })
-        .setLngLat(e.lngLat).setHTML(`<div>${id}</div>${rate}`)
+        .setLngLat(e.lngLat).setHTML(`<div>${id}</div>${rate}${lic}`)
         .addTo(map);
     });
   }
