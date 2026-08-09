@@ -338,6 +338,33 @@ def cell_of(grid: Grid, x: float, y: float) -> tuple[int, int] | None:
     return None
 
 
+def read_head_surface(
+    path, grid: Grid, head_col: str = "head_predev_m",
+) -> np.ndarray:
+    """Read a per-node head export onto the grid (NaN where uncovered).
+
+    The CSV needs X, Y (project-CRS cell centres) and `head_col` — the
+    extraction's predev_heads.csv / adjacent_L*_heads.csv schema. Points
+    are matched to cells by coordinate, so the file may come from any
+    layer; stacked multi-layer duplicates on one plan cell are averaged.
+    """
+    df = pd.read_csv(path)
+    if head_col not in df.columns:
+        raise ValueError(f"{path}: no '{head_col}' column (has {list(df.columns)})")
+    total = np.zeros((grid.nrow, grid.ncol))
+    count = np.zeros((grid.nrow, grid.ncol), dtype=int)
+    for x, y, h in zip(df["X"], df["Y"], df[head_col]):
+        if not np.isfinite(h):
+            continue
+        rc = cell_of(grid, float(x), float(y))
+        if rc is None:
+            continue
+        total[rc] += float(h)
+        count[rc] += 1
+    with np.errstate(invalid="ignore"):
+        return np.where(count > 0, total / np.maximum(count, 1), np.nan)
+
+
 def resolve_receptor_cells(
     xs, ys, grid: Grid, *, snap_max_m: float = 0.0,
 ) -> list[tuple[int, int, float] | None]:

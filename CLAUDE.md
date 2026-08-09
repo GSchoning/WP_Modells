@@ -190,11 +190,13 @@ Module responsibilities:
   without a proposal.
 - `GET /api/map-data`, `/api/aquifers`, `/api/existing-bores`,
   `/api/spring-series`, drawdown raster PNG endpoints, decision endpoints.
-- `GET/POST /api/model-settings` — runtime storage-mode switch (session
-  override; the config file sets the boot default). Baselines cache per
-  mode, so flipping back to a previously used mode is near-instant; a
-  first switch rebuilds in a background thread behind `run_lock` while
-  the UI polls. Sidebar "Model settings" control in the scenario UI.
+- `GET/POST /api/model-settings` — runtime switches for storage mode AND
+  initial-head source (session overrides; the config file sets the boot
+  defaults). Baselines cache per combination, so flipping back to a
+  previously used one is near-instant; a first switch rebuilds in a
+  background thread behind `run_lock` while the UI polls (an IC switch
+  also re-runs the steady-state pre-run). Sidebar "Model settings"
+  controls in the scenario UI.
 - Module selection: `?aquifer=<key>` or `X-Aquifer` header (middleware
   binds each request; default precipice).
 - **Frontend** (`frontend/`, static): `index.html`/`landing.js` — mock
@@ -331,6 +333,19 @@ service mounts it for ad-hoc JupyterLab work).
   floating overflow). Each such component gets one deliberately weak
   (1 m²/d) GHB at its highest cell — defines the datum, exchanges
   negligible flux, stays linear.
+- **Initial-head source** (`assessment.ic_source`). The IC cancels in
+  twin-run drawdown EXCEPT through the head-dependent switches (drain
+  drying, storage conversion) — and those dominate at the outcrop-
+  adjacent spring complexes. Our own steady state equilibrates ~15 m
+  (median) below the parent's pre-development surface (no vertical
+  support; the Evergreen is sealed, so leakage can't lift it), starving
+  the drains of discharge headroom. `"parent_predev"` overlays the
+  parent's `predev_heads.csv` on the SS (SS fills uncovered cells):
+  capture doubles and the top Precipice complexes drop 55–78%
+  (311: 10.92 → 2.41 m @100 yr). Default remains `"steady_state"`
+  (conservative) until the parent-heads benchmark shows whether the
+  parent model actually holds its `._sshds` surface. Runtime-switchable
+  per module via Model settings.
 - **Recharge cancels** in the twin-differenced drawdown (both runs carry
   the same RCHA); it matters only for the IC and drain-state
   classification. The recharge multiplier exists purely for sensitivity

@@ -22,6 +22,7 @@ inputs:
 
   # Steady-state recharge at ALL water-table recharge nodes.
   recharge_csv: "Data/Gubberamunda/recharge_SS.csv"
+  predev_heads_csv: "Data/Gubberamunda/predev_heads.csv"
   recharge_fallback_m_per_day: null
 
   # Parent-model calibrated boundary GHBs (western heads + southern
@@ -107,6 +108,7 @@ assessment:
   ghb_conductance_scale: 1.0
   ghb_heads: "ntop"
   outcrop_storage: "formation_sy" # 2.1985e-2 on the outcrop belt
+  ic_source: "steady_state"    # or "parent_predev" — see config.yaml
   storage_mode: "convertible"     # Ss<->Sy switching, as in the parent model (see config.yaml)
   chd_quadrants: ["NW", "SE"]
 

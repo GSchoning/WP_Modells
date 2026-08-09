@@ -249,6 +249,30 @@ def run_steady_state(
     return heads[-1]                              # (nrow, ncol)
 
 
+def resolve_initial_head(cfg: Config, grid: Grid, ss_head: np.ndarray) -> np.ndarray:
+    """The transient IC per assessment.ic_source.
+
+    "steady_state": the pre-run solution as-is. "parent_predev": the
+    parent model's pre-development surface overlaid on it (the SS fills
+    uncovered cells). The IC cancels in twin-run drawdown except through
+    the head-dependent switches (drain drying, storage conversion) — the
+    parent surface gives the outcrop drains their observed discharge
+    headroom, which our lower-equilibrating SS starves.
+    """
+    if cfg.assessment.ic_source != "parent_predev":
+        return ss_head
+    if cfg.inputs.predev_heads_csv is None:
+        raise ValueError(
+            'assessment.ic_source: "parent_predev" requires inputs.predev_heads_csv')
+    from .grid import read_head_surface
+    surf = read_head_surface(cfg.inputs.predev_heads_csv, grid)
+    covered = np.isfinite(surf)
+    print(f"[ic] parent predev heads on {int(covered.sum())} cells "
+          f"(steady state fills the remaining "
+          f"{int((grid.idomain[0] == 1).sum() - covered.sum())} active cells)")
+    return np.where(covered, surf, ss_head)
+
+
 def run_scenario(
     cfg: Config,
     grid: Grid,

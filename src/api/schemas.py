@@ -201,17 +201,24 @@ class ExistingBoresResponse(BaseModel):
 
 class ModelSettingsRequest(BaseModel):
     """Runtime model-formulation switch (session override; the config file
-    still sets the default that applies after a restart)."""
-    storage_mode: Literal["static", "convertible"]
+    still sets the defaults that apply after a restart). Set one or both."""
+    storage_mode: Literal["static", "convertible"] | None = None
+    ic_source: Literal["steady_state", "parent_predev"] | None = None
 
 
 class ModelSettingsResponse(BaseModel):
     storage_mode: Literal["static", "convertible"]     # effective (or target while rebuilding)
     config_default: Literal["static", "convertible"]
-    # Whether a complete baseline for each mode is already on disk —
-    # switching to a cached mode is near-instant; otherwise the baseline
-    # rebuilds (two MF6 runs, minutes).
-    baseline_cached: dict[str, bool]
+    ic_source: Literal["steady_state", "parent_predev"] = "steady_state"
+    ic_config_default: Literal["steady_state", "parent_predev"] = "steady_state"
+    # Parent-predev IC needs the predev heads export on disk.
+    ic_parent_available: bool = True
+    # Whether a complete baseline for each option is already on disk —
+    # switching to a cached combination is near-instant; otherwise the
+    # baseline rebuilds (MF6 runs, minutes). Keyed by the OTHER dimension
+    # held at its current value.
+    baseline_cached: dict[str, bool]                   # per storage mode
+    ic_baseline_cached: dict[str, bool] = {}           # per IC source
     rebuilding: bool = False
     rebuild_error: str | None = None
 

@@ -1622,23 +1622,35 @@ function renderStorageInfo(s) {
   if (s.rebuilding) {
     info.className = "muted rebuilding";
     info.textContent =
-      `Rebuilding the ${s.storage_mode} baseline… (minutes; scenarios wait for it)`;
+      `Rebuilding the baseline (${s.storage_mode} storage, ` +
+      `${s.ic_source === "parent_predev" ? "UWIR pre-development" : "steady-state"} ` +
+      `heads)… minutes; scenarios wait for it.`;
     return;
   }
   info.className = "muted";
-  const other = s.storage_mode === "static" ? "convertible" : "static";
-  const note = s.baseline_cached[other]
-    ? "both baselines cached — switching is instant"
-    : `first switch to ${other} rebuilds the baseline (~minutes)`;
-  const override = s.storage_mode !== s.config_default
-    ? ` Session override; config default is ${s.config_default}.` : "";
-  info.textContent = `Convertible lets storage jump to Sy where pumping ` +
-    `desaturates cells, as in the parent model. ${note}.${override}`;
+  const otherStor = s.storage_mode === "static" ? "convertible" : "static";
+  const otherIc = s.ic_source === "steady_state" ? "parent_predev" : "steady_state";
+  const notes = [];
+  notes.push(s.baseline_cached[otherStor]
+    ? "storage switch is instant (cached)"
+    : "first storage switch rebuilds (~minutes)");
+  notes.push(s.ic_baseline_cached[otherIc]
+    ? "initial-heads switch is instant (cached)"
+    : "first initial-heads switch rebuilds (~minutes)");
+  const overrides = [];
+  if (s.storage_mode !== s.config_default) overrides.push(`storage default: ${s.config_default}`);
+  if (s.ic_source !== s.ic_config_default) overrides.push(`heads default: ${s.ic_config_default}`);
+  info.textContent =
+    "UWIR pre-development heads give the outcrop drains their observed " +
+    "discharge headroom — spring impacts drop substantially vs the model's " +
+    "own (lower) steady state. " + notes.join("; ") + "." +
+    (overrides.length ? ` Session override (${overrides.join(", ")}).` : "");
 }
 
 async function initModelSettings() {
-  const sel = $("storage-mode");
-  if (!sel) return;
+  const selStor = $("storage-mode");
+  const selIc = $("ic-source");
+  if (!selStor) return;
   let s;
   try {
     s = await (await fetch("/api/model-settings")).json();
@@ -1646,33 +1658,41 @@ async function initModelSettings() {
     $("model-settings").hidden = true;
     return;
   }
-  sel.value = s.storage_mode;
+  selStor.value = s.storage_mode;
+  selIc.value = s.ic_source;
+  if (!s.ic_parent_available) {
+    selIc.querySelector('option[value="parent_predev"]').disabled = true;
+  }
   renderStorageInfo(s);
-  if (s.rebuilding) pollStorageMode();      // a switch was already in flight
+  if (s.rebuilding) pollModelSettings();    // a switch was already in flight
 
-  sel.addEventListener("change", async () => {
-    const prev = s.storage_mode;
+  async function postChange(body, sel, prev) {
     try {
       const r = await fetch("/api/model-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storage_mode: sel.value }),
+        body: JSON.stringify(body),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
       s = await r.json();
       renderStorageInfo(s);
-      if (s.rebuilding) pollStorageMode();
-      else setStatus(`storage mode: ${s.storage_mode}`);
+      if (s.rebuilding) pollModelSettings();
+      else setStatus(`model settings: ${s.storage_mode} / ${s.ic_source}`);
     } catch (err) {
       sel.value = prev;
       const info = $("storage-mode-info");
       info.className = "muted error";
       info.textContent = `switch failed: ${err.message}`;
     }
-  });
+  }
+  selStor.addEventListener("change", () =>
+    postChange({ storage_mode: selStor.value }, selStor, s.storage_mode));
+  selIc.addEventListener("change", () =>
+    postChange({ ic_source: selIc.value }, selIc, s.ic_source));
 
-  async function pollStorageMode() {
-    sel.disabled = true;
+  async function pollModelSettings() {
+    selStor.disabled = true;
+    selIc.disabled = true;
     $("run-btn").disabled = true;
     setStatus("rebuilding baseline…", "busy");
     for (;;) {
@@ -1683,12 +1703,14 @@ async function initModelSettings() {
       renderStorageInfo(s);
       if (!s.rebuilding) break;
     }
-    sel.disabled = false;
+    selStor.disabled = false;
+    selIc.disabled = false;
     $("run-btn").disabled = false;
-    sel.value = s.storage_mode;
+    selStor.value = s.storage_mode;
+    selIc.value = s.ic_source;
     setStatus(s.rebuild_error
-      ? "storage-mode switch failed"
-      : `storage mode: ${s.storage_mode} — baseline ready`,
+      ? "model-settings switch failed"
+      : `baseline ready (${s.storage_mode} / ${s.ic_source})`,
       s.rebuild_error ? "error" : undefined);
   }
 }

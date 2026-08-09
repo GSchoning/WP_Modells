@@ -117,7 +117,12 @@ def baseline_key(cfg: Config, config_path: Path) -> str:
         f"lic={sorted((cfg.inputs.water_use.licensed_filter or {}).items())}",
         f"dtm={cfg.drains.transient_mode}",
         f"stor={cfg.assessment.storage_mode}",
+        f"ic={cfg.assessment.ic_source}",
     ]
+    if (cfg.assessment.ic_source == "parent_predev"
+            and cfg.inputs.predev_heads_csv
+            and Path(cfg.inputs.predev_heads_csv).exists()):
+        parts.append(_file_sha256(Path(cfg.inputs.predev_heads_csv)))
     # Vertical leakage changes every number a baseline produces: key on
     # the knobs AND the source-head file content.
     if cfg.leakage.enabled:

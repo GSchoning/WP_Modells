@@ -18,7 +18,7 @@ from .grid import build_grid_from_properties
 from .io_layer import load_inputs, validate, load_recharge_by_inode, ML_PER_YEAR_TO_M3_PER_DAY
 from .model_builder import active_boundary_chd_cells
 from .reporting import write_impact_report, write_validation_report
-from .scenarios import run_scenario, run_steady_state
+from .scenarios import resolve_initial_head, run_scenario, run_steady_state
 from .superposition import combine_rasters, combine_receptor_tables
 
 app = typer.Typer(add_completion=False, help="Precipice POC pipeline")
@@ -200,6 +200,7 @@ def run(
         mean_top = float(np.nanmean(np.where(active, grid.top, np.nan)))
         typer.echo(f"  Falling back to uniform initial head = {mean_top:.1f} m (mean of active top).")
         ic_head = np.full_like(grid.top, mean_top)
+    ic_head = resolve_initial_head(cfg, grid, ic_head)
 
     # Transient drain treatment per drains.transient_mode: real DRN cells
     # (default — head-dependent, shut off below elevation; the combined

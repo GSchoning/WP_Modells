@@ -51,6 +51,7 @@ from ..model_builder import active_boundary_chd_cells, boundary_ghb_for_config
 from ..scenarios import (
     ScenarioResult,
     _boundary_drawdown_stats,
+    resolve_initial_head,
     run_scenario,
     run_steady_state,
 )
@@ -129,11 +130,14 @@ class _State:
     decisions_path: Path | None = None                # append-only audit-trail store
     aquifers_geojson: dict | None = None              # GeoJSON FC of GABORA units/subareas
     provenance: dict | None = None                    # config/input hashes + mf6 version
-    # Runtime model-settings switch (storage mode). The config file sets
-    # the default; the UI can override for the session. `settings_target`
-    # is the mode being switched to while the baseline rebuild runs.
+    # Runtime model-settings switch (storage mode / IC source). The config
+    # file sets the defaults; the UI can override for the session. The
+    # `settings_*_target` fields hold the values being switched to while
+    # the rebuild runs.
     config_default_storage_mode: str | None = None
-    settings_target: str | None = None
+    config_default_ic_source: str | None = None
+    settings_target: str | None = None                # storage mode
+    settings_ic_target: str | None = None
     settings_rebuilding: bool = False
     settings_error: str | None = None
 
@@ -384,6 +388,7 @@ def _bootstrap_ic() -> None:
         try:
             ic = run_steady_state(state.cfg, grid, workspace, chd_cells=chd,
                                   drn_cells=drn_cells, ghb_cells=bghb_eff)
+            ic = resolve_initial_head(state.cfg, grid, ic)
             state.chd_cells = chd
             state.boundary_ghb = bghb_eff
             state.ic_head = ic
@@ -402,7 +407,8 @@ def _bootstrap_ic() -> None:
     print("[boundary] all steady-state attempts failed; using uniform IC")
     active = grid.idomain[0] == 1
     mean_top = float(np.nanmean(np.where(active, grid.top, np.nan)))
-    state.ic_head = np.full_like(grid.top, mean_top)
+    state.ic_head = resolve_initial_head(
+        state.cfg, grid, np.full_like(grid.top, mean_top))
     # Use the safer (all-edges) CHD with the uniform IC.
     state.chd_cells = chd_unfiltered
     state.boundary_ghb = list(leak)
@@ -497,6 +503,7 @@ def _bootstrap_module(key: str, config_path: Path) -> None:
     state.decisions_path = Path("var") / f"decision_events{suffix}.jsonl"
     state.provenance = _build_provenance()
     state.config_default_storage_mode = state.cfg.assessment.storage_mode
+    state.config_default_ic_source = state.cfg.assessment.ic_source
 
     _bootstrap_ic()
     state.baseline = _bootstrap_baseline()
@@ -743,21 +750,36 @@ def healthz() -> HealthResponse:
     )
 
 
-def _storage_mode_key(mode: str) -> str:
-    """Baseline cache key this module would use under `mode` (no mutation)."""
+def _settings_key(storage_mode: str | None = None, ic_source: str | None = None) -> str:
+    """Baseline cache key this module would use under the given settings
+    (no mutation of the live cfg)."""
     cfg_copy = state.cfg.model_copy(deep=True)
-    cfg_copy.assessment.storage_mode = mode
+    if storage_mode is not None:
+        cfg_copy.assessment.storage_mode = storage_mode
+    if ic_source is not None:
+        cfg_copy.assessment.ic_source = ic_source
     return cache_mod.baseline_key(cfg_copy, state.config_path)
 
 
 def _model_settings_response() -> ModelSettingsResponse:
+    cur_ic = state.settings_ic_target or state.cfg.assessment.ic_source
+    parent_ok = bool(state.cfg.inputs.predev_heads_csv
+                     and Path(state.cfg.inputs.predev_heads_csv).exists())
     return ModelSettingsResponse(
         storage_mode=state.settings_target or state.cfg.assessment.storage_mode,
         config_default=state.config_default_storage_mode
             or state.cfg.assessment.storage_mode,
+        ic_source=cur_ic,
+        ic_config_default=state.config_default_ic_source
+            or state.cfg.assessment.ic_source,
+        ic_parent_available=parent_ok,
         baseline_cached={
-            mode: cache_mod.exists(_storage_mode_key(mode))
+            mode: cache_mod.exists(_settings_key(storage_mode=mode, ic_source=cur_ic))
             for mode in ("static", "convertible")
+        },
+        ic_baseline_cached={
+            ic: cache_mod.exists(_settings_key(ic_source=ic))
+            for ic in ("steady_state", "parent_predev")
         },
         rebuilding=state.settings_rebuilding,
         rebuild_error=state.settings_error,
@@ -769,19 +791,25 @@ def get_model_settings() -> ModelSettingsResponse:
     return _model_settings_response()
 
 
-def _apply_storage_mode(aquifer: str, mode: str) -> None:
-    """Worker thread: switch storage mode and rebind the baseline.
+def _apply_model_settings(aquifer: str, storage_mode: str | None,
+                          ic_source: str | None) -> None:
+    """Worker thread: switch model settings and rebind the baseline.
 
     Runs behind run_lock so no scenario is mid-flight when cfg mutates —
-    the same discipline as the recharge-multiplier re-baseline. The
-    steady-state IC does not depend on storage (no storage terms in a
-    steady solve), so only the baseline scenario runs are redone; if the
-    target mode's baseline is already cached this is near-instant.
+    the same discipline as the recharge-multiplier re-baseline. A storage
+    switch keeps the IC (steady solves have no storage terms); an IC
+    switch re-runs the bootstrap IC (steady state + overlay + drain
+    reclassification) before re-baselining. Cached targets are
+    near-instant.
     """
     _ACTIVE.set(aquifer)
     with state.run_lock:
         try:
-            state.cfg.assessment.storage_mode = mode
+            if storage_mode is not None:
+                state.cfg.assessment.storage_mode = storage_mode
+            if ic_source is not None:
+                state.cfg.assessment.ic_source = ic_source
+                _bootstrap_ic()
             state.baseline = _bootstrap_baseline()
             state.provenance = _build_provenance()
             state.settings_error = None
@@ -789,28 +817,40 @@ def _apply_storage_mode(aquifer: str, mode: str) -> None:
             state.settings_error = f"{type(exc).__name__}: {exc}"
         finally:
             state.settings_target = None
+            state.settings_ic_target = None
             state.settings_rebuilding = False
 
 
 @app.post("/api/model-settings", response_model=ModelSettingsResponse)
 def set_model_settings(req: ModelSettingsRequest) -> ModelSettingsResponse:
-    """Switch the storage formulation for this module (session override).
+    """Switch the storage formulation and/or IC source for this module
+    (session override).
 
-    Baselines are cached per mode (`stor=` in the cache key), so flipping
-    back to a previously used mode is near-instant; a first switch
-    rebuilds the baseline in the background (~minutes). Poll GET until
-    `rebuilding` is false. The config file still sets the boot default.
+    Baselines are cached per combination (`stor=` / `ic=` key parts), so
+    flipping back to a previously used one is near-instant; a first
+    switch rebuilds in the background (~minutes; an IC switch also
+    re-runs the steady-state pre-run). Poll GET until `rebuilding` is
+    false. The config file still sets the boot defaults.
     """
-    current = state.settings_target or state.cfg.assessment.storage_mode
-    if req.storage_mode == current:
+    cur_stor = state.settings_target or state.cfg.assessment.storage_mode
+    cur_ic = state.settings_ic_target or state.cfg.assessment.ic_source
+    want_stor = req.storage_mode if req.storage_mode not in (None, cur_stor) else None
+    want_ic = req.ic_source if req.ic_source not in (None, cur_ic) else None
+    if want_ic == "parent_predev" and not (
+            state.cfg.inputs.predev_heads_csv
+            and Path(state.cfg.inputs.predev_heads_csv).exists()):
+        raise HTTPException(status_code=400,
+                            detail="parent predev heads export not available for this module")
+    if want_stor is None and want_ic is None:
         return _model_settings_response()
     if state.settings_rebuilding:
-        raise HTTPException(status_code=409, detail="a storage-mode switch is already in progress")
-    state.settings_target = req.storage_mode
+        raise HTTPException(status_code=409, detail="a model-settings switch is already in progress")
+    state.settings_target = want_stor
+    state.settings_ic_target = want_ic
     state.settings_rebuilding = True
     state.settings_error = None
     threading.Thread(
-        target=_apply_storage_mode, args=(_ACTIVE.get(), req.storage_mode),
+        target=_apply_model_settings, args=(_ACTIVE.get(), want_stor, want_ic),
         daemon=True,
     ).start()
     return _model_settings_response()

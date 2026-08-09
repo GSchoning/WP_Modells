@@ -49,6 +49,11 @@ class InputsCfg(BaseModel):
     # CSV's rch column is empty (as the delivered export is). Applied at
     # exactly the cells OGIA recharges (northern exposed-outcrop belt).
     recharge_csv: Path | None = None
+    # Parent-model pre-development heads (extraction export: INODE, X, Y,
+    # ILAY, head_predev_m). Used when assessment.ic_source is
+    # "parent_predev"; multi-layer files stack per plan cell and are
+    # averaged.
+    predev_heads_csv: Path | None = None
     # Parent-model calibrated GHB export (ghb_cells.csv from
     # scripts/extract_uwir2025.py). When set and present, boundary GHBs in
     # "uwir_ghb" mode use these cells/heads/conductances instead of the
@@ -158,6 +163,24 @@ class AssessmentCfg(BaseModel):
     # None falls back to geometric-mean T / median S over active cells.
     theis_T_m2_per_day: float | None = None
     theis_S: float | None = None
+    # Initial-condition source for every transient run:
+    #   - "steady_state" (default): our own MF6 steady-state pre-run
+    #     (recharge + drains + boundary GHBs). Self-consistent, but it
+    #     equilibrates ~15 m (median) BELOW the parent model's
+    #     pre-development surface (no vertical support), which starves
+    #     the outcrop drains of discharge headroom.
+    #   - "parent_predev": overlay the parent model's pre-development
+    #     heads (inputs.predev_heads_csv) onto the steady-state solution
+    #     (SS fills uncovered cells). The IC cancels in twin-run drawdown
+    #     EXCEPT through the head-dependent switches — drain drying and
+    #     storage conversion — and those are exactly where it matters:
+    #     measured on the Precipice A baseline @100 yr, capture doubles
+    #     and the top spring complexes drop 55-78% (311: 10.9 -> 2.4 m).
+    #     Caveat: the parent surface is not an equilibrium of THIS model,
+    #     so the no-pump twin drifts toward our own steady state (the
+    #     drift itself cancels; the drain/conversion states early in the
+    #     run reflect the parent surface).
+    ic_source: Literal["steady_state", "parent_predev"] = "steady_state"
     # Storage formulation for the transient runs:
     #   - "convertible" (default): MF6 STO iconvert=1 with sy = formation
     #     outcrop Sy, matching the parent model's Ss<->Sy switching.

@@ -32,6 +32,9 @@ inputs:
   # belt, 215 cells, ~12,400 ML/yr). Recharge cancels in the twin-
   # differenced drawdown; it shapes the IC and drain states.
   recharge_csv: "Data/Properties_recharge/Precipice_L24_SS_recharge.csv"
+  # Parent-model pre-development heads (used when assessment.ic_source
+  # is "parent_predev").
+  predev_heads_csv: "Data/Properties_recharge/predev_heads.csv"
   # Uniform-over-outcrop last resort if neither rch column nor the CSV
   # above provides values (UWIR balance ÷ area = 5.63e-5 m/d).
   recharge_fallback_m_per_day: 5.63e-5
@@ -154,6 +157,14 @@ assessment:
   # Sy is one formation-wide parameter. "as_exported" reverts to the
   # export's mixed per-cell magnitudes.
   outcrop_storage: "formation_sy"
+  # Initial heads for the transients. "parent_predev" overlays the UWIR
+  # pre-development surface (inputs.predev_heads_csv) on the steady
+  # state — the outcrop drains then hold their observed discharge
+  # headroom, and measured Precipice spring impacts drop 55-78%
+  # (311: 10.9 -> 2.4 m @100 yr). "steady_state" (default) is the
+  # model's own (lower) equilibrium — conservative for springs.
+  # Runtime-switchable in the UI Model settings.
+  ic_source: "steady_state"
   # Storage formulation for the transients. "convertible" (default)
   # enables MF6 Ss<->Sy conversion (STO iconvert=1, sy = the formation
   # outcrop Sy): where pumping pulls confined head below the cell top,
