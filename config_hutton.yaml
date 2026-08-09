@@ -112,7 +112,7 @@ assessment:
   ghb_conductance_scale: 1.0
   ghb_heads: "ntop"
   outcrop_storage: "formation_sy" # uniform 5.878e-3 on both Hutton layers
-  ic_source: "steady_state"    # or "parent_predev" — see config.yaml
+  ic_source: "parent_predev"   # UWIR predev surface (see config.yaml)
   storage_mode: "convertible"     # Ss<->Sy switching, as in the parent model (see config.yaml)
   chd_quadrants: ["NW", "SE"]
 

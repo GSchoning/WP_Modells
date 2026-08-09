@@ -342,10 +342,12 @@ service mounts it for ad-hoc JupyterLab work).
   the drains of discharge headroom. `"parent_predev"` overlays the
   parent's `predev_heads.csv` on the SS (SS fills uncovered cells):
   capture doubles and the top Precipice complexes drop 55–78%
-  (311: 10.92 → 2.41 m @100 yr). Default remains `"steady_state"`
-  (conservative) until the parent-heads benchmark shows whether the
-  parent model actually holds its `._sshds` surface. Runtime-switchable
-  per module via Model settings.
+  (311: 10.92 → 2.41 m @100 yr). `"parent_predev"` is the DEFAULT (user
+  decision 2026-08-09; it also lands nearest regional-model-scale
+  expectations); `"steady_state"` is the conservative sensitivity case,
+  runtime-switchable per module via Model settings. The parent-heads
+  benchmark (extraction extras) will confirm whether the parent model
+  holds its `._sshds` surface.
 - **Recharge cancels** in the twin-differenced drawdown (both runs carry
   the same RCHA); it matters only for the IC and drain-state
   classification. The recharge multiplier exists purely for sensitivity

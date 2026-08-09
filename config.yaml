@@ -157,14 +157,14 @@ assessment:
   # Sy is one formation-wide parameter. "as_exported" reverts to the
   # export's mixed per-cell magnitudes.
   outcrop_storage: "formation_sy"
-  # Initial heads for the transients. "parent_predev" overlays the UWIR
-  # pre-development surface (inputs.predev_heads_csv) on the steady
-  # state — the outcrop drains then hold their observed discharge
-  # headroom, and measured Precipice spring impacts drop 55-78%
-  # (311: 10.9 -> 2.4 m @100 yr). "steady_state" (default) is the
-  # model's own (lower) equilibrium — conservative for springs.
-  # Runtime-switchable in the UI Model settings.
-  ic_source: "steady_state"
+  # Initial heads for the transients. "parent_predev" (default) overlays
+  # the UWIR pre-development surface (inputs.predev_heads_csv) on the
+  # steady state — the outcrop drains then hold their observed discharge
+  # headroom (capture doubles; Precipice spring impacts drop 55-78%,
+  # 311: 10.9 -> 2.4 m @100 yr). "steady_state" is the model's own
+  # (lower) equilibrium — the conservative sensitivity case, kept
+  # runtime-switchable in the UI Model settings.
+  ic_source: "parent_predev"
   # Storage formulation for the transients. "convertible" (default)
   # enables MF6 Ss<->Sy conversion (STO iconvert=1, sy = the formation
   # outcrop Sy): where pumping pulls confined head below the cell top,
