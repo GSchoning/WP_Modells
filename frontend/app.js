@@ -123,6 +123,17 @@ async function init() {
     runScenario(map);
   });
 
+  // Reset: drop the current scenario (form, results, markers, saved
+  // session state for THIS aquifer) and reload to a pristine dashboard.
+  $("reset-btn").addEventListener("click", () => {
+    if (STATE.lastResult
+        && !confirm("Clear the current scenario and its results from the page?")) {
+      return;
+    }
+    try { sessionStorage.removeItem(SCENARIO_STATE_KEY); } catch (e) { /* non-fatal */ }
+    location.reload();
+  });
+
   initModelSettings();
 
   document.querySelectorAll('input[name="scenario-type"]').forEach((r) => {

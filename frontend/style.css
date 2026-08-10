@@ -203,6 +203,13 @@ body.resizing, body.resizing * { cursor: row-resize !important; user-select: non
 #scenario-form button:active { transform: translateY(0); }
 #scenario-form button:disabled { background: var(--ink-3); cursor: progress;
   transform: none; box-shadow: var(--shadow-sm); }
+#scenario-form #reset-btn {
+  background: var(--surface-2); color: var(--ink-1);
+  border: 1px solid var(--line-strong); box-shadow: none;
+  margin-top: 0.45rem; padding: 0.55rem;
+}
+#scenario-form #reset-btn:hover { background: var(--surface-0);
+  transform: none; box-shadow: none; }
 #model-settings {
   margin-top: 1.1rem; padding-top: 1rem; border-top: 1px solid var(--line);
 }
