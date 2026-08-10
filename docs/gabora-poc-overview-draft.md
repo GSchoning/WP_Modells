@@ -4,9 +4,7 @@
 
 > The work presented in this document provides an update on a component of ongoing work to support the assessment and management of water resource development impacts. It is not a statutory document. Conclusions are subject to further review and changes ahead of any operational deployment and other reporting as needed.
 
-*Citation:* X (2026), A proof-of-concept tool for cumulative impact assessment of water licence applications in the GABORA water plan area. A proof-of-concept overview, Department of Local Government, Water and Volunteers, Queensland Government, Australia. August 2026.
-
-*Contributors:* [to be confirmed]
+*Contributors:* Gerhard Schöning
 
 ---
 
@@ -14,7 +12,7 @@
 
 ### 1.1  Primary target audience
 
-This overview is prepared for departmental officers involved in water licensing and groundwater assessment, and for technical reviewers of the proof of concept. A basic understanding of Great Artesian Basin (GAB) hydrogeology and of groundwater licensing in Queensland is implied. This paper summarises the approach and its benefits; the full technical detail, configuration and test suite sit with the tool's repository documentation.
+This overview is prepared for departmental officers involved in water licensing and groundwater assessment. A basic understanding of Great Artesian Basin (GAB) hydrogeology and of groundwater licensing in Queensland is implied. This paper summarises the approach and its benefits; the full technical detail, configuration and test suite sit with the tool's repository documentation.
 
 ### 1.2  Background
 
