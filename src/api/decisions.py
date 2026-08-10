@@ -268,6 +268,34 @@ def clear_all(path: Path, regulator: str) -> int:
     return n
 
 
+def archive_all(path: Path, regulator: str) -> dict[str, Any]:
+    """Start a fresh, empty ledger; the existing event file is renamed to
+    a timestamped archive alongside it (never deleted — the audit trail
+    stays recoverable on disk). Returns counts + the archive filename.
+
+    Archiving removes any still-active approvals from the legislative
+    state, so callers must re-baseline when n_active_before > 0.
+    """
+    with _LOCK:
+        decisions = _load_folded(path)
+        n_active = sum(1 for d in decisions
+                       if d.get("decision") == "approve" and d.get("status") == "active")
+        archive_name = None
+        if path.exists():
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            archive = path.with_name(f"{path.stem}.archived-{stamp}{path.suffix}")
+            path.rename(archive)
+            archive_name = archive.name
+            # Leave a marker in the archive recording who archived it.
+            _append_event(archive, {
+                "event": "archived",
+                "regulator": regulator or "unknown",
+                "at": _now_iso(),
+            })
+    return {"archived_to": archive_name, "n_decisions": len(decisions),
+            "n_active_before": n_active}
+
+
 def active_approved_ids(path: Path) -> list[str]:
     """IDs of approve decisions still active (i.e. in the legislative state)."""
     with _LOCK:

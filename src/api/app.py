@@ -1456,6 +1456,20 @@ def clear_decisions(req: RollbackRequest) -> DecisionsResponse:
     )
 
 
+@app.post("/api/decisions/archive", response_model=DecisionsResponse)
+def archive_decisions(req: RollbackRequest) -> DecisionsResponse:
+    """Start a fresh decision ledger; the current one is renamed to a
+    timestamped archive under var/ (kept on disk, out of the panel).
+    Re-baselines if any archived approval was still active."""
+    info = decisions_mod.archive_all(_decisions_path(), req.regulator)
+    if info["n_active_before"]:
+        _refresh_legislative_async()
+    if info["archived_to"]:
+        print(f"[decisions] ledger archived to var/{info['archived_to']} "
+              f"({info['n_decisions']} decisions, {info['n_active_before']} were active)")
+    return DecisionsResponse(decisions=[], active_head_id=None)
+
+
 @app.post("/api/decisions/{decision_id}/reverse", response_model=DecisionsResponse)
 def reverse_decision_endpoint(decision_id: str, req: RollbackRequest) -> DecisionsResponse:
     """Reverse ONE active approval (later approvals stay active) and

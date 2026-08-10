@@ -87,6 +87,29 @@ def test_reverse_and_clear(tmp_path):
     assert [w["label"] for w in dmod.active_approved_wells(p)] == ["A"]
 
 
+def test_archive_all_starts_fresh_ledger(tmp_path):
+    p = tmp_path / "events.jsonl"
+    _record(p, "approve", [{"label": "A", "x": 1.0, "y": 2.0, "rate_ML_per_year": 10.0}])
+    _record(p, "reject", [{"label": "B", "x": 3.0, "y": 4.0, "rate_ML_per_year": 5.0}])
+
+    info = dmod.archive_all(p, "test")
+    assert info["n_decisions"] == 2 and info["n_active_before"] == 1
+    assert info["archived_to"] and not p.exists()
+    archive = tmp_path / info["archived_to"]
+    assert archive.exists()                              # records preserved on disk
+    assert dmod.active_approved_wells(p) == []           # legislative state empty
+    assert dmod.list_decisions(p) == []                  # panel empty
+
+    # numbering restarts on the fresh ledger
+    d = _record(p, "approve", [{"label": "C", "x": 5.0, "y": 6.0, "rate_ML_per_year": 1.0}])
+    assert d["id"] == "dec_00001"
+
+    # archiving an absent/empty ledger is a no-op
+    empty = tmp_path / "nothing.jsonl"
+    info2 = dmod.archive_all(empty, "test")
+    assert info2["archived_to"] is None and info2["n_decisions"] == 0
+
+
 def _inputs():
     def gdf(ids, rates):
         return gpd.GeoDataFrame(

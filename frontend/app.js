@@ -1291,11 +1291,41 @@ function reverseDecision(id) {
     `${id} reversed`);
 }
 
-function clearAllDecisions() {
-  _decisionAction(
-    "/api/decisions/clear",
-    "Clear ALL active approvals? The legislative baseline reverts to the raw water-use dataset. Records remain in the audit trail and can be restored individually.",
-    "all approvals cleared");
+async function clearAllDecisions() {
+  if (!confirm("Clear ALL active approvals? The legislative baseline reverts to the raw water-use dataset. Records remain in the audit trail and can be restored individually.")) {
+    return;
+  }
+  try {
+    const r = await fetch("/api/decisions/clear", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ regulator: regulatorName() }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    renderHistory(await r.json());
+    setStatus("all approvals cleared", "ok");
+    pollLegislativeRebuild();
+  } catch (err) {
+    setStatus(`clear failed: ${err.message}`, "error");
+    return;
+  }
+  // Follow-up: optionally empty the history list too. The ledger is
+  // archived to a timestamped file under var/ on the server — records
+  // are preserved on disk, just out of the panel; numbering restarts.
+  if (confirm("Approvals cleared. Also clear the decision history list?\n\nThe records are archived to a file on the server (var/) — not deleted — but they no longer appear in this panel and cannot be restored from the UI.")) {
+    try {
+      const r = await fetch("/api/decisions/archive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ regulator: regulatorName() }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      renderHistory(await r.json());
+      setStatus("decision history archived", "ok");
+    } catch (err) {
+      setStatus(`history archive failed: ${err.message}`, "error");
+    }
+  }
 }
 
 function openHistoryPanel() {
