@@ -124,8 +124,9 @@ python -m src.cli serve --config config.yaml
 rm -rf outputs/cache
 python -m src.cli serve --config config.yaml
 
-# Port 8000 already in use:
-lsof -ti :8000 | xargs -r kill -9
+# Port 8000 already in use ("[Errno 98] address already in use" — a
+# previous server is still running; the image has no lsof/pkill):
+python scripts/kill_server.py
 ```
 
 ## CLI pipeline (offline reports)
