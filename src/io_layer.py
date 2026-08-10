@@ -29,10 +29,9 @@ class Inputs:
 
 ML_PER_YEAR_TO_M3_PER_DAY = 1000.0 / 365.25
 
-# Springs >1 km from the outcrop are not hydrologically connected to the
-# Precipice in a way this single-layer model can represent, so we drop them
-# at ingest rather than reporting drawdown that's structurally meaningless.
-SPRINGS_OUTCROP_BUFFER_M = 1000.0
+# Springs beyond assessment.spring_outcrop_buffer_m from the outcrop are
+# dropped at ingest — see config.AssessmentCfg. (The old module constant
+# SPRINGS_OUTCROP_BUFFER_M was 1 km; the knob default is 3 km.)
 
 
 def _read_water_use(cfg: Config) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, gpd.GeoDataFrame]:
@@ -224,14 +223,15 @@ def load_inputs(cfg: Config) -> Inputs:
     springs = _read_springs(cfg)
 
     if springs is not None and len(springs):
-        outcrop_buffered = outcrop.unary_union.buffer(SPRINGS_OUTCROP_BUFFER_M)
+        buffer_m = float(cfg.assessment.spring_outcrop_buffer_m)
+        outcrop_buffered = outcrop.union_all().buffer(buffer_m)
         near_outcrop = springs.within(outcrop_buffered)
         n_dropped = int((~near_outcrop).sum())
         if n_dropped:
             import sys
             print(
                 f"[springs] dropped {n_dropped} of {len(springs)} springs "
-                f">{SPRINGS_OUTCROP_BUFFER_M:.0f} m from outcrop; "
+                f">{buffer_m:.0f} m from outcrop; "
                 f"kept {int(near_outcrop.sum())}",
                 file=sys.stderr,
             )

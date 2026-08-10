@@ -156,6 +156,12 @@ class AssessmentCfg(BaseModel):
     # active footprint. Springs farther than this from any active cell are
     # still excluded. 0 disables snapping.
     spring_snap_max_m: float = 3000.0
+    # Ingest filter: springs farther than this from the module's outcrop
+    # are dropped — beyond it, a connection to THIS aquifer is not
+    # something the single-layer model can represent, so reporting a
+    # drawdown there would be structurally meaningless. At 1500 m cells,
+    # 3 km is two cells of slack around the mapped outcrop.
+    spring_outcrop_buffer_m: float = 3000.0
     # Aquifer parameters for the Theis analytical comparison columns.
     # When set, these OVERRIDE the formation-averaged values — use the
     # department's standard assessment parameters so the Theis columns
