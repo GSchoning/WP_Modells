@@ -53,6 +53,40 @@ def test_active_approved_wells_folds_ledger(tmp_path):
     assert dmod.approved_wells_fingerprint(wells2) != fp_all
 
 
+def test_reverse_and_clear(tmp_path):
+    p = tmp_path / "events.jsonl"
+    d1 = _record(p, "approve", [{"label": "A", "x": 1.0, "y": 2.0, "rate_ML_per_year": 10.0}])
+    d2 = _record(p, "approve", [{"label": "B", "x": 3.0, "y": 4.0, "rate_ML_per_year": 20.0}])
+    d3 = _record(p, "approve", [{"label": "C", "x": 5.0, "y": 6.0, "rate_ML_per_year": 30.0}])
+
+    # Reverse the MIDDLE approval: the others stay active.
+    rec = dmod.reverse_decision(p, d2["id"], "test")
+    assert rec["status"] == "reversed" and rec["reversed_by"] == "test"
+    assert [w["label"] for w in dmod.active_approved_wells(p)] == ["A", "C"]
+
+    # Reversing a non-active or non-approve decision fails loudly.
+    with pytest.raises(ValueError):
+        dmod.reverse_decision(p, d2["id"], "test")
+    with pytest.raises(KeyError):
+        dmod.reverse_decision(p, "dec_99999", "test")
+
+    # Rollback-to-d2 restores it (and rolls back d3).
+    dmod.rollback_to(p, d2["id"], "test")
+    assert [w["label"] for w in dmod.active_approved_wells(p)] == ["A", "B"]
+
+    # Clear reverses everything active; the audit records remain.
+    n = dmod.clear_all(p, "test")
+    assert n == 2
+    assert dmod.active_approved_wells(p) == []
+    statuses = {d["id"]: d["status"] for d in dmod.list_decisions(p)}
+    assert statuses[d1["id"]] == "reversed" and statuses[d2["id"]] == "reversed"
+    # A clear on an already-empty state appends nothing.
+    assert dmod.clear_all(p, "test") == 0
+    # ...and any record can still be restored afterwards.
+    dmod.rollback_to(p, d1["id"], "test")
+    assert [w["label"] for w in dmod.active_approved_wells(p)] == ["A"]
+
+
 def _inputs():
     def gdf(ids, rates):
         return gpd.GeoDataFrame(

@@ -178,6 +178,8 @@ async function init() {
   if (histBtn)   histBtn.addEventListener("click", openHistoryPanel);
   if (histClose) histClose.addEventListener("click", closeHistoryPanel);
   if (histScrim) histScrim.addEventListener("click", closeHistoryPanel);
+  const clearBtn = document.getElementById("clear-decisions-btn");
+  if (clearBtn) clearBtn.addEventListener("click", clearAllDecisions);
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !document.getElementById("history-panel").hidden) {
       closeHistoryPanel();
@@ -1092,6 +1094,44 @@ function buildScenarioSummary(result) {
   };
 }
 
+/* ---- Legislative-baseline rebuild feedback -------------------------------
+ * Approvals, reversals, rollbacks and clears re-baseline the existing take
+ * in the background. Surface that: banner + status, Run locked out, poll
+ * /api/model-settings until the rebuild finishes. */
+let REBUILD_POLLING = false;
+
+async function pollLegislativeRebuild() {
+  if (REBUILD_POLLING) return;
+  REBUILD_POLLING = true;
+  const banner = $("legislative-banner");
+  if (banner) banner.hidden = false;
+  $("run-btn").disabled = true;
+  for (const id of ["storage-mode", "ic-source"]) {
+    const el = $(id);
+    if (el) el.disabled = true;
+  }
+  setStatus("updating the legislative scenario…", "busy");
+  let s = null;
+  for (;;) {
+    await new Promise((res) => setTimeout(res, 4000));
+    try {
+      s = await (await fetch("/api/model-settings")).json();
+    } catch (e) { continue; }
+    if (!s.rebuilding) break;
+  }
+  if (banner) banner.hidden = true;
+  $("run-btn").disabled = false;
+  for (const id of ["storage-mode", "ic-source"]) {
+    const el = $(id);
+    if (el) el.disabled = false;
+  }
+  setStatus(
+    s && s.rebuild_error
+      ? `legislative update failed: ${s.rebuild_error}`
+      : "legislative scenario updated — new runs use the revised baseline",
+    s && s.rebuild_error ? "error" : "ok");
+}
+
 async function recordDecision(kind) {
   if (!STATE.lastResult) {
     setStatus("run a scenario before recording a decision", "error");
@@ -1123,6 +1163,9 @@ async function recordDecision(kind) {
     setStatus(`decision recorded (${kind})`, "ok");
     // If the panel is open, refresh it.
     if (!$("history-panel").hidden) loadHistory();
+    // Approvals join the legislative baseline — show the wait message
+    // while the background re-baseline runs.
+    if (kind === "approve") pollLegislativeRebuild();
   } catch (err) {
     console.error(err);
     setStatus(`failed to record decision: ${err.message}`, "error");
@@ -1177,13 +1220,18 @@ function renderHistory(data) {
     }
     const when = new Date(d.created_at).toLocaleString();
     const statusClass = d.status;
-    const statusLabel = ({ active: "Active", rolled_back: "Rolled back", rejected: "Rejected" })[d.status] || d.status;
+    const statusLabel = ({ active: "Active", rolled_back: "Rolled back", rejected: "Rejected", reversed: "Reversed" })[d.status] || d.status;
     const canRollback = d.decision === "approve" && d.status !== "active";
-    const rollbackBtn = canRollback
-      ? `<button type="button" class="rollback-btn" data-id="${d.id}">Restore to here</button>`
-      : isHead
-        ? `<span class="head-chip">head</span>`
-        : "";
+    const canReverse = d.decision === "approve" && d.status === "active";
+    let rowBtns = "";
+    if (canReverse) {
+      rowBtns += `<button type="button" class="reverse-btn" data-id="${d.id}">Reverse</button>`;
+    }
+    if (canRollback) {
+      rowBtns += `<button type="button" class="rollback-btn" data-id="${d.id}">Restore to here</button>`;
+    }
+    if (isHead) rowBtns += `<span class="head-chip">head</span>`;
+    const rollbackBtn = rowBtns;
     html += `<div class="history-row ${statusClass}${isHead ? " head" : ""}">
       <div class="history-row-top">
         <span class="hist-id">${GABORA.escapeHtml(d.id)}</span>
@@ -1203,25 +1251,51 @@ function renderHistory(data) {
   list.querySelectorAll(".rollback-btn").forEach((btn) => {
     btn.addEventListener("click", () => rollbackTo(btn.dataset.id));
   });
+  list.querySelectorAll(".reverse-btn").forEach((btn) => {
+    btn.addEventListener("click", () => reverseDecision(btn.dataset.id));
+  });
 }
 
-async function rollbackTo(id) {
-  if (!confirm(`Restore the legislative state to ${id}? Any approvals after this point will be marked as rolled back.`)) {
-    return;
-  }
+async function _decisionAction(url, confirmMsg, okMsg) {
+  if (!confirm(confirmMsg)) return;
   try {
-    const r = await fetch(`/api/decisions/${encodeURIComponent(id)}/rollback`, {
+    const r = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ regulator: regulatorName() }),
     });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    if (!r.ok) {
+      const detail = (await r.json().catch(() => ({}))).detail;
+      throw new Error(detail || `HTTP ${r.status}`);
+    }
     const data = await r.json();
     renderHistory(data);
-    setStatus(`legislative state restored to ${id}`, "ok");
+    setStatus(okMsg, "ok");
+    pollLegislativeRebuild();
   } catch (err) {
-    setStatus(`rollback failed: ${err.message}`, "error");
+    setStatus(`action failed: ${err.message}`, "error");
   }
+}
+
+function rollbackTo(id) {
+  _decisionAction(
+    `/api/decisions/${encodeURIComponent(id)}/rollback`,
+    `Restore the legislative state to ${id}? Any approvals after this point will be marked as rolled back and their take removed from the baseline.`,
+    `legislative state restored to ${id}`);
+}
+
+function reverseDecision(id) {
+  _decisionAction(
+    `/api/decisions/${encodeURIComponent(id)}/reverse`,
+    `Reverse ${id}? Its approved take is removed from the legislative baseline; other approvals stay active. The record remains in the audit trail.`,
+    `${id} reversed`);
+}
+
+function clearAllDecisions() {
+  _decisionAction(
+    "/api/decisions/clear",
+    "Clear ALL active approvals? The legislative baseline reverts to the raw water-use dataset. Records remain in the audit trail and can be restored individually.",
+    "all approvals cleared");
 }
 
 function openHistoryPanel() {

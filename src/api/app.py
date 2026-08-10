@@ -1442,6 +1442,38 @@ def record_decision(req: RecordDecisionRequest) -> Decision:
     return Decision(**record)
 
 
+@app.post("/api/decisions/clear", response_model=DecisionsResponse)
+def clear_decisions(req: RollbackRequest) -> DecisionsResponse:
+    """Reverse EVERY active approval (audit records are kept), emptying
+    the legislative state back to the raw water-use dataset."""
+    n = decisions_mod.clear_all(_decisions_path(), req.regulator)
+    if n:
+        _refresh_legislative_async()
+    items = decisions_mod.list_decisions(_decisions_path())
+    return DecisionsResponse(
+        decisions=[Decision(**d) for d in items],
+        active_head_id=_active_head_id(items),
+    )
+
+
+@app.post("/api/decisions/{decision_id}/reverse", response_model=DecisionsResponse)
+def reverse_decision_endpoint(decision_id: str, req: RollbackRequest) -> DecisionsResponse:
+    """Reverse ONE active approval (later approvals stay active) and
+    re-baseline without it."""
+    try:
+        decisions_mod.reverse_decision(_decisions_path(), decision_id, req.regulator)
+    except KeyError:
+        raise HTTPException(404, f"unknown decision id: {decision_id}")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    _refresh_legislative_async()
+    items = decisions_mod.list_decisions(_decisions_path())
+    return DecisionsResponse(
+        decisions=[Decision(**d) for d in items],
+        active_head_id=_active_head_id(items),
+    )
+
+
 @app.post("/api/decisions/{decision_id}/rollback", response_model=DecisionsResponse)
 def rollback_decision(decision_id: str, req: RollbackRequest) -> DecisionsResponse:
     try:

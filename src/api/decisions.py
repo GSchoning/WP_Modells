@@ -126,10 +126,27 @@ def _fold(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     d["rolled_back_at"] = ev.get("at")
                     d["rolled_back_by"] = ev.get("regulator", "unknown")
                     d["rolled_back_to"] = ev.get("target_id")
-            # Restore the target itself (it may have been rolled back earlier).
+            # Restore the target itself (it may have been rolled back or
+            # reversed earlier).
             target["status"] = "active"
-            for k in ("rolled_back_at", "rolled_back_by", "rolled_back_to"):
+            for k in ("rolled_back_at", "rolled_back_by", "rolled_back_to",
+                      "reversed_at", "reversed_by"):
                 target.pop(k, None)
+        elif kind == "reverse":
+            # Reverse ONE approval without touching later ones.
+            target = by_id.get(ev.get("target_id", ""))
+            if (target is not None and target.get("decision") == "approve"
+                    and target.get("status") == "active"):
+                target["status"] = "reversed"
+                target["reversed_at"] = ev.get("at")
+                target["reversed_by"] = ev.get("regulator", "unknown")
+        elif kind == "clear":
+            # Empty the legislative state: every active approval reverses.
+            for d in decisions:
+                if d.get("decision") == "approve" and d.get("status") == "active":
+                    d["status"] = "reversed"
+                    d["reversed_at"] = ev.get("at")
+                    d["reversed_by"] = ev.get("regulator", "unknown")
     return decisions
 
 
@@ -209,6 +226,46 @@ def rollback_to(path: Path, decision_id: str, regulator: str) -> dict[str, Any]:
         and by_id_before.get(a.get("id"), {}).get("status") == "active"
     )
     return {"head": head, "n_rolled_back": n_rolled}
+
+
+def reverse_decision(path: Path, decision_id: str, regulator: str) -> dict[str, Any]:
+    """Append a reverse event removing ONE active approval from the
+    legislative state (later approvals stay active). Returns the folded
+    record."""
+    with _LOCK:
+        before = _load_folded(path)
+        target = next((d for d in before if d.get("id") == decision_id), None)
+        if target is None:
+            raise KeyError(decision_id)
+        if target.get("decision") != "approve":
+            raise ValueError("only approve decisions can be reversed")
+        if target.get("status") != "active":
+            raise ValueError(f"decision {decision_id} is not active ({target.get('status')})")
+        _append_event(path, {
+            "event": "reverse",
+            "target_id": decision_id,
+            "regulator": regulator or "unknown",
+            "at": _now_iso(),
+        })
+        after = _load_folded(path)
+    return next(d for d in after if d.get("id") == decision_id)
+
+
+def clear_all(path: Path, regulator: str) -> int:
+    """Append a clear event reversing EVERY active approval (empties the
+    legislative state; the audit trail keeps all records). Returns the
+    number of approvals reversed."""
+    with _LOCK:
+        before = _load_folded(path)
+        n = sum(1 for d in before
+                if d.get("decision") == "approve" and d.get("status") == "active")
+        if n:
+            _append_event(path, {
+                "event": "clear",
+                "regulator": regulator or "unknown",
+                "at": _now_iso(),
+            })
+    return n
 
 
 def active_approved_ids(path: Path) -> list[str]:

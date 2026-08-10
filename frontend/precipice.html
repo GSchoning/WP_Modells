@@ -40,9 +40,16 @@
     </div>
     <div id="history-list"></div>
     <p class="muted history-footer">
-      Audit trail only — the calibrated baseline is not re-derived from active
-      approvals in this build. Rollback restores prior decision metadata.
+      Active approvals form the legislative baseline: their take joins the
+      existing use for every subsequent assessment. Reverse removes one
+      approval; Restore rewinds to an earlier state; both re-baseline in
+      the background.
     </p>
+    <div class="history-actions">
+      <button type="button" id="clear-decisions-btn" class="danger-btn">
+        Clear all approvals
+      </button>
+    </div>
   </aside>
   <div id="history-scrim" hidden></div>
 
@@ -141,6 +148,10 @@
         <button type="button" id="approve-btn" class="action-btn approve">Approve</button>
         <button type="button" id="reject-btn"  class="action-btn reject">Reject</button>
         <span id="decision-recorded" class="decision-recorded" hidden></span>
+      </div>
+      <div id="legislative-banner" class="advisory" hidden>
+        ⏳ Please wait — updating the legislative scenario (existing take)
+        with this change. New scenario runs will queue until it finishes.
       </div>
     </div>
 

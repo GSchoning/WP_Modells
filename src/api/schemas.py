@@ -266,7 +266,7 @@ class Decision(BaseModel):
     id: str
     seq: int
     decision: Literal["approve", "reject"]
-    status: Literal["active", "rolled_back", "rejected"]
+    status: Literal["active", "rolled_back", "rejected", "reversed"]
     regulator: str
     created_at: str
     note: str = ""
@@ -275,6 +275,8 @@ class Decision(BaseModel):
     rolled_back_at: str | None = None
     rolled_back_by: str | None = None
     rolled_back_to: str | None = None
+    reversed_at: str | None = None
+    reversed_by: str | None = None
 
 
 class DecisionsResponse(BaseModel):

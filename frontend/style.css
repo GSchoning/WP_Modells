@@ -506,6 +506,24 @@ tr.row-selected  { box-shadow: inset 3px 0 0 var(--accent); }
   font: 600 0.72rem "Inter", sans-serif; cursor: pointer;
 }
 .rollback-btn:hover { filter: brightness(1.06); }
+.reverse-btn {
+  background: #fff; color: var(--bad); border: 1px solid var(--bad);
+  padding: 0.26rem 0.6rem; border-radius: 6px; margin-right: 0.35rem;
+  font: 600 0.72rem "Inter", sans-serif; cursor: pointer;
+}
+.reverse-btn:hover { background: var(--bad-soft); }
+.hist-status.reversed { color: var(--bad); }
+.history-actions {
+  padding: 0.7rem 1rem 1rem; border-top: 1px solid var(--line);
+}
+.danger-btn {
+  width: 100%; background: #fff; color: var(--bad);
+  border: 1px solid var(--bad); border-radius: 6px;
+  padding: 0.45rem 0.6rem; font: 600 0.76rem "Inter", sans-serif;
+  cursor: pointer;
+}
+.danger-btn:hover { background: var(--bad-soft); }
+#legislative-banner { margin-top: 0.6rem; }
 .head-chip {
   background: #16a34a; color: #f0fdf4;
   padding: 0.18rem 0.55rem; border-radius: 999px;
