@@ -7,14 +7,17 @@ module behind one landing page. MODFLOW 6 driven from Python via FloPy,
 served through a FastAPI backend with a MapLibre frontend for regulator
 decision support.
 
-Four drawdown reporting layers, built by linear superposition:
+Four drawdown reporting layers:
 
-- `s_approved` — Scenario A: all existing extraction (cached)
+- `s_approved` — Scenario A: all existing extraction **plus any bores
+  approved through the tool** (the decision ledger; cached)
 - `s_licensed` — Scenario L: licensed/entitlement take only, i.e. bores
   holding an authority number, non-S&D (cached subset of A)
-- `s_additional` — Scenario C: proposed change set only (per-request)
-- `s_total` = A + C, compared against a configurable regulatory threshold
-  (default **0.4 m**) at the regulator's chosen time horizon
+- `s_additional` — the proposed change set's marginal impact (run as
+  Scenario B = existing + proposal, reported as B − A so head-dependent
+  drains respond to the true total stress)
+- `s_total` — the combined future state, compared against a configurable
+  regulatory threshold (default **0.4 m**) at each output year
 
 See `CLAUDE.md` for the full design spec.
 
@@ -36,25 +39,79 @@ See `CLAUDE.md` for the full design spec.
    Subsequent boots load in ~15–20 s. Limit modules for a faster boot:
    `GABORA_AQUIFERS=precipice python -m src.cli serve`.
 
-In the UI:
+## Using the tool — assessing an application
 
-- **Landing page** (`/`) — aquifer selector map (GABORA subareas) with
-  per-aquifer extraction stats (licensed vs S&D split) and
-  springs-over-threshold counts; click a green polygon to open its module.
-- **Scenario page** (`/precipice.html?aquifer=<key>`) — click anywhere on
-  the satellite map to place a proposed bore (or multi-bore / trade change
-  set), set the rate (ML/year), then **Run scenario**. Bottom panel shows
-  an APPROVE / REJECT recommendation, impact-summary tiles, a stacked bar
-  chart by spring complex (existing impact split into licensed vs
-  S&D/other), and an expandable table including a Theis analytical
-  comparison.
-- **Model setup** (`/setup.html`) — toggleable layers showing the modelled
-  grid, recharge zone, GHB / no-flow boundaries, rejected-recharge drains,
-  pumping bores (sized by extraction rate), and spring complexes on
-  satellite imagery.
-- **Drawdown maps** (`/scenario.html`) — side-by-side cumulative and
-  proposed-only drawdown rasters after a scenario has been run, with year
-  selector, opacity slider, and click-to-sample.
+The intended workflow, start to finish:
+
+1. **Pick the aquifer.** The landing page (`/`) shows the GABORA plan
+   area with per-aquifer extraction stats (licensed vs S&D split) and
+   springs-over-threshold counts. Click a green (modelled) unit to open
+   its assessment dashboard. Each aquifer is independent — its own
+   model, baseline, settings, and decision register.
+
+2. **Describe the application.** On the dashboard, choose the scenario
+   type in the sidebar:
+   - *Single bore* — click the map to place it, enter the rate (ML/yr);
+   - *Multi bore* — click once per bore, edit rates per row;
+   - *Trade* — pick the source bore by ID (search box), then click one
+     or more destination locations and distribute the source rate. The
+     tool models the source reduction and destination increases together,
+     so partial moves and splits are handled.
+
+3. **Run scenario.** One MODFLOW 6 run (~1–5 min; progress in the
+   header). Existing-take baselines are pre-computed and cached, so only
+   the proposal costs time. Runs queue if a baseline rebuild is in
+   progress.
+
+4. **Read the result** (bottom panel):
+   - the **recommendation badge** — REJECT when the proposal *tips* any
+     spring complex over the threshold at the assessment horizon
+     (`triggered_by_proposed`); complexes already over from existing
+     take surface as an advisory, not grounds for rejection;
+   - the **stacked bar chart** per spring complex — existing impact
+     split into licensed (blue) vs S&D/other (grey), proposal on top,
+     threshold line for reference;
+   - the **table** — `s_approved / s_licensed / s_additional / s_total`
+     per complex per year, plus two Theis columns (the proposal alone
+     and the cumulative current-practice estimate) and CSV export;
+   - the **receptor-bores table** — drawdown at every other water bore
+     (report-only; no bore trigger is applied);
+   - map markers: springs turn **red** where the threshold is exceeded,
+     bores are sized by extraction rate and coloured licensed
+     blue / other grey.
+
+5. **Inspect the drawdown maps** (`View drawdown maps →`) — side-by-side
+   cumulative and proposal-only rasters with a year selector, opacity
+   slider, and click-to-sample. Spring and bore layers carry the same
+   colour coding as the dashboard, synced to the selected year.
+
+6. **Record the decision.** *Approve* or *Reject* in the decision panel
+   (with your name and an optional note). Every decision lands in an
+   append-only audit trail (`var/decision_events*.jsonl`) with the full
+   change set and headline numbers. **Approvals feed the legislative
+   baseline**: the approved wells join `s_approved`/`s_licensed` for
+   every subsequent assessment (a background re-baseline runs for a few
+   minutes; later scenarios queue behind it). The decision history panel
+   (clock icon) lists all decisions and lets you *roll back* to any
+   earlier approval — the baseline reverts automatically, near-instantly
+   when that state was assessed before.
+   ⚠ When a refreshed water-use export starts including a bore you
+   approved here, roll the decision back or its take double-counts.
+
+7. **Model settings** (sidebar, per aquifer) — two runtime switches for
+   sensitivity analysis, each rebuilding the baseline in the background
+   on first use and instant to switch back:
+   - *Storage formulation*: **Convertible** (default — Ss↔Sy switching
+     as in the parent UWIR model) vs **Static** (legacy, conservative);
+   - *Initial heads*: **UWIR pre-development** (default — observed drain
+     headroom at the outcrop) vs **Model steady state** (conservative
+     sensitivity case; spring impacts roughly 2–4× higher).
+   These are session overrides; the yaml configs set the boot defaults.
+
+8. **Model setup** (`Model setup →`) — the transparency page: modelled
+   grid, recharge zone, GHB/no-flow boundaries, rejected-recharge drains,
+   bores and springs on satellite imagery, for checking what the model
+   actually contains.
 
 ### Restart cheatsheet
 
@@ -102,8 +159,14 @@ All knobs live in `config.yaml`:
 |---|---|---|
 | `assessment.regulatory_threshold_m` | `0.4` | Drawdown trigger threshold (m) |
 | `assessment.spring_complex_col` | `complex_na` | DBF column grouping springs into complexes |
+| `assessment.storage_mode` | `convertible` | Ss↔Sy storage conversion as heads cross cell tops (parent-model behaviour); `static` = legacy, UI-switchable |
+| `assessment.ic_source` | `parent_predev` | Initial heads: UWIR pre-development surface overlay; `steady_state` = model's own equilibrium (conservative), UI-switchable |
+| `assessment.spring_snap_max_m` | `3000` | Springs just outside the active domain sample the nearest active cell within this distance |
+| `assessment.theis_T_m2_per_day` / `theis_S` | `50` / `5e-4` | Standard assessment parameters for the Theis comparison columns |
 | `assessment.recharge_multiplier` | `1.0` | Sensitivity scale on the recharge array |
 | `assessment.boundary_mode` | `uwir_ghb` | No-flow pinch-outs + calibrated GHBs on truncation faces (UWIR 2025 design); `no_flow` closes the perimeter entirely |
+| `drains.transient_mode` | `drn` | Real head-dependent drains in every run (shut off when pumped dry); `linearised_ghb` = legacy exact-linear mode |
+| `leakage.enabled` | `false` | Quasi-3D vertical leakage (Hantush) — parent-model Kz says the Precipice is sealed, so off; sensitivity knob available |
 | `inputs.water_use.licensed_filter` | AUTH_REFS + non-S&D | Defines the licensed-take subset behind `s_licensed` |
 | `drains.riv_cells_csv` | parent-model export | Calibrated rejected-recharge drain stages/conductances (DEM fallback when absent) |
 | `time.output_years` | `[10, 50, 100]` | Years at which to evaluate drawdown |
@@ -147,9 +210,19 @@ converted internally to m³/d.
 - **Boundaries follow the UWIR 2025 parent model.** Natural pinch-out
   edges are no-flow; calibrated GHBs sit only on the truncation faces
   where the aquifer continues beyond the model frame. Rejected recharge
-  in the outcrop uses the parent model's calibrated drain cells — real
-  drains in the steady-state pre-run, linearised to fixed-head GHBs in
-  the transient runs so superposition stays exact.
+  in the outcrop uses the parent model's calibrated drain cells as real
+  head-dependent drains in every run — they shut off when pumped below
+  their stage, so the proposal's capture of spring baseflow is modelled
+  rather than clamped (the QA block reports drains dried and captured
+  discharge per run).
+- **Parent-model physics as defaults.** Storage converts Ss↔Sy as heads
+  cross cell tops (as in the UWIR model) and initial heads are the
+  parent's pre-development surface — both switchable per session from
+  the UI for sensitivity comparison. Vertical leakage was quantified
+  with the parent's calibrated Kz and found negligible for the Precipice
+  (machinery ships disabled).
+- **Approvals compound.** Approved decisions join the baseline for
+  subsequent assessments (legislative ledger); rollbacks unwind them.
 
 ## Repository layout
 
