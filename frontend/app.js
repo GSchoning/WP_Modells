@@ -1016,10 +1016,10 @@ function renderDecision(result) {
   // QA flags from the solver — surfaced so a questionable run can't
   // silently look authoritative.
   if (result.qa) {
-    if (result.qa.boundary_warning) {
-      const worst = Math.max(result.qa.chd_max_drawdown_m, result.qa.noflow_max_drawdown_m);
-      mh += `<div class="advisory">⚠ Boundary effect: the proposal produces up to ${worst.toFixed(2)} m of drawdown at the model boundary. Impacts near the domain edge may be under- or over-stated — treat results with caution.</div>`;
-    }
+    // Boundary drawdown stays in the QA payload/provenance but is not
+    // surfaced as a banner (removed per user request 2026-08-10): with
+    // the existing take in the baseline, most runs trip it through the
+    // A-side drawdown rather than anything proposal-specific.
     if (result.qa.mass_balance_warning) {
       mh += `<div class="advisory">⚠ Mass balance: MF6 budget discrepancy ${result.qa.max_pct_discrepancy.toFixed(2)}% exceeds 1% — solver convergence is questionable for this run.</div>`;
     }
@@ -1639,23 +1639,12 @@ function renderStorageInfo(s) {
     return;
   }
   info.className = "muted";
-  const otherStor = s.storage_mode === "static" ? "convertible" : "static";
-  const otherIc = s.ic_source === "steady_state" ? "parent_predev" : "steady_state";
-  const notes = [];
-  notes.push(s.baseline_cached[otherStor]
-    ? "storage switch is instant (cached)"
-    : "first storage switch rebuilds (~minutes)");
-  notes.push(s.ic_baseline_cached[otherIc]
-    ? "initial-heads switch is instant (cached)"
-    : "first initial-heads switch rebuilds (~minutes)");
   const overrides = [];
   if (s.storage_mode !== s.config_default) overrides.push(`storage default: ${s.config_default}`);
   if (s.ic_source !== s.ic_config_default) overrides.push(`heads default: ${s.ic_config_default}`);
-  info.textContent =
-    "UWIR pre-development heads give the outcrop drains their observed " +
-    "discharge headroom — spring impacts drop substantially vs the model's " +
-    "own (lower) steady state. " + notes.join("; ") + "." +
-    (overrides.length ? ` Session override (${overrides.join(", ")}).` : "");
+  info.textContent = overrides.length
+    ? `Session override (${overrides.join(", ")}).`
+    : "";
 }
 
 async function initModelSettings() {
