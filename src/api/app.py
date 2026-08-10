@@ -46,7 +46,9 @@ from fastapi.staticfiles import StaticFiles
 
 from ..config import Config, load_config
 from ..grid import Grid, build_grid_from_properties, cell_of
-from ..io_layer import Inputs, ML_PER_YEAR_TO_M3_PER_DAY, load_inputs, load_recharge_by_inode
+from ..io_layer import (Inputs, ML_PER_YEAR_TO_M3_PER_DAY,
+                        augment_inputs_with_approved, load_inputs,
+                        load_recharge_by_inode)
 from ..model_builder import active_boundary_chd_cells, boundary_ghb_for_config
 from ..scenarios import (
     ScenarioResult,
@@ -115,7 +117,9 @@ class _ScenarioJob:
 class _State:
     cfg: Config | None = None
     config_path: Path | None = None
-    inputs: Inputs | None = None
+    inputs: Inputs | None = None                      # legislative (CSV + active approvals)
+    raw_inputs: Inputs | None = None                  # the water-use CSV alone
+    approved_fingerprint: str | None = None           # hash of the active ledger
     grid: Grid | None = None
     ic_head: np.ndarray | None = None
     chd_cells: list | None = None
@@ -249,10 +253,58 @@ def _build_complex_centroids(springs: gpd.GeoDataFrame, complex_col: str) -> dic
     return {"type": "FeatureCollection", "features": features}
 
 
+def _apply_legislative() -> None:
+    """Rebuild state.inputs = raw water-use CSV + the active approved
+    ledger (bores, multi-bores, trades). Called at bootstrap and after
+    every decision that changes the active set."""
+    wells = decisions_mod.active_approved_wells(state.decisions_path)
+    state.approved_fingerprint = (
+        decisions_mod.approved_wells_fingerprint(wells) if wells else None)
+    state.inputs = augment_inputs_with_approved(
+        state.raw_inputs, wells, state.cfg.project.crs)
+    if wells:
+        net = sum(w["rate_ML_per_year"] for w in wells)
+        print(f"[legislative] {len(wells)} approved well(s) from the decision "
+              f"ledger folded into the baseline (net {net:+.0f} ML/yr)")
+
+
+def _baseline_extra_parts() -> list[str]:
+    """Cache-key parts beyond config/data files: the legislative ledger.
+    Empty when no approvals are active, so pre-ledger cache keys survive."""
+    return [f"appr={state.approved_fingerprint}"] if state.approved_fingerprint else []
+
+
+def _refresh_legislative_async() -> None:
+    """Background rebuild after an approval/rollback changed the ledger.
+
+    Same discipline as the model-settings switches: everything mutates
+    behind run_lock so no scenario is mid-flight, and scenario requests
+    queue behind the rebuild. Baselines cache per ledger fingerprint, so
+    rolling back to a previously assessed state is near-instant."""
+    aquifer = _ACTIVE.get()
+
+    def worker() -> None:
+        _ACTIVE.set(aquifer)
+        with state.run_lock:
+            try:
+                _apply_legislative()
+                state.baseline = _bootstrap_baseline()
+                state.provenance = _build_provenance()
+                state.settings_error = None
+            except Exception as exc:
+                state.settings_error = f"{type(exc).__name__}: {exc}"
+            finally:
+                state.settings_rebuilding = False
+
+    state.settings_rebuilding = True
+    threading.Thread(target=worker, daemon=True).start()
+
+
 def _bootstrap_baseline(force: bool = False) -> cache_mod.BaselineCache:
     """Run (or load) the cached Scenario A baseline."""
     assert state.cfg and state.grid and state.inputs and state.ic_head is not None
-    key = cache_mod.baseline_key(state.cfg, state.config_path)
+    key = cache_mod.baseline_key(state.cfg, state.config_path,
+                                 extra_parts=_baseline_extra_parts())
     if not force:
         hit = cache_mod.load(key)
         if hit is not None:
@@ -474,7 +526,9 @@ def _build_provenance() -> dict:
         "config_sha256": cache_mod._file_sha256(state.config_path)[:16],
         "properties_sha256": cache_mod._file_sha256(Path(cfg.inputs.properties_csv))[:16],
         "water_use_sha256": cache_mod._file_sha256(Path(cfg.inputs.water_use.path))[:16],
-        "baseline_cache_key": cache_mod.baseline_key(cfg, state.config_path),
+        "baseline_cache_key": cache_mod.baseline_key(
+            cfg, state.config_path, extra_parts=_baseline_extra_parts()),
+        "approved_take_fingerprint": state.approved_fingerprint or "none",
         "cache_schema": cache_mod.CACHE_SCHEMA_VERSION,
         "mf6_version": _mf6_version(),
     }
@@ -486,7 +540,12 @@ def _bootstrap_module(key: str, config_path: Path) -> None:
     _STATES[key] registered (the helpers below all read the `state` proxy)."""
     state.cfg = load_config(config_path)
     state.config_path = config_path
-    state.inputs = load_inputs(state.cfg)
+    # Audit trail lives under var/ — set early: the legislative ledger
+    # (active approved decisions) folds into the bore sets right here.
+    suffix = "" if key == DEFAULT_AQUIFER else f"_{key}"
+    state.decisions_path = Path("var") / f"decision_events{suffix}.jsonl"
+    state.raw_inputs = load_inputs(state.cfg)
+    _apply_legislative()
     state.grid = build_grid_from_properties(
         state.inputs.properties, state.cfg.project.crs,
         layer=state.cfg.grid.properties_layer,
@@ -496,11 +555,6 @@ def _bootstrap_module(key: str, config_path: Path) -> None:
     )
     state.workspace_root = Path(state.cfg.run.workspace_root)
     state.workspace_root.mkdir(parents=True, exist_ok=True)
-    # Audit trail lives under var/ — a dedicated runtime-data directory,
-    # NOT outputs/ (which is treated as disposable by cleanups/redeploys).
-    # The Precipice keeps its pre-multi-aquifer filename.
-    suffix = "" if key == DEFAULT_AQUIFER else f"_{key}"
-    state.decisions_path = Path("var") / f"decision_events{suffix}.jsonl"
     state.provenance = _build_provenance()
     state.config_default_storage_mode = state.cfg.assessment.storage_mode
     state.config_default_ic_source = state.cfg.assessment.ic_source
@@ -758,7 +812,8 @@ def _settings_key(storage_mode: str | None = None, ic_source: str | None = None)
         cfg_copy.assessment.storage_mode = storage_mode
     if ic_source is not None:
         cfg_copy.assessment.ic_source = ic_source
-    return cache_mod.baseline_key(cfg_copy, state.config_path)
+    return cache_mod.baseline_key(cfg_copy, state.config_path,
+                                  extra_parts=_baseline_extra_parts())
 
 
 def _model_settings_response() -> ModelSettingsResponse:
@@ -1380,6 +1435,10 @@ def record_decision(req: RecordDecisionRequest) -> Decision:
         summary=req.summary.model_dump(),
         note=req.note,
     )
+    # An approval changes the legislative state: fold its wells into the
+    # baseline in the background (scenario requests queue behind it).
+    if req.decision == "approve":
+        _refresh_legislative_async()
     return Decision(**record)
 
 
@@ -1391,6 +1450,8 @@ def rollback_decision(decision_id: str, req: RollbackRequest) -> DecisionsRespon
         raise HTTPException(404, f"unknown decision id: {decision_id}")
     except ValueError as e:
         raise HTTPException(400, str(e))
+    # Rolled-back approvals leave the legislative state — re-baseline.
+    _refresh_legislative_async()
     items = decisions_mod.list_decisions(_decisions_path())
     return DecisionsResponse(
         decisions=[Decision(**d) for d in items],
@@ -1502,7 +1563,11 @@ def _pumping_bores_gdf(pumping):
     out = pumping.copy()
     if "bore_id" in out.columns:
         out["licensed"] = out["bore_id"].astype(str).isin(lic_ids)
-    cols = [c for c in ("bore_id", "rate_m3_per_day", "licensed") if c in out.columns]
+    # Ledger wells carry approved=True; positive ones are already in the
+    # licensed subset (augment_inputs_with_approved), so `licensed` is
+    # correct via membership.
+    cols = [c for c in ("bore_id", "rate_m3_per_day", "licensed", "approved")
+            if c in out.columns]
     return out[cols + ["geometry"]]
 
 

@@ -190,6 +190,18 @@ Module responsibilities:
   without a proposal.
 - `GET /api/map-data`, `/api/aquifers`, `/api/existing-bores`,
   `/api/spring-series`, drawdown raster PNG endpoints, decision endpoints.
+- **Legislative baseline**: the decision audit trail doubles as the
+  approvals ledger. Every ACTIVE approve decision's well change-set
+  (single/multi bores, trades with signed source reductions) is folded
+  into `pumping_bores` (+ `licensed_bores`/`receptor_bores` for
+  positive-rate wells) at baseline build, so an approval joins
+  s_approved/s_licensed for every subsequent assessment until rolled
+  back. Approve/rollback trigger a background re-baseline behind
+  `run_lock`; the cache keys on the ledger fingerprint (`appr=`), so
+  reverting to a previously assessed state is near-instant. Approved
+  bores carry `approved: true` in the map geojson. ⚠ When a refreshed
+  water-use export starts including an approved bore, roll the decision
+  back or the take double-counts (no automatic vintage retirement yet).
 - `GET/POST /api/model-settings` — runtime switches for storage mode AND
   initial-head source (session overrides; the config file sets the boot
   defaults). Baselines cache per combination, so flipping back to a

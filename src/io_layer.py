@@ -172,6 +172,49 @@ def _polygonize_extent(gdf: gpd.GeoDataFrame, properties: pd.DataFrame, crs: str
     return gpd.GeoDataFrame(geometry=[hull], crs=crs)
 
 
+def augment_inputs_with_approved(
+    inputs: Inputs, wells: list[dict], crs: str,
+) -> Inputs:
+    """Fold the legislative ledger (active approved decisions) into the
+    bore sets, returning a new Inputs (the raw CSV frames are untouched).
+
+    Every ledger well joins `pumping_bores` (rates keep their sign, so a
+    trade's source reduction nets off against the original bore at the
+    same cell). Positive-rate wells are entitlement take by definition —
+    they also join `licensed_bores` and `receptor_bores`, so subsequent
+    assessments both count their impact and report impacts ON them.
+    """
+    if not wells:
+        return inputs
+    from dataclasses import replace
+    from shapely.geometry import Point
+
+    rows = gpd.GeoDataFrame(
+        {
+            "bore_id": [f"{w['label']} [{w['decision_id']}]" for w in wells],
+            "rate_m3_per_day": [w["rate_ML_per_year"] * ML_PER_YEAR_TO_M3_PER_DAY
+                                for w in wells],
+            "approved": True,
+        },
+        geometry=[Point(w["x"], w["y"]) for w in wells],
+        crs=crs,
+    )
+
+    def _cat(base: gpd.GeoDataFrame, extra: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        out = pd.concat([base, extra], ignore_index=True)
+        if "approved" in out.columns:
+            out["approved"] = out["approved"].astype("boolean").fillna(False).astype(bool)
+        return gpd.GeoDataFrame(out, geometry="geometry", crs=base.crs or crs)
+
+    positive = rows[rows.rate_m3_per_day > 0]
+    return replace(
+        inputs,
+        pumping_bores=_cat(inputs.pumping_bores, rows),
+        licensed_bores=_cat(inputs.licensed_bores, positive),
+        receptor_bores=_cat(inputs.receptor_bores, positive),
+    )
+
+
 def load_inputs(cfg: Config) -> Inputs:
     formation_raw = gpd.read_file(cfg.inputs.formation_extent).to_crs(cfg.project.crs)
     outcrop = gpd.read_file(cfg.inputs.outcrop).to_crs(cfg.project.crs)

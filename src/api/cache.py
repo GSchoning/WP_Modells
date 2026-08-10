@@ -96,8 +96,15 @@ def _code_fingerprint() -> str:
     return h.hexdigest()[:16]
 
 
-def baseline_key(cfg: Config, config_path: Path) -> str:
-    """Hash of every input that affects Scenario A's cached output."""
+def baseline_key(cfg: Config, config_path: Path,
+                 extra_parts: list[str] | tuple[str, ...] = ()) -> str:
+    """Hash of every input that affects Scenario A's cached output.
+
+    `extra_parts`: caller-supplied identity beyond config/data files —
+    the API passes the legislative ledger fingerprint (active approved
+    decisions) so an approval re-keys the baseline. Empty by default so
+    ledger-free deployments keep their existing keys.
+    """
     parts = [
         CACHE_SCHEMA_VERSION,
         _code_fingerprint(),
@@ -157,6 +164,7 @@ def baseline_key(cfg: Config, config_path: Path) -> str:
             parts.append(_file_sha256(Path(cfg.inputs.dem)))
         parts.append(f"dcond={cfg.drains.conductance_m2_per_day}")
         parts.append(f"dscale={cfg.drains.conductance_scale:.6g}")
+    parts.extend(extra_parts)
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 

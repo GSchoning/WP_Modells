@@ -16,9 +16,12 @@ Statuses derived by the fold:
     - "rolled_back": approve decision superseded by a later rollback.
     - "rejected":    the regulator rejected the scenario at the time.
 
-This remains a UI-level audit trail: the MODFLOW baseline is not yet
-re-derived from active decisions. Events store the full scenario change
-set so that integration needs no schema change.
+The audit trail IS the legislative ledger: active approve decisions'
+well change-sets (active_approved_wells) are folded into the existing
+take at baseline build, so an approval joins Scenario A/L for every
+subsequent assessment until rolled back — see app._refresh_legislative.
+When a refreshed water-use export starts including an approved bore,
+roll the decision back (or the take double-counts).
 
 Migration: if the legacy full-document store (outputs/decisions.json)
 exists and the events file does not, its decisions are imported as
@@ -216,3 +219,43 @@ def active_approved_ids(path: Path) -> list[str]:
         d["id"] for d in decisions
         if d.get("decision") == "approve" and d.get("status") == "active"
     ]
+
+
+def active_approved_wells(path: Path) -> list[dict[str, Any]]:
+    """The legislative change-set: every well of every ACTIVE approve
+    decision, in decision order.
+
+    Rates are ML/yr and keep their sign — a trade's source-bore reduction
+    rides as a negative-rate well, so summing the ledger onto the raw
+    water-use take reproduces the approved state exactly. Each well is
+    tagged with its decision id for provenance and map popups.
+    """
+    with _LOCK:
+        decisions = _load_folded(path)
+    wells: list[dict[str, Any]] = []
+    for d in sorted(decisions, key=lambda d: int(d.get("seq", 0))):
+        if d.get("decision") != "approve" or d.get("status") != "active":
+            continue
+        for w in (d.get("scenario") or {}).get("wells_run") or []:
+            try:
+                wells.append({
+                    "decision_id": d.get("id", ""),
+                    "label": str(w.get("label", "approved bore")),
+                    "x": float(w["x"]),
+                    "y": float(w["y"]),
+                    "rate_ML_per_year": float(w["rate_ML_per_year"]),
+                })
+            except (KeyError, TypeError, ValueError):
+                continue                     # malformed legacy entry — skip
+    return wells
+
+
+def approved_wells_fingerprint(wells: list[dict[str, Any]]) -> str:
+    """Deterministic hash of the legislative change-set, for cache keys."""
+    import hashlib
+    payload = json.dumps(
+        [[w["decision_id"], w["label"], round(w["x"], 3), round(w["y"], 3),
+          round(w["rate_ML_per_year"], 6)] for w in wells],
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]

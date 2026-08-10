@@ -121,10 +121,12 @@ def theis_cumulative_at_springs(
     solutions over every existing bore), reproduced so the tool can show
     it beside the modelled cumulative impact.
 
-    `wells_xyq`: (x, y, rate_m3_per_day) per well; rates are extraction
-    magnitudes (sign is ignored). All wells are assumed pumping constantly
-    from t = 0, matching the model's Scenario A framing. Aggregation by
-    complex takes the max over member springs, matching scenarios.py.
+    `wells_xyq`: (x, y, rate_m3_per_day) per well; positive = extraction.
+    Signs are RESPECTED so a trade's negative source-reduction well nets
+    off correctly (superposition is linear in Q). All wells are assumed
+    pumping constantly from t = 0, matching the model's Scenario A
+    framing. Aggregation by complex takes the max over member springs,
+    matching scenarios.py.
 
     Returns a tidy frame (receptor_id, time_years, drawdown_m_theis).
     """
@@ -139,7 +141,7 @@ def theis_cumulative_at_springs(
     # (n_wells, n_springs) distance matrix, floored at the Peaceman radius.
     wx = np.array([w[0] for w in wells_xyq])
     wy = np.array([w[1] for w in wells_xyq])
-    q = np.abs(np.array([w[2] for w in wells_xyq]))
+    q = np.array([w[2] for w in wells_xyq])          # signed: + extraction
     r = np.hypot(sp_x[None, :] - wx[:, None], sp_y[None, :] - wy[:, None])
     r = np.maximum(r, r_eq)
 
