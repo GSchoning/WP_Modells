@@ -226,16 +226,28 @@ def load_inputs(cfg: Config) -> Inputs:
         buffer_m = float(cfg.assessment.spring_outcrop_buffer_m)
         outcrop_buffered = outcrop.union_all().buffer(buffer_m)
         near_outcrop = springs.within(outcrop_buffered)
-        n_dropped = int((~near_outcrop).sum())
-        if n_dropped:
+        keep = near_outcrop
+        # Union rule: springs attributed to this module's aquifer stay in
+        # regardless of outcrop distance (artesian discharge through the
+        # confining cover — e.g. Boggomoss on the Precipice).
+        ak = cfg.inputs.springs_attr_keep
+        n_attr_only = 0
+        if ak and ak.get("column") in springs.columns:
+            attributed = (springs[ak["column"]].astype(str)
+                          .str.contains(str(ak.get("contains", "")), case=False, na=False))
+            n_attr_only = int((attributed & ~near_outcrop).sum())
+            keep = near_outcrop | attributed
+        n_dropped = int((~keep).sum())
+        if n_dropped or n_attr_only:
             import sys
             print(
                 f"[springs] dropped {n_dropped} of {len(springs)} springs "
-                f">{buffer_m:.0f} m from outcrop; "
-                f"kept {int(near_outcrop.sum())}",
+                f">{buffer_m:.0f} m from outcrop; kept {int(keep.sum())}"
+                + (f" (incl. {n_attr_only} beyond the buffer kept by "
+                   f"aquifer attribution)" if n_attr_only else ""),
                 file=sys.stderr,
             )
-        springs = springs[near_outcrop].copy()
+        springs = springs[keep].copy()
 
         # Normalise the complex name and drop springs without one. Spring
         # complexes are the regulatory unit of analysis; an unaffiliated

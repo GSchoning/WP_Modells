@@ -75,6 +75,13 @@ inputs:
   # Springs shapefile. CRS is WGS84 Web Mercator (EPSG:3857); io_layer
   # reprojects to the project CRS on ingest.
   springs: "Data/Springs/Active springs_POINT_rJliS3wVll.shp"
+  # Union rule: Precipice-attributed springs (e.g. the Boggomoss complex,
+  # artesian discharge ~8-13 km from the mapped outcrop) are kept
+  # regardless of the outcrop buffer; other aquifers' springs still need
+  # to sit within assessment.spring_outcrop_buffer_m of the outcrop.
+  springs_attr_keep:
+    column: "source_aqu"
+    contains: "Precipice"
 
   # Proposed new bore (Scenario C). Either inline or a single-row CSV.
   proposed_bore:

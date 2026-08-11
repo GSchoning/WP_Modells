@@ -56,6 +56,9 @@ inputs:
   springs_attr_filter:
     column: "source_aqu"
     contains: "Gubberamunda"
+  springs_attr_keep:
+    column: "source_aqu"
+    contains: "Gubberamunda"
 
   proposed_bore:
     bore_id: "PROPOSED_001"

@@ -59,6 +59,11 @@ inputs:
   springs_attr_filter:
     column: "source_aqu"
     contains: "Hutton"
+  # All Hutton-attributed springs stay in regardless of outcrop distance
+  # (union rule; artesian complexes discharge through the cover).
+  springs_attr_keep:
+    column: "source_aqu"
+    contains: "Hutton"
 
   proposed_bore:
     bore_id: "PROPOSED_001"

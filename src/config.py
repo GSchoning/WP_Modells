@@ -61,8 +61,16 @@ class InputsCfg(BaseModel):
     ghb_cells_csv: Path | None = None
     # Optional attribute filter applied to the springs shapefile at ingest,
     # e.g. {column: "source_aqu", contains: "Hutton"} — the shared springs
-    # layer attributes each spring to a source aquifer.
+    # layer attributes each spring to a source aquifer. Springs NOT
+    # matching are excluded entirely.
     springs_attr_filter: dict | None = None
+    # Union rule for the outcrop-proximity clip: springs matching this
+    # attribute test are kept REGARDLESS of distance to the outcrop
+    # (artesian complexes such as Boggomoss discharge through the
+    # confining cover many km from outcrop, and pressure decline at
+    # their location is exactly what the confined model predicts).
+    # Springs matching neither this nor the outcrop buffer are dropped.
+    springs_attr_keep: dict | None = None
     # Uniform-over-outcrop last resort, used only when neither the rch
     # column nor recharge_csv provides values. UWIR 2025 layer-24 balance:
     # 25,283 ML/yr over 1,231 km² = 5.63e-5 m/d.
