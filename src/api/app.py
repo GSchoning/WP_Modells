@@ -911,6 +911,36 @@ def set_model_settings(req: ModelSettingsRequest) -> ModelSettingsResponse:
     return _model_settings_response()
 
 
+@app.get("/api/domain-check")
+def domain_check(x: float, y: float):
+    """Is a project-CRS point inside this module's ACTIVE model domain?
+
+    Lets the UI warn at click time — before a run is submitted — when a
+    proposed bore lands outside the aquifer this page is serving (the
+    common failure being a Hutton location assessed against the
+    Precipice because the page URL lost its aquifer parameter)."""
+    if state.grid is None:
+        raise HTTPException(503, "grid not ready")
+    grid = state.grid
+    from ..grid import cell_of
+    rc = cell_of(grid, x, y)
+    active = bool(rc and grid.idomain[0, rc[0], rc[1]] == 1)
+    nearest_m = 0.0
+    if not active:
+        rows, cols = np.where(grid.idomain[0] == 1)
+        dx = float(grid.delr.mean()); dy = float(grid.delc.mean())
+        cx = grid.xorigin + (cols + 0.5) * dx
+        cy = grid.yorigin + (grid.nrow - rows - 0.5) * dy
+        nearest_m = float(np.min(np.hypot(cx - x, cy - y))) if rows.size else float("inf")
+    return JSONResponse({
+        "active": active,
+        "nearest_active_m": round(nearest_m, 1),
+        "aquifer": _ACTIVE.get(),
+        "aquifer_title": AQUIFER_MODULES.get(_ACTIVE.get(), {}).get(
+            "title", _ACTIVE.get().title()),
+    })
+
+
 @app.get("/api/version")
 def version_info():
     """Quick way to verify which build the API process is actually running.

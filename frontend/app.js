@@ -344,6 +344,25 @@ function buildLayers(map, mapData) {
   setStatus(`ready — ${STATE.complexCount} spring complexes, click to place a bore`, "ok");
 }
 
+// Click-time domain feedback: warn immediately when a placed bore sits
+// outside THIS module's active model extent, instead of letting the run
+// fail minutes later with a server error.
+async function warnIfOffDomain(x, y) {
+  try {
+    const r = await fetch(`/api/domain-check?x=${x}&y=${y}`);
+    if (!r.ok) return;
+    const d = await r.json();
+    if (!d.active) {
+      const km = (d.nearest_active_m / 1000).toFixed(1);
+      setStatus(
+        `⚠ this location is OUTSIDE the active ${d.aquifer_title} model domain ` +
+        `(nearest active cell ${km} km away) — a run here will fail. ` +
+        `If you meant a different aquifer, return to the landing page and select it.`,
+        "error");
+    }
+  } catch (e) { /* advisory only */ }
+}
+
 async function placeProposed(map, lng, lat) {
   let xy;
   try {
@@ -354,6 +373,7 @@ async function placeProposed(map, lng, lat) {
     return;
   }
   const [x, y] = xy;
+  warnIfOffDomain(x, y);
   if (STATE.scenarioType === "single") {
     $("x").value = x.toFixed(0);
     $("y").value = y.toFixed(0);

@@ -336,7 +336,10 @@ def run_scenario(
         for x, y, rate_ml in proposed_wells:
             rc = cell_of(grid, float(x), float(y))
             if rc is None or grid.idomain[0, rc[0], rc[1]] != 1:
-                raise ValueError(f"Proposed well at ({x:.0f}, {y:.0f}) falls outside the active domain.")
+                raise ValueError(
+                    f"Proposed well at ({x:.0f}, {y:.0f}) falls outside the "
+                    f"active domain of the {cfg.project.name} model — check "
+                    f"that the intended aquifer module is selected.")
             rate_m3d = float(rate_ml) * ML_PER_YEAR_TO_M3_PER_DAY
             wells.append((0, rc[0], rc[1], -rate_m3d))
         if scenario == "B":

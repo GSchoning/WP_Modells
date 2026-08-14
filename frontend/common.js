@@ -92,17 +92,9 @@
   }
 
   document.addEventListener("DOMContentLoaded", () => {
-    if (AQUIFER === "precipice") return;   // default needs no propagation
-    document.querySelectorAll("a[href]").forEach((a) => {
-      const href = a.getAttribute("href");
-      // only same-site module pages; leave the landing page (index.html)
-      // and external/anchor links alone.
-      if (!href || /^(https?:|#|mailto:)/.test(href)) return;
-      if (!/^(precipice|setup|scenario)\.html/.test(href)) return;
-      if (href.includes("aquifer=")) return;
-      a.setAttribute("href", withAquifer(href));
-    });
-    // Rebrand the module header for the active aquifer.
+    // ALWAYS brand the header with the module actually serving this page
+    // — a URL that lost its ?aquifer= parameter silently defaults to the
+    // Precipice, and the title is how the user notices.
     const sub = document.getElementById("module-subtitle");
     if (sub) {
       fetch("/api/healthz").then((r) => r.json()).then((h) => {
@@ -112,6 +104,16 @@
         }
       }).catch(() => {});
     }
+    if (AQUIFER === "precipice") return;   // default needs no link propagation
+    document.querySelectorAll("a[href]").forEach((a) => {
+      const href = a.getAttribute("href");
+      // only same-site module pages; leave the landing page (index.html)
+      // and external/anchor links alone.
+      if (!href || /^(https?:|#|mailto:)/.test(href)) return;
+      if (!/^(precipice|setup|scenario)\.html/.test(href)) return;
+      if (href.includes("aquifer=")) return;
+      a.setAttribute("href", withAquifer(href));
+    });
   });
 
   window.GABORA = { makeSatStyle, raiseReferenceLayers, escapeHtml, fmtSci,
