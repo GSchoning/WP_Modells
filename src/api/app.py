@@ -757,6 +757,30 @@ def _attach_bores(year_results: list[YearResults], combined_bores: pd.DataFrame 
         bx, by = xy[bore_id]
         return min(((bx - wx) ** 2 + (by - wy) ** 2) ** 0.5 for wx, wy in wells_xy)
 
+    # Physical-plausibility check: available drawdown at a bore's cell =
+    # no-pumping head minus the cell bottom. A modelled drawdown beyond
+    # that means the cell dewaters — the assigned rate is not physically
+    # sustainable there (typically a multi-formation entitlement whose
+    # take is apportioned onto a low-T cell) — and the number is an
+    # extrapolation, not a prediction. Flagged rather than hidden.
+    avail: dict[tuple[str, float], float] = {}
+    bc = state.baseline
+    if (state.grid is not None and bc is not None
+            and bc.nopump_times_days is not None and bc.nopump_heads is not None):
+        from ..grid import cell_of
+        from ..scenarios import YEAR_DAYS
+        grid = state.grid
+        years = sorted({float(r["time_years"]) for _, r in combined_bores.iterrows()})
+        idx = {y: int(np.argmin(np.abs(bc.nopump_times_days - y * YEAR_DAYS)))
+               for y in years}
+        for bore_id, (bx, by) in xy.items():
+            rc = cell_of(grid, bx, by)
+            if rc is None or grid.idomain[0, rc[0], rc[1]] != 1:
+                continue
+            for y, i in idx.items():
+                avail[(bore_id, y)] = float(
+                    bc.nopump_heads[i, rc[0], rc[1]] - grid.botm[0, rc[0], rc[1]])
+
     by_year: dict[float, list[BoreDrawdown]] = {}
     for _, r in combined_bores.iterrows():
         s_appr = float(r["s_approved"])
@@ -764,14 +788,19 @@ def _attach_bores(year_results: list[YearResults], combined_bores: pd.DataFrame 
                  if has_licensed and not pd.isna(r["s_licensed"]) else 0.0)
         bore_id = str(r["receptor_id"])
         r_m = _r_m(bore_id)
-        by_year.setdefault(float(r["time_years"]), []).append(BoreDrawdown(
+        year = float(r["time_years"])
+        s_tot = float(r["s_total"])
+        a = avail.get((bore_id, year))
+        by_year.setdefault(year, []).append(BoreDrawdown(
             bore_id=bore_id,
             s_approved_m=s_appr,
             s_licensed_m=s_lic,
             s_additional_m=float(r["s_additional"]),
-            s_total_m=float(r["s_total"]),
+            s_total_m=s_tot,
             r_to_proposed_m=r_m,
             mesh_dependent=(r_m is not None and r_m < mesh_limit_m),
+            available_m=a,
+            dewatered=(a is not None and s_tot > a),
         ))
     for yr in year_results:
         bores = by_year.get(yr.time_years, [])

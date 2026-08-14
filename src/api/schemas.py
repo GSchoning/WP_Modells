@@ -105,6 +105,13 @@ class BoreDrawdown(BaseModel):
     r_to_proposed_m: float | None = None
     # Within ~2 grid cells of a proposed well — mesh-dependent value.
     mesh_dependent: bool = False
+    # Available drawdown at the bore's cell (no-pumping head minus the
+    # cell bottom). When s_total exceeds it the cell dewaters: the
+    # assigned rate is not physically sustainable there and the number
+    # is an extrapolation (typically a multi-formation entitlement
+    # apportioned onto a low-T cell).
+    available_m: float | None = None
+    dewatered: bool = False
 
 
 class YearResults(BaseModel):

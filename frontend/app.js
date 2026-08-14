@@ -1577,11 +1577,16 @@ function renderTable(result) {
     if (hasLicB) html += "<th class=\"num\" title=\"Impact from licensed/entitlement take only\">licensed (m)</th>";
     html += "<th class=\"num\" title=\"Impact of the proposed change alone — no self-impact; the decision-relevant number\">proposed (m)</th>";
     html += "<th class=\"num\">total (m)</th></tr></thead><tbody>";
+    let anyDewatered = false;
     for (const b of bores) {
       const meshMark = b.mesh_dependent
         ? ` <span class="mesh-flag" title="Within ~2 grid cells of a proposed bore — value is mesh-dependent">†</span>`
         : "";
-      html += `<tr><td>${GABORA.escapeHtml(b.bore_id)}${meshMark}</td>`;
+      const dwMark = b.dewatered
+        ? ` <span class="mesh-flag" style="color:#dc2626" title="Modelled drawdown exceeds the ${fmt(b.available_m, 0)} m available at this cell — the cell dewaters, so the assigned rate is not physically sustainable here and the value is an extrapolation (often a multi-formation entitlement apportioned onto a low-permeability cell)">‡ dewaters</span>`
+        : "";
+      if (b.dewatered) anyDewatered = true;
+      html += `<tr><td>${GABORA.escapeHtml(b.bore_id)}${meshMark}${dwMark}</td>`;
       html += `<td class="num">${fmt(b.s_approved_m)}</td>`;
       if (hasLicB) html += `<td class="num">${fmt(b.s_licensed_m)}</td>`;
       html += `<td class="num">${fmt(b.s_additional_m)}</td>`;
@@ -1589,6 +1594,9 @@ function renderTable(result) {
     }
     html += "</tbody></table>";
     html += `<div class="muted" style="margin-top:0.3rem">existing impact at an extraction bore includes its own drawdown; the proposed column carries no self-impact.</div>`;
+    if (anyDewatered) {
+      html += `<div class="muted" style="margin-top:0.2rem">‡ modelled drawdown exceeds the head available above the cell bottom — the cell dewaters and the value is an extrapolation, usually a rate assigned to this aquifer that its calibrated properties cannot supply at that location.</div>`;
+    }
   }
 
   $("results-tables").innerHTML =

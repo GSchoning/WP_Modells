@@ -371,6 +371,15 @@ service mounts it for ad-hoc JupyterLab work).
   well cell is mesh-dependent (point sink in a finite cell). Receptors
   that close to a proposed well are flagged `mesh_dependent`; the Theis
   column gives the analytical cross-check.
+- **Dewatered bore cells.** A modelled drawdown larger than the head
+  available above the cell bottom means the cell dewaters: the rate
+  assigned to this aquifer is not physically sustainable there and the
+  number is an extrapolation, not a prediction (confined cells keep
+  constant T below bottom). Classic cause: a multi-formation entitlement
+  whose take OGIA apportions onto a low-T cell (e.g. Gubberamunda bore
+  87093 — 1,033 ML/yr on a T = 0.85 m²/d cell → 1,571 m "drawdown").
+  The bores tables flag these `dewatered` with the available head; do
+  not clamp the stored values (it would break B − A additivity).
 - **Time discretisation.** Stress periods are built so an MF6 timestep
   ends exactly on every output year (`scenarios.build_perioddata`); the
   first `fine_period_years` run in annual steps, the rest in geometric
